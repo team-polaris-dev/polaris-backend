@@ -1,0 +1,14 @@
+# Web Framework & Server
+fastapi
+uvicorn
+pydantic
+
+# LangGraph & LangChain Core
+langgraph
+langchain-core
+
+# LLM Provider
+langchain-openai
+
+# Environment Variables
+python-dotenv
