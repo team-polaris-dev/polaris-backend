@@ -47,7 +47,9 @@ def graph_search_node(state: AgentState):
                 "extra": {"relation": "owns"},
                 "source": "rcept_no_333"
             }
-        ]
+        ],
+        "graph_paths": [["CORP001", "owns", "CORP002"]],   # 멀티홉 경로 mock
+        "graph_provenance": ["rcept_no_333"]               # 근거 rcept_no
     }
 
 def synthesizer_node(state: AgentState):

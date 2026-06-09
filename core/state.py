@@ -1,5 +1,5 @@
 # core/state.py
-from typing import TypedDict, Annotated, List
+from typing import TypedDict, Annotated, List,Any
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
@@ -7,7 +7,7 @@ class UnifiedResult(TypedDict):
     type: str       # subsidiary / executive / fin_metric / rdb_row / vec_chunk ...
     code: str       # corp_code
     name: str
-    value: ...      # 값의 형태가 다양할 수 있으므로 Any 사용
+    value: Any      # 값의 형태가 다양할 수 있으므로 Any 사용
     extra: dict
     source: str     # rcept_no 또는 chunk_id
 
