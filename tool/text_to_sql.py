@@ -3,8 +3,16 @@ from __future__ import annotations
 
 import re
 
+from pydantic import BaseModel, Field
+
 from config.llm import llm
 from tool.rdb_client import get_schema_prompt
+
+
+class SQLQuery(BaseModel):
+    """변환된 MariaDB SELECT 쿼리."""
+
+    sql: str = Field(description="실행할 단일 SELECT(또는 WITH) 문. 코드펜스·설명 없이 SQL만.")
 
 _SYSTEM = """\
 당신은 한국 반도체 기업 GraphRAG 'POLARIS'의 MariaDB Text-to-SQL 전문가다.
@@ -45,8 +53,18 @@ def generate_sql(
     read_run_id: str | None = None,
     error_feedback: str | None = None,
 ) -> str:
-    """질문 → SQL 문자열. error_feedback 가 있으면 직전 오류를 반영해 재생성."""
+    """질문 → SQL 문자열. error_feedback 가 있으면 직전 오류를 반영해 재생성.
+
+    구조화 출력(`with_structured_output`)을 지원하는 LLM이면 이를 우선 사용하고,
+    FakeLLM 등 미지원 모델이거나 실패 시 텍스트 응답을 정규식으로 파싱한다.
+    """
     prompt = _build_prompt(question, read_run_id, error_feedback)
+    if hasattr(llm, "with_structured_output"):
+        try:
+            result = llm.with_structured_output(SQLQuery).invoke(prompt)
+            return _extract_sql(result.sql)
+        except Exception:
+            pass
     resp = llm.invoke(prompt)
     content = getattr(resp, "content", resp)
     return _extract_sql(str(content))
