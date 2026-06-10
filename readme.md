@@ -109,13 +109,15 @@ git checkout -b feat/add-new-feature
 
 ### 1. 패키지 설치
 Python 가상환경을 생성하고 활성화한 뒤, 필요한 의존성을 설치합니다.
+```bash
 pip install -r requirements.txt
-
+```
 
 ### 2. 환경 변수 설정
-프로젝트 최상위 경로에 `.env` 파일을 생성하고 OpenAI API 키를 입력합니다.
-
-OPENAI_API_KEY="sk-your-api-key-here"
+`.env.example`을 복사해 `.env`를 생성하고 Ollama/MariaDB 접속 정보를 입력합니다.
+```bash
+copy .env.example .env
+```
 
 
 ### 3. 서버 실행

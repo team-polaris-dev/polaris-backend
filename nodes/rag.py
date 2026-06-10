@@ -6,6 +6,7 @@ from tool.vector_store import search_vector_db
 
 
 def supervisor_node(state: AgentState):
+    # (예시) 검색 계획 수립
     return {"search_plan": ["RDB", "Vector", "Graph"]}
 
 

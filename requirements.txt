@@ -9,6 +9,16 @@ langchain-core
 
 # LLM Provider
 langchain-openai
+langchain-ollama
+
+# RDB (MariaDB 직결)
+pymysql
+
+# Shared POLARIS retrieval package
+-e ../pola
 
 # Environment Variables
 python-dotenv
+
+# Test
+pytest
