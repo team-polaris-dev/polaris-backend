@@ -1,0 +1,32 @@
+[project]
+name = "polaris-backend"
+version = "0.1.0"
+description = "POLARIS 에이전트 오케스트레이션 계층 (LangGraph). 3DB 조회 전용 — 적재는 pola CLI."
+requires-python = ">=3.11"
+
+# 에이전트/백엔드 자체 의존성. 검색 의존성(qdrant-client/rank-bm25/transformers/httpx)은
+# polaris-rag(pola) editable 에서 전이로 들어온다 (아래 [tool.uv.sources]).
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "langgraph",
+    "langchain-core",
+    "langchain-openai",
+    "langchain-ollama",
+    "pymysql",
+    "python-dotenv",
+    "polaris-rag",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+# 이 프로젝트 자체는 스크립트 묶음이라 빌드/설치하지 않는다 (라이브러리 아님).
+package = false
+
+[tool.uv.sources]
+# pola 를 editable 로 참조 → polaris.retrieve 등 재사용 + 검색 deps 일괄 확보.
+# rerank(torch)는 GPU 환경별이라 기본 제외. 켜려면: uv add "polaris-rag[cpu]" (또는 cuda/directml)
+polaris-rag = { path = "../pola", editable = true }

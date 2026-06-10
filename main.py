@@ -33,7 +33,7 @@ async def chat_endpoint(request: ChatRequest):
         inputs = {"messages": [HumanMessage(content=request.message)]}
         
         # Checkpointer(메모리)가 대화 기록을 찾을 수 있도록 thread_id 설정
-        config = {"configurable": {"thread_id": request.thread_id}}
+        config = {"configurable": {"thread_id": request.thread_id, "user_id": request.user_id}}
         
         # 그래프 실행 (invoke는 최종 결과만 반환합니다. 스트리밍이 필요하면 stream 사용)
         result = app.invoke(inputs, config)

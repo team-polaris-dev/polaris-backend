@@ -14,7 +14,8 @@ from nodes.render import render_node
 
 # 2. 라우팅 조건 함수들 정의
 def route_after_intent(state: AgentState):
-    return state["intent"]
+    intent = state["intent"]
+    return "ctx" if intent == "rag" else intent
 
 def route_search_plan(state: AgentState):
     return state["search_plan"]
