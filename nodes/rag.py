@@ -1,59 +1,249 @@
 # nodes/rag.py
+<<<<<<< HEAD
 import json
 from langchain_core.messages import SystemMessage, HumanMessage
 from core.state import AgentState
 from config.llm import json_llm
+=======
+from __future__ import annotations
 
+import re
+
+from pydantic import BaseModel, Field
+
+from config.llm import llm
+from core.state import AgentState, UnifiedResult
+from tool.rdb_client import execute_sql_query, get_schema_prompt
+from tool.vector_store import search_vector_db
+>>>>>>> refs/rewritten/dev-2
+
+
+
+
+def _last_human_text(state: AgentState) -> str:
+    """reconstructed_query 가 없을 때 마지막 사용자 메시지를 폴백으로 쓴다."""
+    for msg in reversed(state.get("messages", []) or []):
+        content = getattr(msg, "content", None)
+        if content:
+            return str(content)
+    return ""
+
+
+def _truncate(text: str, limit: int = 1000) -> str:
+    """청크 본문이 너무 길 때 컨텍스트 폭주 방지."""
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+# ---------------------------------------------------------------- NL → SQL 생성
+# (구 tool/text_to_sql.py 에서 이동: 노드가 LLM 프롬프트 구성을 직접 소유)
+
+class SQLQuery(BaseModel):
+    """변환된 MariaDB SELECT 쿼리."""
+
+    sql: str = Field(description="실행할 단일 SELECT(또는 WITH) 문. 코드펜스·설명 없이 SQL만.")
+
+
+_SYSTEM = """\
+당신은 한국 반도체 기업 GraphRAG 'POLARIS'의 MariaDB Text-to-SQL 전문가다.
+사용자 질문을 MariaDB(MySQL 호환) SELECT 쿼리 하나로 변환한다.
+규칙:
+- 반드시 단일 SELECT 문만 출력한다. INSERT/UPDATE/DELETE/DDL 금지.
+- 설명·주석·코드펜스 없이 SQL 한 문장만 출력한다.
+- 아래 스키마에 없는 테이블·컬럼은 절대 지어내지 않는다.
+- 회사 식별(필터)은 corp_code(8자리)로 하되, 답에 회사가 보여야 하면 corp_name 을 SELECT 한다.
+- 사람이 읽을 결과를 만든다 — 코드·ID보다 이름·제목 같은 의미 있는 컬럼을 우선 선택한다.
+- 결과가 많을 수 있으면 LIMIT 을 붙인다."""
+
+
+def _build_sql_prompt(question: str, error_feedback: str | None) -> str:
+    parts = [_SYSTEM, "## 스키마\n" + get_schema_prompt()]
+    parts.append("## 질문\n" + question)
+    if error_feedback:
+        parts.append("## 직전 SQL 실행 오류 (반드시 수정)\n" + error_feedback)
+    parts.append("## 출력 (SELECT 한 문장):")
+    return "\n\n".join(parts)
+
+
+def _extract_sql(text: str) -> str:
+    """LLM 응답에서 SQL 한 문장만 추출 (코드펜스/설명/꼬리 제거)."""
+    fence = re.search(r"```(?:sql)?\s*(.+?)```", text, re.IGNORECASE | re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    m = re.search(r"(?is)\b(SELECT|WITH)\b.*", text)  # CTE(WITH) 도 시작점으로 인정
+    sql = (m.group(0) if m else text).strip()
+    if ";" in sql:  # 첫 세미콜론 뒤 설명 제거
+        sql = sql.split(";", 1)[0]
+    sql = re.split(r"\n\s*\n", sql, maxsplit=1)[0]  # 빈 줄 뒤 설명 제거
+    return sql.strip()
+
+
+def generate_sql(question: str, error_feedback: str | None = None) -> str:
+    """질문 → SQL 문자열. error_feedback 가 있으면 직전 오류를 반영해 재생성.
+
+    구조화 출력(`with_structured_output`)을 지원하는 LLM이면 이를 우선 사용하고,
+    FakeLLM 등 미지원 모델이거나 실패 시 텍스트 응답을 정규식으로 파싱한다.
+    """
+    prompt = _build_sql_prompt(question, error_feedback)
+    if hasattr(llm, "with_structured_output"):
+        try:
+            result = llm.with_structured_output(SQLQuery).invoke(prompt)
+            return _extract_sql(result.sql)
+        except Exception:
+            pass
+    resp = llm.invoke(prompt)
+    content = getattr(resp, "content", resp)
+    return _extract_sql(str(content))
+
+
+def _rdb_row_to_unified(row: dict, sql: str) -> UnifiedResult:
+    """SELECT 결과 한 행 → UnifiedResult.
+
+    질의마다 컬럼 구성이 달라 corp_code/corp_name/rcept_no 를 식별 정보로
+    분리하고 나머지 컬럼을 value 에 담는다(없으면 행 전체를 value 로).
+    """
+    rest = {k: v for k, v in row.items() if k not in ("corp_code", "corp_name", "rcept_no")}
+    return {
+        "type": "rdb_row",
+        "code": str(row.get("corp_code", "")),
+        "name": str(row.get("corp_name", "")),
+        "value": rest or row,
+        "extra": {"sql": sql},
+        "source": str(row.get("rcept_no", "")),
+    }
 
 
 def rdb_search_node(state: AgentState):
-    # 분리된 키인 rdb_results 사용 + 통일된 dict 규격 적용
+    """RDB 검색: NL→SQL→실행 → UnifiedResult 리스트.
+
+    LLM/DB 호출이 예외를 던지거나(Ollama 다운 등) 결과가 없으면
+    rdb_results=[] 를 반환해 파이프라인을 보호한다.
+    SQL 실행 실패 시 에러를 LLM에 되먹여 1회 재시도한다.
+    """
+    question = state.get("reconstructed_query") or _last_human_text(state)
+    try:
+        sql = generate_sql(question)
+        result = execute_sql_query(sql)
+        if not result["ok"]:
+            sql = generate_sql(question, error_feedback=result["error"])
+            result = execute_sql_query(sql)
+        if not result["ok"] or not result["rows"]:
+            return {"rdb_results": []}
+        return {"rdb_results": [_rdb_row_to_unified(row, result["sql"]) for row in result["rows"]]}
+    except Exception:
+        return {"rdb_results": []}
+
+
+def _chunk_to_unified(row: dict) -> UnifiedResult:
+    """Vector 검색 청크 결과 → UnifiedResult."""
+    name = row.get("corp_name") or row.get("title") or row.get("section_path") or ""
     return {
-        "rdb_results": [
-            {
-                "type": "rdb_row",
-                "code": "CORP001",
-                "name": "매출액",
-                "value": "100억",
-                "extra": {"currency": "KRW"},
-                "source": "rcept_no_111"
-            }
-        ]
+        "type": "vec_chunk",
+        "code": str(row.get("corp_code", "")),
+        "name": str(name),
+        "value": _truncate(str(row.get("text") or "")),
+        "extra": {
+            "score": row.get("score"),
+            "year": row.get("year"),
+            "doc_type": row.get("doc_type"),
+            "section_path": row.get("section_path"),
+        },
+        "source": str(row.get("chunk_id", "")),
     }
+
+
 
 def vector_search_node(state: AgentState):
-    # 분리된 키인 vec_results 사용 + 통일된 dict 규격 적용
+    """Vector 검색: 하이브리드 검색(Dense+BM25+rerank) → UnifiedResult 리스트.
+
+    실패하거나 결과가 없으면 vec_results=[] 를 반환해 파이프라인을 보호한다.
+    """
+    question = state.get("reconstructed_query") or _last_human_text(state)
+    try:
+        rows = search_vector_db(question)
+        if not rows:
+            return {"vec_results": []}
+        return {"vec_results": [_chunk_to_unified(row) for row in rows]}
+    except Exception:
+        return {"vec_results": []}
+
+
+#======================================================================
+# Graph rag 함수 -
+#======================================================================
+CYPHER_PROMPT = """당신은 한국 DART 공시 KG 전문가다.
+다음 자연어 질문을 Neo4j Cypher로 변환하라.
+스키마:
+- (:Organization {{corp_code,name}})
+- (:FilingDocument {{rcept_no}})
+- (:Organization)-[:IS_SUBSIDIARY_OF]->(:Organization)
+- (:Person)-[:EXECUTIVE_OF]->(:Organization)
+- (:Organization)-[:IS_MAJOR_SHAREHOLDER_OF {{qota_rt}}]->(:Organization)
+반드시 RETURN에 path와 rcept_no를 포함하라.
+질문: {q}
+Cypher:"""
+
+
+def _looks_like_cypher(q: str) -> bool:
+    """LLM이 생성한 쿼리가 최소한의 Cypher 문법(MATCH/RETURN)을 갖추었는지 검사."""
+    if not q or len(q) < 10:
+        return False
+    up = q.upper()
+    return "MATCH" in up and "RETURN" in up
+
+
+def _row_to_unified(row: dict) -> UnifiedResult:
+    """그래프DB row → UnifiedResult(type/code/name/value/extra/source) 변환."""
+    nodes = [x for x in row["path"] if "corp_code" in x]
+    tail = nodes[-1] if nodes else {"corp_code": "", "name": ""}
+    rels = [x.get("rel") for x in row["path"] if "rel" in x]
+
     return {
-        "vec_results": [
-            {
-                "type": "vec_chunk",
-                "code": "CORP001",
-                "name": "사업 개요",
-                "value": "당사는 AI 솔루션을 개발하는...",
-                "extra": {"similarity_score": 0.92},
-                "source": "chunk_id_222"
-            }
-        ]
+        "type": "graph_path",
+        "code": tail["corp_code"],
+        "name": tail["name"],
+        "value": " -> ".join(rels) if rels else "",
+        "extra": {"hops": len(rels)},
+        "source": row.get("rcept_no", ""),
     }
+
+
 
 def graph_search_node(state: AgentState):
-    # 분리된 키인 graph_facts 사용 + 통일된 dict 규격 적용
-    return {
-        "graph_facts": [
-            {
-                "type": "subsidiary",
-                "code": "CORP002",
-                "name": "자회사A",
-                "value": "지분율 100%",
-                "extra": {"relation": "owns"},
-                "source": "rcept_no_333"
-            }
-        ],
-        "graph_paths": [["CORP001", "owns", "CORP002"]],   # 멀티홉 경로 mock
-        "graph_provenance": ["rcept_no_333"]               # 근거 rcept_no
-    }
+    """자연어 질문 → Cypher → 그래프DB → graph_facts/paths/provenance.
 
+    현재 ``execute_cypher_query``는 목업. 실제 Neo4j 드라이버 연결과
+    쿼리 템플릿 라우팅(___test/hybrid_rag 자산 이식)은 후속 이슈로 분리.
+    """
+    q = state.get("reconstructed_query") or ""
+    empty = {"graph_facts": [], "graph_paths": [], "graph_provenance": []}
+
+    try:
+        resp = llm.invoke(CYPHER_PROMPT.format(q=q))
+        cypher = getattr(resp, "content", str(resp)).strip().strip("`")
+
+        if not _looks_like_cypher(cypher):
+            raise GraphQueryError(f"LLM produced non-cypher: {cypher!r}")
+
+        rows = execute_cypher_query(cypher)
+    except Exception as e:   # GraphQueryError 포함
+        print(f"[graph_search_node] degraded: {e}")
+        return empty
+
+    facts: list[UnifiedResult] = []
+    paths: list[list[str]] = []
+    prov: list[str] = []
+    for row in rows:
+        facts.append(_row_to_unified(row))
+        paths.append([x.get("name") or x.get("rel", "") for x in row["path"]])
+        if row.get("rcept_no"):
+            prov.append(row["rcept_no"])
+
+    return {"graph_facts": facts, "graph_paths": paths, "graph_provenance": prov}
+#======================================================================
+# Graph rag 구현 함수
+#======================================================================
 def synthesizer_node(state: AgentState):
+<<<<<<< HEAD
     """
     Syn: 3개의 DB(RDB, Vector, Graph)에서 검색된 결과를 하나의 텍스트로 병합합니다.
     """
@@ -86,8 +276,29 @@ def synthesizer_node(state: AgentState):
         synthesized_text = "검색된 데이터가 없습니다."
 
     return {"synthesized_info": synthesized_text}
+=======
+    # 1. 3곳의 검색 결과를 모두 가져옵니다 (데이터가 없을 수도 있으니 .get() 사용)
+    rdb = state.get("rdb_results", [])
+    vec = state.get("vec_results", [])
+    graph = state.get("graph_facts", [])
+
+    # 2. 모든 결과를 하나의 리스트로 합칩니다
+    all_results = rdb + vec + graph
+
+    # 3. 통일된 dict 키(name, value, source 등)를 활용해 프롬프트에 넣을 텍스트로 변환합니다
+    formatted_texts = []
+    for item in all_results:
+        text = f"[{item['type']}] {item['name']}: {item['value']} (출처: {item['source']})"
+        formatted_texts.append(text)
+
+    combined = "\n".join(formatted_texts)
+
+    return {"synthesized_info": combined}
+>>>>>>> refs/rewritten/dev-2
+
 
 def reflection_node(state: AgentState):
+<<<<<<< HEAD
     """
     Reflect: 취합된 정보가 사용자의 질문에 답변하기에 충분한지 자체 검증합니다.
     """
@@ -156,3 +367,11 @@ def reflection_node(state: AgentState):
         "messages": [feedback_message],  # 이 메시지가 추가되어 Ctx 노드로 돌아갑니다.
         "retry_count": current_retry + 1
     }
+=======
+    return {"is_sufficient": True}
+
+
+def generate_report_node(state: AgentState):
+    info = state.get("synthesized_info") or "검색 결과가 없습니다."
+    return {"final_draft": info}
+>>>>>>> refs/rewritten/dev-2
