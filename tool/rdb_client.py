@@ -146,7 +146,8 @@ MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래
 
 
 def execute_sql_query(sql: str, max_rows: int = MAX_ROWS) -> dict:
-    """SELECT 만 안전 실행. 반환: {"ok", "rows", "error", "sql"}."""
+    """실제 MariaDB에 SELECT 구문을 실행합니다."""
+    print(f"🛠️ [MariaDB]  검색 시뮬레이션 중: {sql}")
     if not is_safe_select(sql):
         return {
             "ok": False,
@@ -154,13 +155,17 @@ def execute_sql_query(sql: str, max_rows: int = MAX_ROWS) -> dict:
             "error": "안전하지 않은 SQL — SELECT 단일 문장만 허용됩니다.",
             "sql": sql,
         }
+        
     safe_sql = enforce_limit(sql, max_rows)
+    
     try:
         with mariadb_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(safe_sql)
                 rows = cur.fetchall()
-        # SQL LIMIT 형태와 무관하게 행 수 상한을 최종 보장 (OFFSET/콤마 LIMIT 대비)
+                
+        # SQL LIMIT 형태와 무관하게 행 수 상한을 최종 보장
         return {"ok": True, "rows": list(rows)[:max_rows], "error": None, "sql": safe_sql}
+        
     except Exception as e:
         return {"ok": False, "rows": [], "error": str(e), "sql": safe_sql}
