@@ -1,42 +1,51 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 from core.state import AgentState
 
-# 앞서 설정한 LLM 객체 불러오기 (테스트 시에는 FakeLLM이, 실전엔 ChatOpenAI가 작동합니다)
+# 앞서 설정한 로컬 Ollama LLM 객체 불러오기
 from config.llm import llm 
 
-def render_node(state: AgentState):
+def generate_report_node(state: AgentState):
     """
-    Render: 생성된 초안(final_draft) 또는 이전 대화 내용을 
-    사용자 선호도(user_preferences)에 맞춰 최종 톤으로 변환합니다.
+    Gen (Generate & Render): 
+    검색 및 취합된 정보(synthesized_info)를 바탕으로, 
+    사용자 선호도(user_preferences)에 맞춰 최종 분석 보고서를 생성합니다.
     """
-    # 1. State에서 필요한 데이터 추출
-    draft = state.get("final_draft", "")
+    # 1. State에서 필요한 데이터 추출 (syn 노드에서 만든 취합 정보)
+    # 만약 RAG 흐름을 정상적으로 탔다면 synthesized_info가 존재합니다.
+    draft_info = state.get("synthesized_info", "")
     prefs = state.get("user_preferences", {})
     
-    # 만약 RAG를 거치지 않고 "방금 답변 더 쉽게 말해줘"라고 라우팅되어 넘어온 경우라면,
-    # 이전 AI의 마지막 답변을 draft로 사용합니다.
-    if not draft and len(state["messages"]) > 1:
-        draft = state["messages"][-2].content if state["messages"][-1].type == "human" else state["messages"][-1].content
+    # 💡 엣지 케이스 처리: 
+    # RAG 검색 없이 "방금 한 말 좀 더 쉽게 설명해줘"라고 직접 넘어온 경우,
+    # 이전 AI의 마지막 답변을 재구성의 재료로 사용합니다.
+    if not draft_info and len(state.get("messages", [])) > 1:
+        messages = state["messages"]
+        # 마지막 메시지가 사용자라면, 그 앞의 AI 답변을 가져옴
+        if messages[-1].type == "human":
+            draft_info = messages[-2].content
+        else:
+            draft_info = messages[-1].content
 
     # 기본 선호도 설정 (Store에 값이 없을 경우를 대비)
-    tone = prefs.get("tone", "친절하고 상세한")
-    level = prefs.get("level", "일반인")
+    tone = prefs.get("tone", "전문적이고 신뢰감 있는")
+    level = prefs.get("level", "일반 투자자")
 
-    # 2. 톤 변환을 위한 시스템 프롬프트 작성
-    system_prompt = f"""당신은 사용자의 맞춤형 AI 어시스턴트입니다.
-제공된 [원본 텍스트]를 다음 사용자의 성향에 맞게 완벽하게 재작성(Render)하세요.
+    # 2. 정보 병합 및 톤 변환을 동시에 수행하는 시스템 프롬프트 (Qwen2.5 최적화)
+    system_prompt = f"""당신은 기업 공시 및 재무 분석을 도와주는 전문적이고 친절한 AI 어시스턴트입니다.
+제공된 [분석 기초 자료]를 활용하여, 다음 사용자의 성향에 맞춘 완벽한 최종 답변(보고서)을 작성하세요.
 
 [사용자 맞춤 설정]
 - 설명 난이도: {level}
 - 말투 및 톤: {tone}
 
-[규칙]
-1. 원본 텍스트의 핵심 정보(수치, 사실관계 등)는 절대 누락하거나 왜곡하지 마세요.
-2. 지정된 '말투 및 톤'과 '설명 난이도'에 철저히 맞춰서 문장을 재구성하세요.
-3. 불필요한 서론(예: "알겠습니다, 다시 작성해 드릴게요") 없이 바로 변환된 결과물만 출력하세요.
+[작성 규칙]
+1. [분석 기초 자료]에 포함된 핵심 정보(수치, 사실관계, 기업명 등)는 절대 누락하거나 왜곡하지 마세요.
+2. 지정된 '말투 및 톤'과 '설명 난이도'에 철저히 맞춰서 문장을 자연스럽게 구성하세요.
+3. 가독성을 높이기 위해 필요하다면 마크다운(글머리 기호, 굵은 글씨 등)을 적극적으로 활용하세요.
+4. "알겠습니다", "요청하신 보고서입니다" 같은 불필요한 서론 없이, 곧바로 최종 결과물만 출력하세요.
 """
 
-    human_prompt = f"[원본 텍스트]\n{draft}"
+    human_prompt = f"[분석 기초 자료]\n{draft_info}"
 
     # 3. LLM 호출하여 렌더링 진행
     messages_to_llm = [
@@ -44,9 +53,12 @@ def render_node(state: AgentState):
         HumanMessage(content=human_prompt)
     ]
     
-    # 💡 팁: 만약 테스트 환경이라 config/llm.py에서 FakeLLM을 쓰고 있다면,
-    # FakeLLM이 응답을 반환할 것이고, 실제 OpenAI 연결 시에는 톤이 변환된 텍스트가 나옵니다.
+    print(f"📝 [Gen Node] 최종 보고서 작성 중... (타겟: {level}, 톤: {tone})")
     response = llm.invoke(messages_to_llm)
 
-    # 4. 최종 변환된 메시지를 State의 messages 배열에 추가하도록 반환
-    return {"messages": [response]}
+    # 4. 최종 변환된 메시지를 State의 messages 배열에 추가하고, 
+    # final_draft 키에도 명시적으로 저장하여 상태 업데이트
+    return {
+        "messages": [response],
+        "final_draft": response.content 
+    }
