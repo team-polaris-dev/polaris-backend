@@ -1,21 +1,15 @@
 # nodes/rag.py
-<<<<<<< HEAD
+from __future__ import annotations
+
 import json
 from langchain_core.messages import SystemMessage, HumanMessage
 from core.state import AgentState
-from config.llm import json_llm
-=======
-from __future__ import annotations
-
+from config.llm import json_llm, llm
 import re
-
 from pydantic import BaseModel, Field
-
-from config.llm import llm
 from core.state import AgentState, UnifiedResult
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
->>>>>>> refs/rewritten/dev-2
 
 
 
@@ -166,10 +160,6 @@ def vector_search_node(state: AgentState):
     except Exception:
         return {"vec_results": []}
 
-
-#======================================================================
-# Graph rag 함수 -
-#======================================================================
 CYPHER_PROMPT = """당신은 한국 DART 공시 KG 전문가다.
 다음 자연어 질문을 Neo4j Cypher로 변환하라.
 스키마:
@@ -239,11 +229,8 @@ def graph_search_node(state: AgentState):
             prov.append(row["rcept_no"])
 
     return {"graph_facts": facts, "graph_paths": paths, "graph_provenance": prov}
-#======================================================================
-# Graph rag 구현 함수
-#======================================================================
+
 def synthesizer_node(state: AgentState):
-<<<<<<< HEAD
     """
     Syn: 3개의 DB(RDB, Vector, Graph)에서 검색된 결과를 하나의 텍스트로 병합합니다.
     """
@@ -276,29 +263,11 @@ def synthesizer_node(state: AgentState):
         synthesized_text = "검색된 데이터가 없습니다."
 
     return {"synthesized_info": synthesized_text}
-=======
-    # 1. 3곳의 검색 결과를 모두 가져옵니다 (데이터가 없을 수도 있으니 .get() 사용)
-    rdb = state.get("rdb_results", [])
-    vec = state.get("vec_results", [])
-    graph = state.get("graph_facts", [])
 
-    # 2. 모든 결과를 하나의 리스트로 합칩니다
-    all_results = rdb + vec + graph
-
-    # 3. 통일된 dict 키(name, value, source 등)를 활용해 프롬프트에 넣을 텍스트로 변환합니다
-    formatted_texts = []
-    for item in all_results:
-        text = f"[{item['type']}] {item['name']}: {item['value']} (출처: {item['source']})"
-        formatted_texts.append(text)
-
-    combined = "\n".join(formatted_texts)
-
-    return {"synthesized_info": combined}
->>>>>>> refs/rewritten/dev-2
 
 
 def reflection_node(state: AgentState):
-<<<<<<< HEAD
+
     """
     Reflect: 취합된 정보가 사용자의 질문에 답변하기에 충분한지 자체 검증합니다.
     """
@@ -367,11 +336,4 @@ def reflection_node(state: AgentState):
         "messages": [feedback_message],  # 이 메시지가 추가되어 Ctx 노드로 돌아갑니다.
         "retry_count": current_retry + 1
     }
-=======
-    return {"is_sufficient": True}
 
-
-def generate_report_node(state: AgentState):
-    info = state.get("synthesized_info") or "검색 결과가 없습니다."
-    return {"final_draft": info}
->>>>>>> refs/rewritten/dev-2
