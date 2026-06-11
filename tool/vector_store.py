@@ -30,6 +30,8 @@ DENSE_FETCH_MULTIPLIER = 5
 _TOKEN_RE = re.compile(r"[가-힣a-zA-Z0-9]+")
 _YEAR_RE = re.compile(r"(20\d{2})\s*년?")
 _COMPARISON_RE = re.compile(r"비교|대비|\bvs\b|VS|둘\s*중|차이")
+# 제목의 회계기간 '(YYYY.MM)' — 연도 필터를 접수연도가 아닌 회계연도 기준으로 잡기 위함
+_TITLE_YEAR_RE = re.compile(r"\((20\d{2})\.\d{1,2}")
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,6 @@ class _ChunkRow:
 class _ChunkIndex:
     rows: list[_ChunkRow]
     by_chunk_id: dict[str, _ChunkRow]
-    uuid_to_chunk_id: dict[str, str]
     tokenized: list[list[str]]
 
 
@@ -100,6 +101,19 @@ def chunk_id_to_uuid(chunk_id: str) -> str:
 
 def _tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text or "")
+
+
+def _resolve_year(title: str, rcept_no: str) -> int | None:
+    """연도 필터용 회계연도 결정 — 제목의 '(YYYY.MM)' 회계기간을 우선 사용하고
+    없으면 접수연도(rcept_no[:4])로 폴백한다.
+
+    사업보고서는 다음 해에 접수되므로(예: 2024 사업보고서 → 2025-03 접수)
+    접수연도로 필터하면 '2024' 질의에서 정답이 누락된다.
+    """
+    m = _TITLE_YEAR_RE.search(title)
+    if m:
+        return int(m.group(1))
+    return int(rcept_no[:4]) if rcept_no[:4].isdigit() else None
 
 
 # ---------------------------------------------------------------- chunk index 적재
@@ -126,12 +140,12 @@ def _load_chunk_index() -> _ChunkIndex:
 
         rows: list[_ChunkRow] = []
         by_chunk_id: dict[str, _ChunkRow] = {}
-        uuid_to_chunk_id: dict[str, str] = {}
         tokenized: list[list[str]] = []
         for r in db_rows:
             chunk_id = str(r["chunk_id"])
             rcept_no = str(r.get("rcept_no") or "")
-            year = int(rcept_no[:4]) if rcept_no[:4].isdigit() else None
+            title = str(r.get("title") or "")
+            year = _resolve_year(title, rcept_no)
             text = str(r.get("embedding_text") or "")
             row = _ChunkRow(
                 chunk_id=chunk_id,
@@ -140,20 +154,18 @@ def _load_chunk_index() -> _ChunkIndex:
                 rcept_no=rcept_no,
                 year=year,
                 doc_type=str(r.get("doc_type") or ""),
-                title=str(r.get("title") or ""),
+                title=title,
                 section_path=str(r.get("section_path") or ""),
                 chunk_type=str(r.get("chunk_type") or ""),
                 text=text,
             )
             rows.append(row)
             by_chunk_id[chunk_id] = row
-            uuid_to_chunk_id[chunk_id_to_uuid(chunk_id)] = chunk_id
             tokenized.append(_tokenize(text))
 
         _CHUNK_INDEX_CACHE = _ChunkIndex(
             rows=rows,
             by_chunk_id=by_chunk_id,
-            uuid_to_chunk_id=uuid_to_chunk_id,
             tokenized=tokenized,
         )
         return _CHUNK_INDEX_CACHE
@@ -405,3 +417,14 @@ def search_vector_db(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     corp_codes, year = extract_filter_signals(query)
     rows = hybrid_search(query, top_k=top_k, corp_codes=corp_codes or None, year=year)
     return [row.to_dict() for row in rows]
+
+
+def warmup() -> None:
+    """chunk 인덱스·BM25 를 미리 적재해 첫 검색 요청의 콜드스타트(~2분)를 제거한다.
+
+    첫 호출은 MariaDB 174k 행 적재 + BM25 빌드로 수십 초~2분이 걸리고 이후엔
+    프로세스 캐시로 즉시 응답한다. FastAPI lifespan/startup 등 서버 기동 시점에
+    이 함수를 호출하면 첫 사용자 요청이 지연되지 않는다.
+    """
+    _load_chunk_index()
+    _get_bm25()
