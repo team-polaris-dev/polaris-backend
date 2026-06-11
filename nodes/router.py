@@ -42,19 +42,8 @@ def router_node(state: AgentState):
 
 def direct_response_node(state: AgentState):
     """Direct: 단순 질문/잡담"""
-    messages = state.get("messages", [])
-    
-    system_prompt = SystemMessage(
-        content=(
-            "당신은 친절하고 전문적인 공시 분석 서비스 AI 어시스턴트입니다. "
-            "사용자의 가벼운 인사나 잡담에 자연스럽게 대답해주세요. "
-            "답변 끝에는 '특정 기업의 공시나 재무 정보가 궁금하시다면 언제든 물어보세요!'와 같이 "
-            "본래 서비스의 목적을 부드럽게 안내해 주어도 좋습니다."
-        )
-    )
-    
-    print("💬 [Direct Node] 단순 응답 생성 중...")
-    response = llm.invoke([system_prompt] + messages)
+   
+    response = "공시 관련 질문만 답변할 수 있습니다. 특정 기업의 공시나 재무 정보가 궁금하시다면 언제든 물어보세요!"
     
     # 상태의 messages 리스트에 AI의 응답을 추가하여 반환
     return {"messages": [response]}
@@ -66,7 +55,6 @@ from config.llm import llm
 def context_reconstruct_node(state: AgentState):
     """Ctx: 질문 문맥 재구성 (메모리 활용)"""
     messages = state.get("messages", [])
-    
         
     # 대화 메모리가 존재할 경우 대명사 치환 지시
     system_prompt = SystemMessage(
@@ -79,7 +67,7 @@ def context_reconstruct_node(state: AgentState):
         )
     )
     
-    print("✏️ [Context Node] 메모리를 참조하여 대명사/문맥 해석 중...")
+    print("✏️ [Context Node] 문장 재구성 중...")
     
     # SystemMessage와 이전 대화 기록(messages)을 모두 LLM에 전달하여 문맥 파악
     response = llm.invoke([system_prompt] + messages)
