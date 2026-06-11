@@ -10,8 +10,7 @@ from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
-
-
+from tool.graph_client import execute_cypher_query, GraphQueryError
 
 
 def _last_human_text(state: AgentState) -> str:
@@ -307,8 +306,8 @@ def reflection_node(state: AgentState):
     print(f"   -> 검증 결과: {'통과✅' if is_sufficient else '불충분❌'} (사유: {reason})")
     
     # 정보가 충분하면 바로 gen 노드로 갈 수 있도록 상태 업데이트
-    if not is_sufficient and current_retry >= 1: # 0, 1, 2 (총 2번 실패 시)
-        print("🛑 [Reflect Node] 최대 재시도 횟수(2회)에 도달했습니다. 누락된 정보가 있더라도 최종 답변 생성을 강제 진행합니다.")
+    if not is_sufficient and current_retry >= 0: #테스트위해 일단 1번만 실행
+        print("🛑 [Reflect Node] 최대 재시도 횟수(2회)에 도달했습니다.(지금은 개발단계임으로 바로 통과) 누락된 정보가 있더라도 최종 답변 생성을 강제 진행합니다.")
         return {
             "is_sufficient": True, # 강제로 True를 주어 gen 노드로 보내기
             "retry_count": current_retry + 1
