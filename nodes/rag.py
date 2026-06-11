@@ -147,6 +147,7 @@ def _chunk_to_unified(row: dict) -> UnifiedResult:
     }
 
 
+
 def vector_search_node(state: AgentState):
     """Vector 검색: 하이브리드 검색(Dense+BM25+rerank) → UnifiedResult 리스트.
 
@@ -162,24 +163,81 @@ def vector_search_node(state: AgentState):
         return {"vec_results": []}
 
 
-def graph_search_node(state: AgentState):
-    # 분리된 키인 graph_facts 사용 + 통일된 dict 규격 적용
+#======================================================================
+# Graph rag 함수 -
+#======================================================================
+CYPHER_PROMPT = """당신은 한국 DART 공시 KG 전문가다.
+다음 자연어 질문을 Neo4j Cypher로 변환하라.
+스키마:
+- (:Organization {{corp_code,name}})
+- (:FilingDocument {{rcept_no}})
+- (:Organization)-[:IS_SUBSIDIARY_OF]->(:Organization)
+- (:Person)-[:EXECUTIVE_OF]->(:Organization)
+- (:Organization)-[:IS_MAJOR_SHAREHOLDER_OF {{qota_rt}}]->(:Organization)
+반드시 RETURN에 path와 rcept_no를 포함하라.
+질문: {q}
+Cypher:"""
+
+
+def _looks_like_cypher(q: str) -> bool:
+    """LLM이 생성한 쿼리가 최소한의 Cypher 문법(MATCH/RETURN)을 갖추었는지 검사."""
+    if not q or len(q) < 10:
+        return False
+    up = q.upper()
+    return "MATCH" in up and "RETURN" in up
+
+
+def _row_to_unified(row: dict) -> UnifiedResult:
+    """그래프DB row → UnifiedResult(type/code/name/value/extra/source) 변환."""
+    nodes = [x for x in row["path"] if "corp_code" in x]
+    tail = nodes[-1] if nodes else {"corp_code": "", "name": ""}
+    rels = [x.get("rel") for x in row["path"] if "rel" in x]
+
     return {
-        "graph_facts": [
-            {
-                "type": "subsidiary",
-                "code": "CORP002",
-                "name": "자회사A",
-                "value": "지분율 100%",
-                "extra": {"relation": "owns"},
-                "source": "rcept_no_333"
-            }
-        ],
-        "graph_paths": [["CORP001", "owns", "CORP002"]],   # 멀티홉 경로 mock
-        "graph_provenance": ["rcept_no_333"]               # 근거 rcept_no
+        "type": "graph_path",
+        "code": tail["corp_code"],
+        "name": tail["name"],
+        "value": " -> ".join(rels) if rels else "",
+        "extra": {"hops": len(rels)},
+        "source": row.get("rcept_no", ""),
     }
 
 
+
+def graph_search_node(state: AgentState):
+    """자연어 질문 → Cypher → 그래프DB → graph_facts/paths/provenance.
+
+    현재 ``execute_cypher_query``는 목업. 실제 Neo4j 드라이버 연결과
+    쿼리 템플릿 라우팅(___test/hybrid_rag 자산 이식)은 후속 이슈로 분리.
+    """
+    q = state.get("reconstructed_query") or ""
+    empty = {"graph_facts": [], "graph_paths": [], "graph_provenance": []}
+
+    try:
+        resp = llm.invoke(CYPHER_PROMPT.format(q=q))
+        cypher = getattr(resp, "content", str(resp)).strip().strip("`")
+
+        if not _looks_like_cypher(cypher):
+            raise GraphQueryError(f"LLM produced non-cypher: {cypher!r}")
+
+        rows = execute_cypher_query(cypher)
+    except Exception as e:   # GraphQueryError 포함
+        print(f"[graph_search_node] degraded: {e}")
+        return empty
+
+    facts: list[UnifiedResult] = []
+    paths: list[list[str]] = []
+    prov: list[str] = []
+    for row in rows:
+        facts.append(_row_to_unified(row))
+        paths.append([x.get("name") or x.get("rel", "") for x in row["path"]])
+        if row.get("rcept_no"):
+            prov.append(row["rcept_no"])
+
+    return {"graph_facts": facts, "graph_paths": paths, "graph_provenance": prov}
+#======================================================================
+# Graph rag 구현 함수
+#======================================================================
 def synthesizer_node(state: AgentState):
     # 1. 3곳의 검색 결과를 모두 가져옵니다 (데이터가 없을 수도 있으니 .get() 사용)
     rdb = state.get("rdb_results", [])
