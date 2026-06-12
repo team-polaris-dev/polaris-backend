@@ -1,0 +1,233 @@
+# POLARIS Graph 서브에이전트 — 결정론 Cypher 화이트리스트
+#
+# 분류 축 = 04_graphrag.md §4 의 12 의도 + §1 5단계 사다리(stage).
+# 재무 단건/추이(fin_value/fin_trend, stage1)는 RDB 영역 → 여기 없음.
+# graph 노드는 관계 단답(stage1) + 멀티홉(2) + 교차(3) 담당. 온톨로지(4)는 ontology_rules.yaml.
+#
+# 매칭 (graph/intent_router.match_template):
+#   1) intent 가 tpl.intents 에 포함
+#   2) stage 가 tpl.stage 와 일치 (stage 생략 템플릿은 모든 단계 허용)
+#   3) query 에 triggers 중 하나 포함 (triggers 비면 통과)
+#   4) entities 길이 >= required_entities
+#   5) required_slots 모두 채워짐
+# 위에서부터 순회 → 우선순위 = 작성 순서. 멀티홉(2)·교차(3)를 단답(1)보다 위에 둬서
+# stage 높은 의도가 먼저 잡히게 한다.
+#
+# 파라미터: $corp_code=entities[0], $corp_codes=entities, $year, $account_id, $relation_type
+#
+# 재무 멀티홉 필터(03_neo4j.md §1·§6-1): {reprt_code:'11011', fs_div:'CFS'} 필수(중복 8배 방지).
+
+# ════════════════════ 3단계 — 교차 (지분/종속 + 재무) ════════════════════
+# 데이터 제약: 재무는 핵심 41사만 적재 → 자회사 대부분 재무 없음.
+# 41사 교집합(엮인 양쪽 다 재무 보유)일 때만 값이 나온다. self_check 가 빈 결과 표시.
+
+affiliates_fin_subsidiary:
+  intents: [affiliates_fin]
+  stage: 3
+  triggers: ["자회사", "종속회사", "계열사"]
+  required_entities: 1
+  required_slots: [account_id]
+  fact_type: fin_metric
+  # 데이터 한계(실측 2026-06): 종속회사표는 적재됐으나 자회사 재무는 미적재 →
+  # 삼성전자 0건, 전체 5사뿐. "자회사 매출" 질문은 대부분 빈 결과(self_check 가 표면화).
+  # 정확한 자회사 재무가 있는 소수 케이스만 반환. 넓은 답은 affiliates_fin_ownership(지분경로).
+  cypher: |
+    MATCH (sub:Organization)-[:IS_SUBSIDIARY_OF]->(o:Organization {corp_code: $corp_code})
+    MATCH (sub)-[:HAS_METRIC]->(m:FinMetric)
+    WHERE m.account_id = $account_id
+      AND m.reprt_code = '11011' AND m.fs_div = 'CFS'
+    RETURN sub.corp_code AS code, sub.name AS org,
+           m.bsns_year AS year, m.value AS value, m.unit AS unit,
+           m.account_id AS account
+    ORDER BY m.bsns_year DESC, m.value DESC
+    LIMIT 100
+
+affiliates_fin_ownership:
+  intents: [affiliates_fin, ownership_out]
+  stage: 3
+  triggers: ["투자한", "출자한", "지분", "관계사", "계열"]
+  required_entities: 1
+  required_slots: [account_id]
+  fact_type: fin_metric
+  # 03_neo4j.md §6-1 표준: 지분 1~2홉 따라가며 각 회사 재무 (연간·연결만).
+  # 실측(2026-06): 삼성전자 14사·2025년 기준 작동. GraphRAG 핵심 가치 경로.
+  # DISTINCT — 같은 회사가 주주·출자 양쪽/1·2홉으로 중복 도달하는 것 제거.
+  # root <> target — 순환경로(root 자신이 2홉으로 재등장) 방지.
+  cypher: |
+    MATCH (root:Organization {corp_code: $corp_code})
+    MATCH path = (root)-[:IS_MAJOR_SHAREHOLDER_OF|INVESTS_IN*1..2]->(target:Organization)
+    WHERE root.corp_code <> target.corp_code
+      AND ALL(rr IN relationships(path) WHERE rr.valid_to IS NULL)
+    MATCH (target)-[:HAS_METRIC]->(m:FinMetric)
+    WHERE m.account_id = $account_id
+      AND m.reprt_code = '11011' AND m.fs_div = 'CFS'
+    RETURN DISTINCT target.corp_code AS code, target.name AS org,
+           m.bsns_year AS year, m.value AS value, m.account_id AS account
+    ORDER BY year DESC, value DESC
+    LIMIT 100
+
+# ════════════════════ 2단계 — 멀티홉 (관계 N홉) ════════════════════
+
+shareholder_ceo:
+  intents: [ownership_in]
+  stage: 2
+  triggers: ["최대주주", "대주주", "주주"]
+  required_entities: 1
+  required_slots: []
+  fact_type: multihop
+  # 최대주주(법인)의 대표이사 — IS_MAJOR_SHAREHOLDER_OF← 1홉 + EXECUTIVE_OF← 1홉
+  cypher: |
+    MATCH (h:Organization)-[r:IS_MAJOR_SHAREHOLDER_OF]->(o:Organization {corp_code: $corp_code})
+    WHERE r.valid_to IS NULL
+    WITH h, r ORDER BY toFloat(r.qota_rt) DESC LIMIT 1
+    MATCH (p:Person)-[er:EXECUTIVE_OF]->(h)
+    WHERE er.ofcps CONTAINS '대표이사' AND er.valid_to IS NULL
+    RETURN h.corp_code AS holder_code, h.name AS holder,
+           p.name AS person, er.ofcps AS pos
+    LIMIT 20
+
+investee_executives:
+  intents: [ownership_out]
+  stage: 2
+  triggers: ["투자한", "출자한"]
+  required_entities: 1
+  required_slots: []
+  fact_type: multihop
+  # 출자한 회사의 임원 — INVESTS_IN→ 1홉 + EXECUTIVE_OF← 1홉
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})-[iv:INVESTS_IN]->(t:Organization)
+    WHERE iv.valid_to IS NULL
+    MATCH (p:Person)-[er:EXECUTIVE_OF]->(t)
+    WHERE er.valid_to IS NULL
+    RETURN t.corp_code AS code, t.name AS investee,
+           p.name AS person, er.ofcps AS pos
+    ORDER BY t.name
+    LIMIT 100
+
+supply_chain_2hop:
+  intents: [supply_chain]
+  stage: 2
+  triggers: ["공급사의 공급사", "2차", "공급망", "납품"]
+  required_entities: 1
+  required_slots: []
+  fact_type: multihop
+  # 공급사의 공급사 (2차 공급망) — SUPPLIES_TO← *1..2
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})
+    MATCH path = (sup:Organization)-[:SUPPLIES_TO*1..2]->(o)
+    RETURN sup.corp_code AS code, sup.name AS supplier,
+           length(path) AS hops
+    ORDER BY hops
+    LIMIT 100
+
+# ════════════════════ 1단계 — 관계 단답 (1홉, 유지) ════════════════════
+# 재무 단답(fin_value/trend)은 RDB. 아래는 graph 만 가진 관계 데이터라 유지.
+
+shareholder_top:
+  intents: [ownership_in]
+  stage: 1
+  triggers: ["최대주주", "대주주", "지분율", "주주", "지분"]
+  required_entities: 1
+  required_slots: []
+  fact_type: shareholder
+  cypher: |
+    MATCH (x)-[r:IS_MAJOR_SHAREHOLDER_OF]->(o:Organization {corp_code: $corp_code})
+    WHERE r.valid_to IS NULL
+    RETURN coalesce(x.name, x.corp_code) AS holder,
+           r.qota_rt AS qota_rt, o.corp_code AS code, o.name AS org
+    ORDER BY toFloat(r.qota_rt) DESC
+    LIMIT 10
+
+executive_of:
+  intents: [executives]
+  stage: 1
+  triggers: ["임원", "대표이사", "사내이사", "사외이사", "감사"]
+  required_entities: 1
+  required_slots: []
+  fact_type: executive
+  cypher: |
+    MATCH (p:Person)-[r:EXECUTIVE_OF]->(o:Organization {corp_code: $corp_code})
+    WHERE r.valid_to IS NULL
+    RETURN p.name AS person, r.ofcps AS pos, o.corp_code AS code, o.name AS org
+    LIMIT 200
+
+subsidiary_list:
+  intents: [subsidiaries]
+  stage: 1
+  triggers: ["자회사", "종속회사", "계열사", "종속"]
+  required_entities: 1
+  required_slots: []
+  fact_type: subsidiary
+  cypher: |
+    MATCH (sub:Organization)-[:IS_SUBSIDIARY_OF]->(o:Organization {corp_code: $corp_code})
+    RETURN sub.corp_code AS sub_code, sub.name AS sub_name,
+           o.corp_code AS code, o.name AS parent
+    ORDER BY sub.name
+    LIMIT 1500
+
+investment_of:
+  intents: [ownership_out]
+  stage: 1
+  triggers: ["투자", "지분투자", "출자", "INVESTS_IN"]
+  required_entities: 1
+  required_slots: []
+  fact_type: investment
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})-[r:INVESTS_IN]->(t)
+    WHERE r.valid_to IS NULL
+    RETURN coalesce(t.name, t.corp_code) AS investee,
+           o.corp_code AS code, o.name AS investor, r.amount AS amount
+    ORDER BY t.name
+    LIMIT 1500
+
+supplies_pair:
+  intents: [supply_chain]
+  stage: 1
+  triggers: ["공급", "매출처", "고객사", "납품", "SUPPLIES_TO"]
+  required_entities: 1
+  required_slots: []
+  fact_type: supplies_to
+  cypher: |
+    MATCH (s:Organization)-[:SUPPLIES_TO]->(b:Organization)
+    WHERE s.corp_code = $corp_code OR b.corp_code = $corp_code
+    RETURN s.corp_code AS s_code, s.name AS supplier,
+           b.corp_code AS b_code, b.name AS buyer
+    LIMIT 80
+
+produces_of:
+  intents: [products]
+  stage: 1
+  triggers: ["제품", "생산", "주력", "PRODUCES"]
+  required_entities: 1
+  required_slots: []
+  fact_type: produces
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})-[:PRODUCES]->(p:Product)
+    RETURN p.name AS product, o.corp_code AS code, o.name AS org
+    LIMIT 100
+
+uses_tech:
+  intents: [products]
+  stage: 1
+  triggers: ["기술", "사용기술", "활용기술", "기술스택", "USES_TECH"]
+  required_entities: 1
+  required_slots: []
+  fact_type: technology
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})-[:USES_TECH]->(t:Technology)
+    RETURN t.name AS technology, o.corp_code AS code, o.name AS org
+    LIMIT 100
+
+related_party_explicit:
+  intents: [related_party]
+  stage: 1
+  triggers: ["특수관계인", "특수관계", "RELATED_PARTY"]
+  required_entities: 1
+  required_slots: []
+  fact_type: related_party
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})-[r:RELATED_PARTY]-(t:Organization)
+    RETURN t.corp_code AS code, t.name AS org,
+           r.relation_type AS relation_type,
+           r.chunk_id AS chunk_id
+    LIMIT 100

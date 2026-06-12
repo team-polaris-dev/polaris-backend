@@ -1,0 +1,73 @@
+# POLARIS Graph 서브에이전트 — 4단계 온톨로지 읽기 규칙 (READ-only)
+#
+# 04_graphrag.md §1 5단계 사다리의 4단계 "온톨로지 엔진 흉내".
+# 파생엣지(CONTROLS_INDIRECTLY/INTERLOCKING_DIRECTORATE)는 배치
+# (db/graph/build_derived_edges.py)가 미리 생성. 여기 규칙은 그것을 읽기만 한다.
+# ownership_class 만 예외 — 파생엣지 없이 정형 엣지에서 즉석 분류(읽기).
+#
+# 스키마는 cypher_templates.yaml 과 동일 (intents/stage/triggers/required_*/cypher/fact_type).
+# runner 는 stage==4 또는 related_party 의도일 때 이 카탈로그를 먼저 시도.
+
+# [비활성 — 실측 2026-06: 전이지배 후보 0건]
+# IS_MAJOR_SHAREHOLDER_OF 지분율 50%↑이 337개 중 5개뿐 + 종속(IS_SUBSIDIARY_OF) 연쇄 0
+# → CONTROLS_INDIRECTLY 가 데이터상 0건이라 런타임 카탈로그에서 제외.
+# 향후 지분 데이터(50%↑ 다단계)가 확장되면 아래 블록 주석 해제 + build_derived_edges 실행.
+# transitive_control:
+#   intents: [related_party]
+#   stage: 4
+#   triggers: ["간접", "간접지배", "전이", "지배하는"]
+#   required_entities: 1
+#   fact_type: derived
+#   cypher: |
+#     MATCH (o:Organization {corp_code: $corp_code})-[d:CONTROLS_INDIRECTLY]->(c:Organization)
+#     RETURN c.corp_code AS code, c.name AS controlled, d.via_hops AS hops, d.rule AS rule
+#     ORDER BY d.via_hops LIMIT 100
+
+interlocking_directorate:
+  intents: [related_party]
+  stage: 4
+  triggers: ["겹치는", "공통임원", "인적연결", "같은 임원", "겸직"]
+  required_entities: 1
+  required_slots: []
+  fact_type: derived
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})-[d:INTERLOCKING_DIRECTORATE]-(c:Organization)
+    RETURN c.corp_code AS code, c.name AS linked,
+           d.via AS via_person, d.confidence AS confidence
+    LIMIT 100
+
+cluster_members:
+  intents: [related_party]
+  stage: 4
+  triggers: ["클러스터", "커뮤니티", "같은 그룹", "그룹 소속", "계열 군집"]
+  required_entities: 1
+  required_slots: []
+  fact_type: derived
+  # Louvain 군집(Organization.cluster_id, build_communities.py 배치) 멤버 조회 —
+  # GraphRAG Global Search 흉내. cluster_id 미부여(배치 미실행) 시 빈 결과(self_check 표면화).
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})
+    WHERE o.cluster_id IS NOT NULL
+    MATCH (c:Organization {cluster_id: o.cluster_id})
+    WHERE c.corp_code <> o.corp_code
+    RETURN c.corp_code AS code, c.name AS org, o.cluster_id AS cluster_id
+    ORDER BY c.name
+    LIMIT 200
+
+ownership_class:
+  intents: [related_party, ownership_out]
+  stage: 4
+  triggers: ["회계분류", "지배 관계", "지배구조", "관계기업", "유의적영향"]
+  required_entities: 1
+  required_slots: []
+  fact_type: derived
+  # 파생엣지 없이 즉석 규칙 분류 (04_graphrag.md §5-a). 읽기 전용.
+  cypher: |
+    MATCH (o:Organization {corp_code: $corp_code})-[r:IS_MAJOR_SHAREHOLDER_OF]->(t:Organization)
+    WHERE r.qota_rt IS NOT NULL AND r.valid_to IS NULL
+    RETURN t.corp_code AS code, t.name AS target, r.qota_rt AS qota_rt,
+           CASE WHEN toFloat(r.qota_rt) >= 50 THEN '지배(종속회사)'
+                WHEN toFloat(r.qota_rt) >= 20 THEN '유의적영향(관계기업)'
+                ELSE '단순투자' END AS accounting_class
+    ORDER BY toFloat(r.qota_rt) DESC
+    LIMIT 100
