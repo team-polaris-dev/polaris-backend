@@ -1,10 +1,6 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from core.state import AgentState
-
-# apimaker 기반 커스텀 LLM 클래스를 불러와 인스턴스화 (router.py 와 동일 패턴).
 from config.llm import llm
-
-llm = llm()
 
 def generate_report_node(state: AgentState):
     """
@@ -57,7 +53,7 @@ def generate_report_node(state: AgentState):
     
     print(f"📝 [Gen Node] 최종 보고서 작성 중... (타겟: {level}, 톤: {tone})")
     # 커스텀 LLM(LLM 기반)은 문자열을 반환하므로 AIMessage 로 감싸 state 에 넣는다.
-    response_text = llm.invoke(messages_to_llm)
+    response_text = llm.invoke(messages_to_llm).content
 
     # 4. 최종 변환된 메시지를 State의 messages 배열에 추가하고,
     # final_draft 키에도 명시적으로 저장하여 상태 업데이트

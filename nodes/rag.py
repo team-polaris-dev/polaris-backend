@@ -6,16 +6,13 @@ from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from core.state import AgentState
-from config.llm import llm
+from config.llm import llm, json_llm
 import re
 from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
 from tool.graph_client import execute_cypher_query, GraphQueryError
-
-# config.llm 의 llm 은 클래스이므로 인스턴스화해서 사용한다 (router.py 와 동일 패턴).
-llm = llm()
 
 
 def _last_human_text(state: AgentState) -> str:
@@ -295,29 +292,26 @@ reflection_prompt = PromptTemplate(
     input_variables=["query", "info"]
 )
 
-# 1-3. 체인 연결 (프롬프트 -> LLM -> JSON 딕셔너리로 자동 변환)
-reflection_chain = reflection_prompt | llm | json_parser
+def _run_reflection(query: str, info: str) -> dict:
+    prompt_text = reflection_prompt.format(query=query, info=info)
+    return json_parser.invoke(json_llm.invoke(prompt_text))
 
 
 # ==========================================
 # 2. 개선된 Reflection 노드
 # ==========================================
-def reflection_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경에 맞게 수정)
+def reflection_node(state: dict):
     """
     Reflect: 취합된 정보가 사용자의 질문에 답변하기에 충분한지 자체 검증합니다.
     """
     query = state.get("reconstructed_query", "")
     info = state.get("synthesized_info", "")
     current_retry = state.get("retry_count", 0)
-    
+
     print("🔍 [Reflect Node] 데이터 충분성 자체 검증 중...")
-    
+
     try:
-        # LCEL 체인 실행 (자동으로 프롬프트를 완성하고, JSON 형태로 파싱하여 딕셔너리로 반환합니다)
-        parsed_response = reflection_chain.invoke({
-            "query": query, 
-            "info": info
-        })
+        parsed_response = _run_reflection(query, info)
         
         is_sufficient = parsed_response.get("is_sufficient", True)
         reason = parsed_response.get("reason", "검증 완료")
