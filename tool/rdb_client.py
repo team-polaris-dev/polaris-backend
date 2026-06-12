@@ -32,12 +32,14 @@ def mariadb_conn():
     finally:
         conn.close()
 
-# SELECT 외 변경/DDL 키워드 + 파일 쓰기(INTO OUTFILE/DUMPFILE) 차단 (이중 방어).
+# SELECT 외 변경/DDL 키워드 + 파일 쓰기(INTO OUTFILE/DUMPFILE) + 파일 읽기
+# (LOAD_FILE/LOAD DATA) 차단 (이중 방어).
 # REPLACE/MERGE 는 SELECT 내 함수명과 충돌하므로 제외 — DML 문장은 어차피
 # "SELECT/WITH 로 시작" 검사에서 걸러진다.
 _FORBIDDEN = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|"
-    r"CALL|LOCK|RENAME|HANDLER)\b"
+    r"CALL|LOCK|RENAME|HANDLER|LOAD_FILE)\b"
+    r"|\bLOAD\s+DATA\b"
     r"|\bINTO\s+(OUTFILE|DUMPFILE)\b",
     re.IGNORECASE,
 )
