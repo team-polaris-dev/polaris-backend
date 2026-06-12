@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import json
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
 from core.state import AgentState
-from config.llm import json_llm, llm
+from config.llm import llm
 import re
 from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
 from tool.graph_client import execute_cypher_query, GraphQueryError
+
+# config.llm 의 llm 은 클래스이므로 인스턴스화해서 사용한다 (router.py 와 동일 패턴).
+llm = llm()
 
 
 def _last_human_text(state: AgentState) -> str:
@@ -265,8 +270,39 @@ def synthesizer_node(state: AgentState):
 
 
 
-def reflection_node(state: AgentState):
+json_parser = JsonOutputParser()
 
+# 1-2. 문자열 기반 프롬프트 템플릿 작성
+# (SystemMessage와 HumanMessage로 나누지 않고 하나의 텍스트로 합칩니다)
+reflection_prompt = PromptTemplate(
+    template="""당신은 공시 분석 데이터 검증(Reflection) 전문가입니다.
+사용자의 질문에 답하기 위해 검색된 [취합된 정보]가 충분한지 엄격하게 평가하세요.
+
+[평가 기준]
+1. 질문에서 요구하는 핵심 수치, 기업명, 사실관계가 취합된 정보에 존재하는가?
+2. 정보가 부족해서 사용자가 원하는 형태의 답변을 생성할 수 없는가?
+
+설명이나 마크다운 없이 반드시 아래 JSON 형식으로만 응답하세요:
+{{"is_sufficient": true 또는 false, "reason": "충분한 이유 또는 누락된 정보 설명"}}
+
+[질문]
+{query}
+
+[취합된 정보]
+{info}
+
+결과 JSON:""",
+    input_variables=["query", "info"]
+)
+
+# 1-3. 체인 연결 (프롬프트 -> LLM -> JSON 딕셔너리로 자동 변환)
+reflection_chain = reflection_prompt | llm | json_parser
+
+
+# ==========================================
+# 2. 개선된 Reflection 노드
+# ==========================================
+def reflection_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경에 맞게 수정)
     """
     Reflect: 취합된 정보가 사용자의 질문에 답변하기에 충분한지 자체 검증합니다.
     """
@@ -274,39 +310,31 @@ def reflection_node(state: AgentState):
     info = state.get("synthesized_info", "")
     current_retry = state.get("retry_count", 0)
     
-    # Ollama 환경: 명시적인 JSON 반환 프롬프트 구성
-    system_prompt = SystemMessage(
-        content=(
-            "당신은 공시 분석 데이터 검증(Reflection) 전문가입니다. "
-            "사용자의 질문에 답하기 위해 검색된 [취합된 정보]가 충분한지 엄격하게 평가하세요.\n\n"
-            "[평가 기준]\n"
-            "1. 질문에서 요구하는 핵심 수치, 기업명, 사실관계가 취합된 정보에 존재하는가?\n"
-            "2. 정보가 부족해서 사용자가 원하는 형태의 답변을 생성할 수 없는가?\n\n"
-            "반드시 아래 JSON 형식으로만 응답하세요:\n"
-            '{"is_sufficient": true 또는 false, "reason": "충분한 이유 또는 누락된 정보 설명"}'
-        )
-    )
-    
-    human_prompt = HumanMessage(
-        content=f"[질문]\n{query}\n\n[취합된 정보]\n{info}"
-    )
-    
     print("🔍 [Reflect Node] 데이터 충분성 자체 검증 중...")
-    response = json_llm.invoke([system_prompt, human_prompt])
     
     try:
-        parsed_response = json.loads(response.content)
-        is_sufficient = parsed_response.get("is_sufficient", True) # 기본값은 True로 두어 무한루프 방지
+        # LCEL 체인 실행 (자동으로 프롬프트를 완성하고, JSON 형태로 파싱하여 딕셔너리로 반환합니다)
+        parsed_response = reflection_chain.invoke({
+            "query": query, 
+            "info": info
+        })
+        
+        is_sufficient = parsed_response.get("is_sufficient", True)
         reason = parsed_response.get("reason", "검증 완료")
-    except json.JSONDecodeError:
-        print("⚠️ [Reflect Node] JSON 파싱 실패. 강제로 검증 통과(True) 처리합니다.")
+        
+    except Exception as e:
+        # LLM이 JSON을 완전히 망가뜨렸을 경우를 대비한 폴백(안전망)
+        print(f"⚠️ [Reflect Node] 체인 실행/파싱 실패. 에러: {e}")
+        print("강제로 검증 통과(True) 처리합니다.")
         is_sufficient = True
         reason = "파싱 오류"
         
     print(f"   -> 검증 결과: {'통과✅' if is_sufficient else '불충분❌'} (사유: {reason})")
     
-    # 정보가 충분하면 바로 gen 노드로 갈 수 있도록 상태 업데이트
-    if not is_sufficient and current_retry >= 0: #테스트위해 일단 1번만 실행
+    # ---------------- 아래부터는 기존 로직과 완전히 동일합니다 ----------------
+
+    # 테스트 위해 임시로 카운트를 0으로 잡은 로직 (원본 유지)
+    if not is_sufficient and current_retry >= 0: 
         print("🛑 [Reflect Node] 최대 재시도 횟수(2회)에 도달했습니다.(지금은 개발단계임으로 바로 통과) 누락된 정보가 있더라도 최종 답변 생성을 강제 진행합니다.")
         return {
             "is_sufficient": True, # 강제로 True를 주어 gen 노드로 보내기
@@ -320,8 +348,7 @@ def reflection_node(state: AgentState):
             "retry_count": current_retry # 통과 시 카운트 유지
         }
     
-    # 💡 정보가 불충분할 경우:
-    # 다음 턴의 Ctx 노드가 '무엇이 부족한지' 알 수 있도록 내부 피드백 메시지를 State에 추가합니다.
+    # 💡 정보가 불충분할 경우 내부 피드백 생성
     feedback_message = SystemMessage(
         content=(
             f"[자체 검증 시스템 알림] 이전 검색 결과가 질문을 해결하기에 불충분했습니다. "

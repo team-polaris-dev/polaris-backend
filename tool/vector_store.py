@@ -412,6 +412,8 @@ def hybrid_search(
 
 
 def search_vector_db(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+
+    print(f"🛠️ [vectorDB]  검색 시뮬레이션 중: {query}")
     if not query.strip():
         return []
     corp_codes, year = extract_filter_signals(query)

@@ -11,7 +11,9 @@ langchain-core
 # apimaker 패키지는 repo 내 apimaker-project/src 를 sys.path 로 직접 사용 (별도 설치 불필요)
 # apimaker 코어 의존성(fastapi/httpx/pydantic)은 위/아래에 이미 포함됨
 langchain-openai
-langchain-ollama
+
+# apimaker (claude CLI 세션 래퍼) - in-process 라이브러리로 직접 사용 (별도 HTTP 서버 불필요)
+-e ../../apimaker[claude]
 
 # RDB (MariaDB 직결)
 pymysql
@@ -27,3 +29,7 @@ python-dotenv
 
 # Test
 pytest
+
+#vector DB
+qdrant_client
+rank_bm25
