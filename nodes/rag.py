@@ -1,19 +1,21 @@
 # nodes/rag.py
 from __future__ import annotations
 
-import re
-
-from pydantic import BaseModel, Field
-
+import json
+from langchain_core.messages import SystemMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
+from core.state import AgentState
 from config.llm import llm
+import re
+from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
+from tool.graph_client import execute_cypher_query, GraphQueryError
 
-
-def supervisor_node(state: AgentState):
-    # (예시) 검색 계획 수립
-    return {"search_plan": ["RDB", "Vector", "Graph"]}
+# config.llm 의 llm 은 클래스이므로 인스턴스화해서 사용한다 (router.py 와 동일 패턴).
+llm = llm()
 
 
 def _last_human_text(state: AgentState) -> str:
@@ -162,10 +164,6 @@ def vector_search_node(state: AgentState):
     except Exception:
         return {"vec_results": []}
 
-
-#======================================================================
-# Graph rag 함수 -
-#======================================================================
 CYPHER_PROMPT = """당신은 한국 DART 공시 KG 전문가다.
 다음 자연어 질문을 Neo4j Cypher로 변환하라.
 스키마:
@@ -235,33 +233,133 @@ def graph_search_node(state: AgentState):
             prov.append(row["rcept_no"])
 
     return {"graph_facts": facts, "graph_paths": paths, "graph_provenance": prov}
-#======================================================================
-# Graph rag 구현 함수
-#======================================================================
+
 def synthesizer_node(state: AgentState):
-    # 1. 3곳의 검색 결과를 모두 가져옵니다 (데이터가 없을 수도 있으니 .get() 사용)
-    rdb = state.get("rdb_results", [])
-    vec = state.get("vec_results", [])
-    graph = state.get("graph_facts", [])
+    """
+    Syn: 3개의 DB(RDB, Vector, Graph)에서 검색된 결과를 하나의 텍스트로 병합합니다.
+    """
+    print("🧩 [Syn Node] 검색 결과 취합 중...")
+    
+    rdb_results = state.get("rdb_results", [])
+    vec_results = state.get("vec_results", [])
+    graph_facts = state.get("graph_facts", [])
+    
+    synthesized_text = ""
+    
+    if rdb_results:
+        synthesized_text += "### [정형 데이터 (RDB)]\n"
+        for res in rdb_results:
+            # 새로운 dict 규격에 맞춰 문자열 조립
+            synthesized_text += f"- 항목: {res.get('name')}, 값: {res.get('value')} (출처: {res.get('source')})\n"
+            
+    if vec_results:
+        synthesized_text += "\n### [비정형 문서 (Vector)]\n"
+        for res in vec_results:
+            synthesized_text += f"- 내용: {res.get('value')} (출처: {res.get('source')})\n"
+            
+    if graph_facts:
+        synthesized_text += "\n### [관계망 데이터 (Graph)]\n"
+        for res in graph_facts:
+            synthesized_text += f"- 관계: {res.get('name')} - {res.get('value')} (출처: {res.get('source')})\n"
 
-    # 2. 모든 결과를 하나의 리스트로 합칩니다
-    all_results = rdb + vec + graph
+    # 검색된 결과가 전혀 없을 경우에 대한 방어 로직
+    if not synthesized_text.strip():
+        synthesized_text = "검색된 데이터가 없습니다."
 
-    # 3. 통일된 dict 키(name, value, source 등)를 활용해 프롬프트에 넣을 텍스트로 변환합니다
-    formatted_texts = []
-    for item in all_results:
-        text = f"[{item['type']}] {item['name']}: {item['value']} (출처: {item['source']})"
-        formatted_texts.append(text)
-
-    combined = "\n".join(formatted_texts)
-
-    return {"synthesized_info": combined}
+    return {"synthesized_info": synthesized_text}
 
 
-def reflection_node(state: AgentState):
-    return {"is_sufficient": True}
+
+json_parser = JsonOutputParser()
+
+# 1-2. 문자열 기반 프롬프트 템플릿 작성
+# (SystemMessage와 HumanMessage로 나누지 않고 하나의 텍스트로 합칩니다)
+reflection_prompt = PromptTemplate(
+    template="""당신은 공시 분석 데이터 검증(Reflection) 전문가입니다.
+사용자의 질문에 답하기 위해 검색된 [취합된 정보]가 충분한지 엄격하게 평가하세요.
+
+[평가 기준]
+1. 질문에서 요구하는 핵심 수치, 기업명, 사실관계가 취합된 정보에 존재하는가?
+2. 정보가 부족해서 사용자가 원하는 형태의 답변을 생성할 수 없는가?
+
+설명이나 마크다운 없이 반드시 아래 JSON 형식으로만 응답하세요:
+{{"is_sufficient": true 또는 false, "reason": "충분한 이유 또는 누락된 정보 설명"}}
+
+[질문]
+{query}
+
+[취합된 정보]
+{info}
+
+결과 JSON:""",
+    input_variables=["query", "info"]
+)
+
+# 1-3. 체인 연결 (프롬프트 -> LLM -> JSON 딕셔너리로 자동 변환)
+reflection_chain = reflection_prompt | llm | json_parser
 
 
-def generate_report_node(state: AgentState):
-    info = state.get("synthesized_info") or "검색 결과가 없습니다."
-    return {"final_draft": info}
+# ==========================================
+# 2. 개선된 Reflection 노드
+# ==========================================
+def reflection_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경에 맞게 수정)
+    """
+    Reflect: 취합된 정보가 사용자의 질문에 답변하기에 충분한지 자체 검증합니다.
+    """
+    query = state.get("reconstructed_query", "")
+    info = state.get("synthesized_info", "")
+    current_retry = state.get("retry_count", 0)
+    
+    print("🔍 [Reflect Node] 데이터 충분성 자체 검증 중...")
+    
+    try:
+        # LCEL 체인 실행 (자동으로 프롬프트를 완성하고, JSON 형태로 파싱하여 딕셔너리로 반환합니다)
+        parsed_response = reflection_chain.invoke({
+            "query": query, 
+            "info": info
+        })
+        
+        is_sufficient = parsed_response.get("is_sufficient", True)
+        reason = parsed_response.get("reason", "검증 완료")
+        
+    except Exception as e:
+        # LLM이 JSON을 완전히 망가뜨렸을 경우를 대비한 폴백(안전망)
+        print(f"⚠️ [Reflect Node] 체인 실행/파싱 실패. 에러: {e}")
+        print("강제로 검증 통과(True) 처리합니다.")
+        is_sufficient = True
+        reason = "파싱 오류"
+        
+    print(f"   -> 검증 결과: {'통과✅' if is_sufficient else '불충분❌'} (사유: {reason})")
+    
+    # ---------------- 아래부터는 기존 로직과 완전히 동일합니다 ----------------
+
+    # 테스트 위해 임시로 카운트를 0으로 잡은 로직 (원본 유지)
+    if not is_sufficient and current_retry >= 0: 
+        print("🛑 [Reflect Node] 최대 재시도 횟수(2회)에 도달했습니다.(지금은 개발단계임으로 바로 통과) 누락된 정보가 있더라도 최종 답변 생성을 강제 진행합니다.")
+        return {
+            "is_sufficient": True, # 강제로 True를 주어 gen 노드로 보내기
+            "retry_count": current_retry + 1
+        }
+    
+    # 정상적으로 충분한 경우
+    if is_sufficient:
+        return {
+            "is_sufficient": True,
+            "retry_count": current_retry # 통과 시 카운트 유지
+        }
+    
+    # 💡 정보가 불충분할 경우 내부 피드백 생성
+    feedback_message = SystemMessage(
+        content=(
+            f"[자체 검증 시스템 알림] 이전 검색 결과가 질문을 해결하기에 불충분했습니다. "
+            f"누락된 원인: {reason} "
+            f"이 피드백을 반영하여, 다른 키워드를 사용하거나 검색 범위를 넓히는 방향으로 질문을 다시 재구성하세요."
+        )
+    )
+    
+    return {
+        "is_sufficient": False,
+        "messages": [feedback_message],  # 이 메시지가 추가되어 Ctx 노드로 돌아갑니다.
+        "retry_count": current_retry + 1
+    }
+

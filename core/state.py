@@ -30,3 +30,5 @@ class AgentState(TypedDict):
     
     synthesized_info: str
     final_draft: str
+    is_sufficient: bool
+    retry_count: int  # 재시도 횟수를 추적하기 위해 추가
