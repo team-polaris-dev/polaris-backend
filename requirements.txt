@@ -11,6 +11,9 @@ langchain-core
 langchain-openai
 langchain-ollama
 
+# apimaker (claude CLI 세션 래퍼) - in-process 라이브러리로 직접 사용 (별도 HTTP 서버 불필요)
+-e ../../apimaker[claude]
+
 # RDB (MariaDB 직결)
 pymysql
 
