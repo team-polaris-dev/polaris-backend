@@ -1,35 +1,29 @@
-# config/llm.py — 전역 LLM 객체. 운영=Ollama, 테스트/오프라인=FakeLLM 폴백.
 import os
-
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage
 
+# Gemini 사용을 위한 LangChain 패키지 임포트
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 load_dotenv()
 
+# 환경 변수에서 설정값 가져오기 (없을 경우 기본값 세팅)
 
-class FakeLLM:
-    """API/서버 없이 동작하는 더미 LLM (테스트·오프라인용)."""
+MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
 
-    def invoke(self, *args, **kwargs):
-        print("[System] FakeLLM이 호출되었습니다.")
-        return AIMessage(content="API 호출 없이 생성된 임시 텍스트입니다.")
+# 1. 기본 LLM (문맥 재구성, 일반 응답, 결과 취합 등 일반적인 대화 및 요약용)
+# RAG 파이프라인의 안정성을 위해 온도는 낮게 설정합니다.
+llm = ChatGoogleGenerativeAI(
+    model=MODEL_NAME,
+    temperature=0.1,
+)
 
+# 2. 구조화된 출력 전용 LLM (라우터 노드 등 JSON 형태의 엄격한 출력이 필요할 때)
+# Gemini 1.5 모델은 JSON 모드를 지원하므로 response_mime_type을 설정해 줍니다.
+json_llm = ChatGoogleGenerativeAI(
+    model=MODEL_NAME,
+    temperature=0.0,
+    response_mime_type= "application/json"
+)
 
-def _build_llm():
-    if os.getenv("USE_FAKE_LLM", "").lower() in ("1", "true", "yes"):
-        return FakeLLM()
-    try:
-        from langchain_ollama import ChatOllama
-
-        return ChatOllama(
-            base_url=os.getenv("OLLAMA_BASE", "http://localhost:11434"),
-            model=os.getenv("OLLAMA_LLM_MODEL", "qwen2.5:14b"),
-            temperature=0,
-        )
-    except Exception as e:  # 패키지 미설치/초기화 실패 → 폴백
-        print(f"[System] Ollama LLM 초기화 실패 → FakeLLM 폴백: {e}")
-        return FakeLLM()
-
-
-# 앱 전역에서 이 객체를 llm 으로 사용한다.
-llm = _build_llm()
+print(f"✅ LLM 연결 준비 완료: {MODEL_NAME} (Google Gemini)")

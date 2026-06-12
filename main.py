@@ -2,6 +2,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
 
 # 작성해둔 LangGraph 컴파일 객체(app)를 불러옵니다.
@@ -13,7 +14,14 @@ api = FastAPI(
     description="LangGraph 기반 멀티 에이전트 RAG 서비스",
     version="1.0.0"
 )
-
+# 🌟 2. 반드시 api = FastAPI() 바로 아래에 위치해야 합니다!
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"], # "OPTIONS"를 포함한 모든 메서드를 허용한다는 뜻
+    allow_headers=["*"],
+)
 # 1. Request DTO 정의 (클라이언트가 보낼 데이터)
 class ChatRequest(BaseModel):
     user_id: str
