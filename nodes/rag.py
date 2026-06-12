@@ -6,16 +6,15 @@ from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from core.state import AgentState
-from config.llm import llm
+# config.llm 의 llm/json_llm 은 이미 생성된 ApimakerLLM 인스턴스다(호출 X).
+# json_llm 은 JSON 강제 모드 — 라우터/리플렉션처럼 JSON 응답이 필요한 곳에 쓴다.
+from config.llm import llm, json_llm
 import re
 from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
 from tool.graph_client import execute_cypher_query, GraphQueryError
-
-# config.llm 의 llm 은 클래스이므로 인스턴스화해서 사용한다 (router.py 와 동일 패턴).
-llm = llm()
 
 
 def _last_human_text(state: AgentState) -> str:
@@ -132,7 +131,11 @@ def rdb_search_node(state: AgentState):
 
 
 def _chunk_to_unified(row: dict) -> UnifiedResult:
-    """Vector 검색 청크 결과 → UnifiedResult."""
+    """Vector 검색 청크 결과 → UnifiedResult.
+
+    rcept_no/title 을 extra 에 보존해 프론트가 '원본 문서' 메타(제목·공시번호)를
+    표시하고 document_index 로 추가 조회(요약·공시일)할 수 있게 한다.
+    """
     name = row.get("corp_name") or row.get("title") or row.get("section_path") or ""
     return {
         "type": "vec_chunk",
@@ -144,6 +147,9 @@ def _chunk_to_unified(row: dict) -> UnifiedResult:
             "year": row.get("year"),
             "doc_type": row.get("doc_type"),
             "section_path": row.get("section_path"),
+            "rcept_no": str(row.get("rcept_no", "")),
+            "title": str(row.get("title", "")),
+            "corp_name": str(row.get("corp_name", "")),
         },
         "source": str(row.get("chunk_id", "")),
     }
@@ -234,33 +240,85 @@ def graph_search_node(state: AgentState):
 
     return {"graph_facts": facts, "graph_paths": paths, "graph_provenance": prov}
 
+# 그래프 관계 타입 → 한글 라벨 (LLM 가독성용; core.serialize 와 동일 키)
+_REL_LABELS: dict[str, str] = {
+    "IS_SUBSIDIARY_OF": "자회사",
+    "EXECUTIVE_OF": "임원",
+    "IS_MAJOR_SHAREHOLDER_OF": "대주주",
+    "SUPPLIES_TO": "공급",
+    "ACQUIRES": "인수",
+    "INVESTS": "투자",
+}
+
+
+def _humanize_rel(rel: str) -> str:
+    return _REL_LABELS.get(rel, (rel or "").replace("_", " ").strip() or "관계")
+
+
+def _format_graph_path(path: list[str]) -> str:
+    """graph_paths 한 항목([노드, 관계, 노드, …])을 사람이 읽는 경로 문자열로.
+
+    예: ['삼성전자','IS_SUBSIDIARY_OF','반도체에피'] → '삼성전자 -[자회사]-> 반도체에피'.
+    graph_facts 는 꼬리 노드와 관계 체인만 남겨 머리/중간 노드가 유실되므로,
+    전체 노드 시퀀스를 가진 graph_paths 를 직접 풀어 쓴다.
+    """
+    parts: list[str] = []
+    for idx, token in enumerate(path):
+        if not token:
+            continue
+        if idx % 2 == 1:  # 홀수 인덱스 = 관계
+            parts.append(f"-[{_humanize_rel(token)}]->")
+        else:             # 짝수 인덱스 = 노드(기업/인물)
+            parts.append(str(token))
+    return " ".join(parts)
+
+
 def synthesizer_node(state: AgentState):
     """
     Syn: 3개의 DB(RDB, Vector, Graph)에서 검색된 결과를 하나의 텍스트로 병합합니다.
     """
     print("🧩 [Syn Node] 검색 결과 취합 중...")
-    
+
     rdb_results = state.get("rdb_results", [])
     vec_results = state.get("vec_results", [])
     graph_facts = state.get("graph_facts", [])
-    
+    graph_paths = state.get("graph_paths", [])
+
     synthesized_text = ""
-    
+
     if rdb_results:
         synthesized_text += "### [정형 데이터 (RDB)]\n"
         for res in rdb_results:
             # 새로운 dict 규격에 맞춰 문자열 조립
             synthesized_text += f"- 항목: {res.get('name')}, 값: {res.get('value')} (출처: {res.get('source')})\n"
-            
+
     if vec_results:
         synthesized_text += "\n### [비정형 문서 (Vector)]\n"
         for res in vec_results:
             synthesized_text += f"- 내용: {res.get('value')} (출처: {res.get('source')})\n"
-            
-    if graph_facts:
+
+    if graph_paths or graph_facts:
         synthesized_text += "\n### [관계망 데이터 (Graph)]\n"
-        for res in graph_facts:
-            synthesized_text += f"- 관계: {res.get('name')} - {res.get('value')} (출처: {res.get('source')})\n"
+        # graph_paths 와 graph_facts 는 행 단위로 정렬됨(graph_search_node 에서 매 행 append).
+        # 전체 경로(머리→관계→꼬리)를 풀어 쓰고, 근거 공시(rcept_no)는 fact.source 에서 가져온다.
+        if graph_paths:
+            for i, path in enumerate(graph_paths):
+                readable = _format_graph_path(path)
+                if not readable:
+                    continue
+                source = ""
+                if i < len(graph_facts):
+                    source = str(graph_facts[i].get("source") or "")
+                line = f"- 관계 경로: {readable}"
+                if source:
+                    line += f" (근거 공시: {source})"
+                synthesized_text += line + "\n"
+        else:
+            # 경로가 비어 있고 fact 만 있는 예외적 경우의 폴백
+            for res in graph_facts:
+                synthesized_text += (
+                    f"- 관계: {res.get('name')} - {res.get('value')} (출처: {res.get('source')})\n"
+                )
 
     # 검색된 결과가 전혀 없을 경우에 대한 방어 로직
     if not synthesized_text.strip():
@@ -295,8 +353,11 @@ reflection_prompt = PromptTemplate(
     input_variables=["query", "info"]
 )
 
-# 1-3. 체인 연결 (프롬프트 -> LLM -> JSON 딕셔너리로 자동 변환)
-reflection_chain = reflection_prompt | llm | json_parser
+# ApimakerLLM 은 Runnable 이 아니라 LCEL 파이프(|)를 쓸 수 없다.
+# 프롬프트 포맷 → json_llm.invoke → JsonOutputParser 로 직접 연결한다.
+def _run_reflection(query: str, info: str) -> dict:
+    prompt_text = reflection_prompt.format(query=query, info=info)
+    return json_parser.invoke(json_llm.invoke(prompt_text))
 
 
 # ==========================================
@@ -313,12 +374,9 @@ def reflection_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경
     print("🔍 [Reflect Node] 데이터 충분성 자체 검증 중...")
     
     try:
-        # LCEL 체인 실행 (자동으로 프롬프트를 완성하고, JSON 형태로 파싱하여 딕셔너리로 반환합니다)
-        parsed_response = reflection_chain.invoke({
-            "query": query, 
-            "info": info
-        })
-        
+        # 프롬프트 완성 → json_llm 호출 → JSON 딕셔너리로 파싱
+        parsed_response = _run_reflection(query, info)
+
         is_sufficient = parsed_response.get("is_sufficient", True)
         reason = parsed_response.get("reason", "검증 완료")
         
@@ -334,7 +392,7 @@ def reflection_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경
     # ---------------- 아래부터는 기존 로직과 완전히 동일합니다 ----------------
 
     # 테스트 위해 임시로 카운트를 0으로 잡은 로직 (원본 유지)
-    if not is_sufficient and current_retry >= 0: 
+    if not is_sufficient and current_retry >= 1: 
         print("🛑 [Reflect Node] 최대 재시도 횟수(2회)에 도달했습니다.(지금은 개발단계임으로 바로 통과) 누락된 정보가 있더라도 최종 답변 생성을 강제 진행합니다.")
         return {
             "is_sufficient": True, # 강제로 True를 주어 gen 노드로 보내기

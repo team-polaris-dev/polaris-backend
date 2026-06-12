@@ -2,9 +2,8 @@ import json
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from core.state import AgentState
-from config.llm import llm
-
-llm = llm()
+# llm/json_llm 은 이미 생성된 ApimakerLLM 인스턴스(호출 X).
+from config.llm import llm, json_llm
 
 # 2-2. JSON 자동 파서 생성
 parser = JsonOutputParser()
@@ -23,8 +22,11 @@ router_prompt = PromptTemplate(
     input_variables=["chat_history"]
 )
 
-# 2-4. 체인 연결 (파이프라인)
-router_chain = router_prompt | llm | parser
+# ApimakerLLM 은 Runnable 이 아니므로 LCEL 파이프(|) 대신 직접 연결한다.
+# 의도 분류는 JSON 응답이 필요하므로 json_llm 을 사용한다.
+def _run_router(chat_history: str) -> dict:
+    prompt_text = router_prompt.format(chat_history=chat_history)
+    return parser.invoke(json_llm.invoke(prompt_text))
 
 
 # ==========================================
@@ -43,8 +45,8 @@ def router_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경에 
     )
     
     try:
-        # 2. LCEL 체인 실행 (프롬프트 템플릿 완성 -> LLM 호출 -> JSON 파싱까지 한 번에 처리)
-        parsed_response = router_chain.invoke({"chat_history": chat_history_text})
+        # 2. 프롬프트 완성 -> json_llm 호출 -> JSON 파싱
+        parsed_response = _run_router(chat_history_text)
         intent = parsed_response.get("intent", "ctx")
         
     except Exception as e:
@@ -78,7 +80,10 @@ reconstruct_prompt = PromptTemplate(
     input_variables=["chat_history"]
 )
 
-reconstruct_chain = reconstruct_prompt | llm | str_parser
+# 문맥 재구성은 일반 텍스트 응답 → llm 사용, AIMessage.content 를 문자열로 파싱.
+def _run_reconstruct(chat_history: str) -> str:
+    prompt_text = reconstruct_prompt.format(chat_history=chat_history)
+    return str_parser.invoke(llm.invoke(prompt_text))
 
 
 def context_reconstruct_node(state: AgentState):
@@ -92,8 +97,8 @@ def context_reconstruct_node(state: AgentState):
         [f"{msg.type}: {msg.content}" for msg in messages if hasattr(msg, 'type') and hasattr(msg, 'content')]
     )
     
-    # 2. 체인 실행 (response.content 등을 쓸 필요 없이 바로 문자열이 반환됨)
-    reconstructed_query = reconstruct_chain.invoke({"chat_history": chat_history_text}).strip()
+    # 2. 프롬프트 완성 -> llm 호출 -> 문자열로 파싱
+    reconstructed_query = _run_reconstruct(chat_history_text).strip()
     
     # 원본 질의 추출 (안전하게 처리)
     original_query = messages[-1].content if messages else "None"
