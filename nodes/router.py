@@ -2,10 +2,7 @@ import json
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from core.state import AgentState
-from config.llm import llm
-
-llm = llm()
-
+from config.llm import llm, json_llm
 # 2-2. JSON 자동 파서 생성
 parser = JsonOutputParser()
 
@@ -23,36 +20,33 @@ router_prompt = PromptTemplate(
     input_variables=["chat_history"]
 )
 
-# 2-4. 체인 연결 (파이프라인)
-router_chain = router_prompt | llm | parser
+def _run_router(chat_history: str) -> dict:
+    prompt_text = router_prompt.format(chat_history=chat_history)
+    return parser.invoke(json_llm.invoke(prompt_text))
 
 
 # ==========================================
 # 3. 라우터 노드 함수 적용
 # ==========================================
-def router_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경에 맞게 수정)
+def router_node(state: dict):
     """Route: 의도 분류"""
     messages = state.get("messages", [])
     if not messages:
         return {"intent": "direct"}
 
-    # 1. 메시지 객체 리스트를 하나의 텍스트로 합칩니다.
-    # (예: "human: 안녕\nai: 안녕하세요!")
     chat_history_text = "\n".join(
         [f"{msg.type}: {msg.content}" for msg in messages if hasattr(msg, 'type') and hasattr(msg, 'content')]
     )
-    
+
     try:
-        # 2. LCEL 체인 실행 (프롬프트 템플릿 완성 -> LLM 호출 -> JSON 파싱까지 한 번에 처리)
-        parsed_response = router_chain.invoke({"chat_history": chat_history_text})
+        parsed_response = _run_router(chat_history_text)
         intent = parsed_response.get("intent", "ctx")
-        
+
     except Exception as e:
-        # JSONDecodeError 등 체인 실행 중 오류 발생 시 폴백 처리
-        print(f"⚠️ [Router Node] 체인 실행/파싱 실패. 에러: {e}")
+        print(f"⚠️ [Router Node] 파싱 실패. 에러: {e}")
         print("기본값(ctx)으로 폴백합니다.")
         intent = "ctx"
-        
+
     print(f"🧭 [Router Node] 의도 분류: {'RAG' if intent == 'ctx' else 'DIRECT'}")
     return {"intent": intent}
 
@@ -78,22 +72,22 @@ reconstruct_prompt = PromptTemplate(
     input_variables=["chat_history"]
 )
 
-reconstruct_chain = reconstruct_prompt | llm | str_parser
+def _run_reconstruct(chat_history: str) -> str:
+    prompt_text = reconstruct_prompt.format(chat_history=chat_history)
+    return str_parser.invoke(llm.invoke(prompt_text))
 
 
 def context_reconstruct_node(state: AgentState):
     """Ctx: 질문 문맥 재구성 (메모리 활용)"""
     messages = state.get("messages", [])
-    
+
     print("✏️ [Context Node] 문장 재구성 중...")
-    
-    # 1. 메시지 객체들을 하나의 텍스트로 합치기
+
     chat_history_text = "\n".join(
         [f"{msg.type}: {msg.content}" for msg in messages if hasattr(msg, 'type') and hasattr(msg, 'content')]
     )
-    
-    # 2. 체인 실행 (response.content 등을 쓸 필요 없이 바로 문자열이 반환됨)
-    reconstructed_query = reconstruct_chain.invoke({"chat_history": chat_history_text}).strip()
+
+    reconstructed_query = _run_reconstruct(chat_history_text).strip()
     
     # 원본 질의 추출 (안전하게 처리)
     original_query = messages[-1].content if messages else "None"
