@@ -1,27 +1,46 @@
 # main.py
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
 # 작성해둔 LangGraph 컴파일 객체(app)를 불러옵니다.
-from core.graph import app 
+from core.graph import app
+
+# 적재 파이프라인 관리자 콘솔
+from routers.admin import router as admin_router
+from services.pipeline_jobs import init_pipeline_tables, sweep_stale_jobs
+
+
+@asynccontextmanager
+async def lifespan(_api: "FastAPI"):
+    # 부팅 시 1회: 운영 메타 테이블 보장 + 죽은 워커가 남긴 잡 정리
+    init_pipeline_tables()
+    sweep_stale_jobs()
+    yield
+
 
 # FastAPI 애플리케이션 초기화
 api = FastAPI(
     title="AI Agent API",
-    description="LangGraph 기반 멀티 에이전트 RAG 서비스",
-    version="1.0.0"
+    description="LangGraph 기반 멀티 에이전트 RAG 서비스 + 적재 파이프라인 콘솔",
+    version="1.1.0",
+    lifespan=lifespan,
 )
-# 🌟 2. 반드시 api = FastAPI() 바로 아래에 위치해야 합니다!
+# CORS — 개발(vite :5173) + 운영(nginx 동일출처). 관리자 토큰 헤더 허용.
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"], # "OPTIONS"를 포함한 모든 메서드를 허용한다는 뜻
+    allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 적재 파이프라인 관리자 라우터 (/api/admin/*)
+api.include_router(admin_router)
 # 1. Request DTO 정의 (클라이언트가 보낼 데이터)
 class ChatRequest(BaseModel):
     user_id: str
@@ -39,24 +58,24 @@ async def chat_endpoint(request: ChatRequest):
     try:
         # LangGraph에 전달할 초기 상태(메시지) 세팅
         inputs = {"messages": [HumanMessage(content=request.message)]}
-        
+
         # Checkpointer(메모리)가 대화 기록을 찾을 수 있도록 thread_id 설정
         config = {"configurable": {"thread_id": request.thread_id}}
-        
+
         # 그래프 실행 (invoke는 최종 결과만 반환합니다. 스트리밍이 필요하면 stream 사용)
         result = app.invoke(inputs, config)
-        
+
         # 그래프의 최종 상태에서 필요한 데이터 추출
         final_message = result["messages"][-1].content
         final_intent = result.get("intent", "unknown")
-        
+
         return ChatResponse(
             response=final_message,
             intent=final_intent
         )
-        
+
     except Exception as e:
-  
+
         raise HTTPException(status_code=500, detail=f"에이전트 처리 중 오류 발생: {str(e)}")
 
 # 직접 실행할 때를 위한 엔트리포인트

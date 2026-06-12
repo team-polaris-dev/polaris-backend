@@ -1,0 +1,9 @@
+# 런타임 데이터/상태 (fetch·chunk·extract 가 생성) — 커밋 금지
+raw/
+chunk/output/
+graph/ledger/
+graph/_auto/
+extra_finance/raw/
+__pycache__/
+*.pyc
+*.jsonl

@@ -1,0 +1,89 @@
+{
+  "self_loops": [],
+  "supplies_bidirectional_total": 48,
+  "supplies_bidir_both_domestic": 0,
+  "orphan_product": 0,
+  "orphan_tech": 0,
+  "company_in_producttech": [],
+  "generic_nodes": [],
+  "short_nodes": [],
+  "newline_nodes": 0,
+  "mojibake_nodes": 0,
+  "broken_provenance_chunks": 0,
+  "edge_counts": [
+    {
+      "rel": "HAS_METRIC",
+      "n": 37679
+    },
+    {
+      "rel": "hasObject",
+      "n": 3313
+    },
+    {
+      "rel": "IS_SUBSIDIARY_OF",
+      "n": 2142
+    },
+    {
+      "rel": "RELATED_PARTY",
+      "n": 2125
+    },
+    {
+      "rel": "PRODUCES",
+      "n": 1825
+    },
+    {
+      "rel": "EXECUTIVE_OF",
+      "n": 1328
+    },
+    {
+      "rel": "USES_TECH",
+      "n": 1314
+    },
+    {
+      "rel": "INVESTS_IN",
+      "n": 1222
+    },
+    {
+      "rel": "SUPPLIES_TO",
+      "n": 415
+    },
+    {
+      "rel": "IS_MAJOR_SHAREHOLDER_OF",
+      "n": 337
+    },
+    {
+      "rel": "INTERLOCKING_DIRECTORATE",
+      "n": 58
+    }
+  ],
+  "node_counts": [
+    {
+      "label": "FinMetric",
+      "n": 37679
+    },
+    {
+      "label": "Organization",
+      "n": 3539
+    },
+    {
+      "label": "Chunk",
+      "n": 2803
+    },
+    {
+      "label": "Product",
+      "n": 1603
+    },
+    {
+      "label": "Person",
+      "n": 1574
+    },
+    {
+      "label": "Technology",
+      "n": 996
+    }
+  ],
+  "provenance_ledger": {
+    "claude": 29230,
+    "q3.5:9b": 1880
+  }
+}

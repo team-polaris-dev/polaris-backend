@@ -1,0 +1,2026 @@
+[
+  {
+    "kind": "bidirectional_supplies",
+    "a": "솔브레인 주식회사",
+    "b": "SK온",
+    "a_id": "01489648",
+    "b_id": "sk온",
+    "fwd_chunk": "fd0893e35c5a4fef",
+    "rev_chunk": "6ec38acb6d3512a2",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "Qualcomm",
+    "a_id": "00126380",
+    "b_id": "qualcomm",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "MediaTek",
+    "a_id": "00126380",
+    "b_id": "mediatek",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "CSOT",
+    "a_id": "00126380",
+    "b_id": "csot",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "AUO",
+    "a_id": "00126380",
+    "b_id": "auo",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "파트론",
+    "a_id": "00126380",
+    "b_id": "파트론",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "동우화인켐",
+    "a_id": "00126380",
+    "b_id": "동우화인켐",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "SUMCO",
+    "a_id": "00126380",
+    "b_id": "sumco",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "5a32287fb9730d13",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "SILTRONIC",
+    "a_id": "00126380",
+    "b_id": "siltronic",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "씨유테크",
+    "a_id": "00126380",
+    "b_id": "씨유테크",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "b9decb0c79905725",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "NVIDIA",
+    "a_id": "00126380",
+    "b_id": "nvidia",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "270048ee1f784f45",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "WNC",
+    "a_id": "00126380",
+    "b_id": "wnc",
+    "fwd_chunk": "f9d5f48adbf56d23",
+    "rev_chunk": "270048ee1f784f45",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "SK텔레콤",
+    "a_id": "00126380",
+    "b_id": "sk텔레콤",
+    "fwd_chunk": "e74e94f6e11c2b19",
+    "rev_chunk": "db2a4a261eedd362",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "케이티",
+    "a_id": "00126380",
+    "b_id": "케이티",
+    "fwd_chunk": "e74e94f6e11c2b19",
+    "rev_chunk": "db2a4a261eedd362",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "솔브레인 주식회사",
+    "b": "LG에너지솔루션",
+    "a_id": "01489648",
+    "b_id": "lg에너지솔루션",
+    "fwd_chunk": "fd0893e35c5a4fef",
+    "rev_chunk": "6ec38acb6d3512a2",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "Apple",
+    "a_id": "00126380",
+    "b_id": "apple",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "270048ee1f784f45",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "SDP",
+    "a_id": "00126380",
+    "b_id": "sdp",
+    "fwd_chunk": "81ac4aa1d32a2fae",
+    "rev_chunk": "b9decb0c79905725",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "엠씨넥스",
+    "a_id": "00126380",
+    "b_id": "엠씨넥스",
+    "fwd_chunk": "f30f4b2223ee504e",
+    "rev_chunk": "f30f4b2223ee504e",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "SI FLEX",
+    "a_id": "00126380",
+    "b_id": "siflex",
+    "fwd_chunk": "81ac4aa1d32a2fae",
+    "rev_chunk": "8437ed61cd3fb5fb",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "LENS",
+    "a_id": "00126380",
+    "b_id": "lens",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "b9decb0c79905725",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "LG유플러스",
+    "a_id": "00126380",
+    "b_id": "lg유플러스",
+    "fwd_chunk": "e74e94f6e11c2b19",
+    "rev_chunk": "db2a4a261eedd362",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "파워로직스",
+    "a_id": "00126380",
+    "b_id": "파워로직스",
+    "fwd_chunk": "302bbdf78f13dde4",
+    "rev_chunk": "303e8d92cd8f233d",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "영풍전자",
+    "a_id": "00126380",
+    "b_id": "영풍전자",
+    "fwd_chunk": "6a4208f9f48fa4de",
+    "rev_chunk": "6a4208f9f48fa4de",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "Biel",
+    "a_id": "00126380",
+    "b_id": "biel",
+    "fwd_chunk": "302bbdf78f13dde4",
+    "rev_chunk": "5a32287fb9730d13",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "Intel",
+    "a_id": "00126380",
+    "b_id": "intel",
+    "fwd_chunk": "fa2c44f6fafa4ad8",
+    "rev_chunk": "b9decb0c79905725",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "솔브레인 주식회사",
+    "b": "SK이노베이션㈜",
+    "a_id": "01489648",
+    "b_id": "sk이노베이션",
+    "fwd_chunk": "81c6b8069f58b486",
+    "rev_chunk": "e6f47d0ac3ff4998",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "SUNNY OPTICAL",
+    "a_id": "00126380",
+    "b_id": "sunnyoptical",
+    "fwd_chunk": "f9d5f48adbf56d23",
+    "rev_chunk": "f9d5f48adbf56d23",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "Micron",
+    "a_id": "00126380",
+    "b_id": "micron",
+    "fwd_chunk": "3597e264e6c131e5",
+    "rev_chunk": "3597e264e6c131e5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "솔브레인 주식회사",
+    "b": "엘지디스플레이",
+    "a_id": "01489648",
+    "b_id": "엘지디스플레이",
+    "fwd_chunk": "efc03764b62d0488",
+    "rev_chunk": "d77361ac218c4944",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "에스케이하이닉스(주)",
+    "b": "Rambus Inc.",
+    "a_id": "00164779",
+    "b_id": "rambus",
+    "fwd_chunk": "f15115f39ea33d7f",
+    "rev_chunk": "25b48cb27fef932c",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "에스케이하이닉스(주)",
+    "b": "SK hynix NAND Product Solutions Corp.",
+    "a_id": "00164779",
+    "b_id": "skhynixnandproductsolutions",
+    "fwd_chunk": "b67b7687bb2933bf",
+    "rev_chunk": "4a70ed610ff2137f",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)케이씨텍",
+    "b": "SEM Tech",
+    "a_id": "01261893",
+    "b_id": "semtech",
+    "fwd_chunk": "c65ae463aefc1941",
+    "rev_chunk": "4406db8b860fb99b",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)케이씨텍",
+    "b": "PSK",
+    "a_id": "01261893",
+    "b_id": "psk",
+    "fwd_chunk": "c65ae463aefc1941",
+    "rev_chunk": "4406db8b860fb99b",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)케이씨텍",
+    "b": "Xiamen Tianma Optoelectronics Co.,Ltd.",
+    "a_id": "01261893",
+    "b_id": "xiamentianmaoptoelectronics",
+    "fwd_chunk": "5d1efb736b1147c3",
+    "rev_chunk": "9dd6e0025b54e5f8",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "솔브레인 주식회사",
+    "b": "LG화학",
+    "a_id": "01489648",
+    "b_id": "lg화학",
+    "fwd_chunk": "81c6b8069f58b486",
+    "rev_chunk": "e6f47d0ac3ff4998",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "Micron Technology",
+    "a_id": "00161383",
+    "b_id": "microntechnology",
+    "fwd_chunk": "c2635cdeed1ece3b",
+    "rev_chunk": "46d0be7bdd0cf8c5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "ASE",
+    "a_id": "00161383",
+    "b_id": "ase",
+    "fwd_chunk": "c2635cdeed1ece3b",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "Amkor",
+    "a_id": "00161383",
+    "b_id": "amkor",
+    "fwd_chunk": "c2635cdeed1ece3b",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "JCET",
+    "a_id": "00161383",
+    "b_id": "jcet",
+    "fwd_chunk": "bd9c68c29bdb5dc8",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "Huatian Technology",
+    "a_id": "00161383",
+    "b_id": "huatiantechnology",
+    "fwd_chunk": "bd9c68c29bdb5dc8",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "TFME",
+    "a_id": "00161383",
+    "b_id": "tfme",
+    "fwd_chunk": "bd9c68c29bdb5dc8",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "Infineon",
+    "a_id": "00161383",
+    "b_id": "infineon",
+    "fwd_chunk": "bd9c68c29bdb5dc8",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "ST Micro",
+    "a_id": "00161383",
+    "b_id": "stmicro",
+    "fwd_chunk": "bd9c68c29bdb5dc8",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "PTI",
+    "a_id": "00161383",
+    "b_id": "pti",
+    "fwd_chunk": "bd9c68c29bdb5dc8",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "Skyworks",
+    "a_id": "00161383",
+    "b_id": "skyworks",
+    "fwd_chunk": "bd9c68c29bdb5dc8",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "Luxshare",
+    "a_id": "00161383",
+    "b_id": "luxshare",
+    "fwd_chunk": "650295963d21e284",
+    "rev_chunk": "46d0be7bdd0cf8c5",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "한미반도체(주)",
+    "b": "SPIL",
+    "a_id": "00161383",
+    "b_id": "spil",
+    "fwd_chunk": "fcb28910e3b3ceb6",
+    "rev_chunk": "75f25de012afa2e6",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "Harman",
+    "a_id": "00126380",
+    "b_id": "harman",
+    "fwd_chunk": "678ceac1bc9cce70",
+    "rev_chunk": "321a4d06c0115f45",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "에스케이하이닉스(주)",
+    "b": "SK hynix Semiconductor (Shanghai) Co.,Ltd.",
+    "a_id": "00164779",
+    "b_id": "skhynixsemiconductor",
+    "fwd_chunk": "ad793baad16e5c52",
+    "rev_chunk": "4a70ed610ff2137f",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "삼성전자(주)",
+    "b": "Tesla",
+    "a_id": "00126380",
+    "b_id": "tesla",
+    "fwd_chunk": "de487fda027c3fa7",
+    "rev_chunk": "bc6151758ee1d675",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)에프에스티",
+    "b": "(주)화인세라텍(*1)",
+    "a_id": "00223434",
+    "b_id": "화인세라텍",
+    "fwd_chunk": "580859fba1508e3b",
+    "rev_chunk": "91ccffa12bd9b42a",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)에프에스티",
+    "b": "(주)시엠테크놀로지",
+    "a_id": "00223434",
+    "b_id": "시엠테크놀로지",
+    "fwd_chunk": "f6b7c5138c7a7ab4",
+    "rev_chunk": "983172d5ca69678f",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)에프에스티",
+    "b": "탐스",
+    "a_id": "00223434",
+    "b_id": "탐스",
+    "fwd_chunk": "b3e30b166da185ae",
+    "rev_chunk": "983172d5ca69678f",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)에프에스티",
+    "b": "파워팩터스",
+    "a_id": "00223434",
+    "b_id": "파워팩터스",
+    "fwd_chunk": "b3e30b166da185ae",
+    "rev_chunk": "983172d5ca69678f",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)동진쎄미켐",
+    "b": "BOE Technology Group",
+    "a_id": "00118804",
+    "b_id": "boetechnologygroup",
+    "fwd_chunk": "115ab2969de175af",
+    "rev_chunk": "ced1e86059abf29a",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)동진쎄미켐",
+    "b": "엘지디스플레이",
+    "a_id": "00118804",
+    "b_id": "엘지디스플레이",
+    "fwd_chunk": "e3a0435979f04c61",
+    "rev_chunk": "d792b008582d9679",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)동진쎄미켐",
+    "b": "동진첨단소재",
+    "a_id": "00118804",
+    "b_id": "동진첨단소재",
+    "fwd_chunk": "ef84483d7b0c95f8",
+    "rev_chunk": "832a361a59437379",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)동진쎄미켐",
+    "b": "UNICELL CO.,LTD.",
+    "a_id": "00118804",
+    "b_id": "unicell",
+    "fwd_chunk": "b9c2a4b1dfb4f3af",
+    "rev_chunk": "fd782074cee4559c",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)동진쎄미켐",
+    "b": "Tokyo Electronic Materials",
+    "a_id": "00118804",
+    "b_id": "tokyoelectronicmaterials",
+    "fwd_chunk": "b4cfe4e08cb7f7a3",
+    "rev_chunk": "fd782074cee4559c",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "bidirectional_supplies",
+    "a": "(주)동진쎄미켐",
+    "b": "Scarlet Kim & Co.,Inc.",
+    "a_id": "00118804",
+    "b_id": "scarletkim&co.,",
+    "fwd_chunk": "b4cfe4e08cb7f7a3",
+    "rev_chunk": "cca25855d280b1ae",
+    "fwd_src": null,
+    "rev_src": null,
+    "조치": "본문(chunk) 확인 후 한 방향 삭제 — event 보강(source=event:*)이 있으면 그쪽이 우선"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00118804",
+    "graph": "00118804 -> 00164779",
+    "chunk_id": "a98ad0941a5fe664",
+    "rcept_no": "20251114003132",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "455ae531d14d071b",
+    "rcept_no": "20250319000732",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "e6f47d0ac3ff4998",
+    "rcept_no": "20260316001567",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "467919a4fe585c1b",
+    "rcept_no": "20250515001760",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "350bb7a5595a11e8",
+    "rcept_no": "20240312000736",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "46d0be7bdd0cf8c5",
+    "rcept_no": "20250313001171",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "d792b008582d9679",
+    "rcept_no": "20250515001760",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "e6f47d0ac3ff4998",
+    "rcept_no": "20260316001567",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "d927792dc9cfdb22",
+    "rcept_no": "20240814003284",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126186",
+    "graph": "00126186 -> 00126380",
+    "chunk_id": "f216c752169e119e",
+    "rcept_no": "20260310002989",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "d573ea3bc25236b6",
+    "rcept_no": "20240516002064",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "194982b1b95b5c19",
+    "rcept_no": "20250814003716",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "e0b85c837017c07e",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "d77361ac218c4944",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00223434",
+    "graph": "00223434 -> 00126380",
+    "chunk_id": "db84ad8d84b1189e",
+    "rcept_no": "20260514000167",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "ac6f4b70e49975d3",
+    "rcept_no": "20240814002657",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "4965ae5a82336cc4",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "40252d55cfb2b36f",
+    "rcept_no": "20250317000913",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "557ac372c550a511",
+    "rcept_no": "20241114001783",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "dc008e367cdb47ab",
+    "rcept_no": "20240814003244",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "e0b85c837017c07e",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "f9d5f48adbf56d23",
+    "rcept_no": "20250814003156",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "36b86cae647d8938",
+    "rcept_no": "20250515002401",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "6ec38acb6d3512a2",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "f30f4b2223ee504e",
+    "rcept_no": "20251114002447",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "ce36bf486f276416",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "22c61cab74399281",
+    "rcept_no": "20241114002642",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "e6f47d0ac3ff4998",
+    "rcept_no": "20260316001567",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "df453c5bf342d142",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "9a5db6467c4a4ddb",
+    "rcept_no": "20240516002064",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "fa2c44f6fafa4ad8",
+    "rcept_no": "20250311001085",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "36b86cae647d8938",
+    "rcept_no": "20250515002401",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "976a6d9be5721201",
+    "rcept_no": "20250814002985",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "4965ae5a82336cc4",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "d77361ac218c4944",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "1a9936deac7476e7",
+    "rcept_no": "20241114002537",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "302bbdf78f13dde4",
+    "rcept_no": "20240312000736",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "df453c5bf342d142",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "4a03453000e0da43",
+    "rcept_no": "20260319000264",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "ced1e86059abf29a",
+    "rcept_no": "20240814002657",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00447609",
+    "graph": "00447609 -> 00912006",
+    "chunk_id": "0326116bab899423",
+    "rcept_no": "20250326000026",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "270048ee1f784f45",
+    "rcept_no": "20260515002181",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "d56a176546c0f0e5",
+    "rcept_no": "20260319000264",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "01135941 -> 한국수출입은행",
+    "graph": "한국수출입은행 -> 01135941",
+    "chunk_id": "d9eb05b5225f088d",
+    "rcept_no": "20250318001440",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "d77361ac218c4944",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "997a0f4073cfe51a",
+    "rcept_no": "20240516002064",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "115ab2969de175af",
+    "rcept_no": "20260515001804",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "01135941 -> 산업은행",
+    "graph": "산업은행 -> 01135941",
+    "chunk_id": "d9eb05b5225f088d",
+    "rcept_no": "20250318001440",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "376a10287653e727",
+    "rcept_no": "20250814001977",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "ce36bf486f276416",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "d927792dc9cfdb22",
+    "rcept_no": "20240814003284",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "3fc6be37430a7794",
+    "rcept_no": "20250515002401",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "16c522a44a5aae95",
+    "rcept_no": "20251114003132",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01261893",
+    "graph": "01261893 -> 00164779",
+    "chunk_id": "16579eeb585fb02a",
+    "rcept_no": "20260313001174",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "4ca09ba4f9922fa8",
+    "rcept_no": "20250319000732",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "a0e1a80d7604e2bf",
+    "rcept_no": "20251114002447",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "10e0996e92fb9b32",
+    "rcept_no": "20260310002820",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "4cfb9d1aceb3ec01",
+    "rcept_no": "20240814004193",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "a71356f4da1fb218",
+    "rcept_no": "20241114001783",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "81ac4aa1d32a2fae",
+    "rcept_no": "20260310002820",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "f30f4b2223ee504e",
+    "rcept_no": "20251114002447",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "8b2e532e88197126",
+    "rcept_no": "20250814003716",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "9d7a19a6756ec20a",
+    "rcept_no": "20260319000264",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "c155d8b636918c64",
+    "rcept_no": "20240814003284",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "4f2ba6af11bf444d",
+    "rcept_no": "20241114002196",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "8b2e532e88197126",
+    "rcept_no": "20250814003716",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "df453c5bf342d142",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "40252d55cfb2b36f",
+    "rcept_no": "20250317000913",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "01135941 -> 국민은행",
+    "graph": "국민은행 -> 01135941",
+    "chunk_id": "d9eb05b5225f088d",
+    "rcept_no": "20250318001440",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "1bbba7d417906877",
+    "rcept_no": "20240314001382",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "fa2c44f6fafa4ad8",
+    "rcept_no": "20250311001085",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "4965ae5a82336cc4",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "df453c5bf342d142",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "7944e00255441c7f",
+    "rcept_no": "20241114001783",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "557ac372c550a511",
+    "rcept_no": "20241114001783",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "4cfb9d1aceb3ec01",
+    "rcept_no": "20240814004193",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "6ec38acb6d3512a2",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00118804",
+    "graph": "00118804 -> 00164779",
+    "chunk_id": "467919a4fe585c1b",
+    "rcept_no": "20250515001760",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "5908b2f59102d723",
+    "rcept_no": "20250515000846",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "1bbba7d417906877",
+    "rcept_no": "20240314001382",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00161383",
+    "graph": "00161383 -> 00126380",
+    "chunk_id": "46d0be7bdd0cf8c5",
+    "rcept_no": "20250313001171",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126371 -> 00161383",
+    "graph": "00161383 -> 00126371",
+    "chunk_id": "75f25de012afa2e6",
+    "rcept_no": "20240514001326",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "3fc6be37430a7794",
+    "rcept_no": "20250515002401",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00118804",
+    "graph": "00118804 -> 00164779",
+    "chunk_id": "ced1e86059abf29a",
+    "rcept_no": "20240814002657",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "bb550bb47fb49593",
+    "rcept_no": "20250515001922",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "4cfb9d1aceb3ec01",
+    "rcept_no": "20240814004193",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "39ce537f49b0ed57",
+    "rcept_no": "20250515001760",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "e1be834a20e688fd",
+    "rcept_no": "20241114002173",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "d573ea3bc25236b6",
+    "rcept_no": "20240516002064",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "e6f47d0ac3ff4998",
+    "rcept_no": "20260316001567",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126371 -> 00161383",
+    "graph": "00161383 -> 00126371",
+    "chunk_id": "46d0be7bdd0cf8c5",
+    "rcept_no": "20250313001171",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "7579bb09eb527b69",
+    "rcept_no": "20240514001326",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "8b2e532e88197126",
+    "rcept_no": "20250814003716",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "e1be834a20e688fd",
+    "rcept_no": "20241114002173",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "376a10287653e727",
+    "rcept_no": "20250814001977",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00118804",
+    "graph": "00118804 -> 00164779",
+    "chunk_id": "4da0702ea8fd70b2",
+    "rcept_no": "20260515001804",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "302bbdf78f13dde4",
+    "rcept_no": "20240312000736",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "4fef264764874979",
+    "rcept_no": "20240516001945",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126371 -> 00161383",
+    "graph": "00161383 -> 00126371",
+    "chunk_id": "ce68bb6d91cafdf8",
+    "rcept_no": "20250313001171",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "75f25de012afa2e6",
+    "rcept_no": "20240514001326",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "22c61cab74399281",
+    "rcept_no": "20241114002642",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00161383",
+    "graph": "00161383 -> 00126380",
+    "chunk_id": "ce68bb6d91cafdf8",
+    "rcept_no": "20250313001171",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "37706ba50e94bc40",
+    "rcept_no": "20260319000264",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "2ee3e1498cdf8c7d",
+    "rcept_no": "20250814004371",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "81ac4aa1d32a2fae",
+    "rcept_no": "20260310002820",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "b9decb0c79905725",
+    "rcept_no": "20241114002642",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "39fc5ffa3c0db01e",
+    "rcept_no": "20260515002842",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "1954196c71854b3c",
+    "rcept_no": "20250814004371",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "194982b1b95b5c19",
+    "rcept_no": "20250814003716",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "ac6f4b70e49975d3",
+    "rcept_no": "20240814002657",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "97d41c7854b2b49c",
+    "rcept_no": "20240314001257",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00447609",
+    "graph": "00447609 -> 00912006",
+    "chunk_id": "1b6793cd0e8f0c4c",
+    "rcept_no": "20240814002666",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "36b86cae647d8938",
+    "rcept_no": "20250515002401",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "40252d55cfb2b36f",
+    "rcept_no": "20250317000913",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "01135941 -> 신한은행",
+    "graph": "신한은행 -> 01135941",
+    "chunk_id": "d9eb05b5225f088d",
+    "rcept_no": "20250318001440",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00223434",
+    "graph": "00223434 -> 00126380",
+    "chunk_id": "665a0b4062e6c6b2",
+    "rcept_no": "20250318001389",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "01135941 -> keb하나은행",
+    "graph": "keb하나은행 -> 01135941",
+    "chunk_id": "d9eb05b5225f088d",
+    "rcept_no": "20250318001440",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "e1be834a20e688fd",
+    "rcept_no": "20241114002173",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "40252d55cfb2b36f",
+    "rcept_no": "20250317000913",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "4fef264764874979",
+    "rcept_no": "20240516001945",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "36b86cae647d8938",
+    "rcept_no": "20250515002401",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "00e4d6ba80488e8d",
+    "rcept_no": "20240312000778",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "b9decb0c79905725",
+    "rcept_no": "20241114002642",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "bb550bb47fb49593",
+    "rcept_no": "20250515001922",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00161383",
+    "graph": "00161383 -> 00126380",
+    "chunk_id": "75f25de012afa2e6",
+    "rcept_no": "20240514001326",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "3597e264e6c131e5",
+    "rcept_no": "20260515002181",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "a98ad0941a5fe664",
+    "rcept_no": "20251114003132",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "4fef264764874979",
+    "rcept_no": "20240516001945",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00411048",
+    "graph": "00411048 -> 00126380",
+    "chunk_id": "6f62f4fd1044a9eb",
+    "rcept_no": "20251113000316",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00411048",
+    "graph": "00411048 -> 00126380",
+    "chunk_id": "66db4a372b871c52",
+    "rcept_no": "20250317000263",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "6a4208f9f48fa4de",
+    "rcept_no": "20240814003284",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "f9d5f48adbf56d23",
+    "rcept_no": "20250814003156",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00118804",
+    "graph": "00118804 -> 00164779",
+    "chunk_id": "7944e00255441c7f",
+    "rcept_no": "20241114001783",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "ce36bf486f276416",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "8b2e532e88197126",
+    "rcept_no": "20250814003716",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "9d8c3e0b3f9cde66",
+    "rcept_no": "20251114003132",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "37706ba50e94bc40",
+    "rcept_no": "20260319000264",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "194982b1b95b5c19",
+    "rcept_no": "20250814003716",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "01135941 -> nh농협은행",
+    "graph": "nh농협은행 -> 01135941",
+    "chunk_id": "d9eb05b5225f088d",
+    "rcept_no": "20250318001440",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "d792b008582d9679",
+    "rcept_no": "20250515001760",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00118804",
+    "graph": "00118804 -> 00164779",
+    "chunk_id": "115ab2969de175af",
+    "rcept_no": "20260515001804",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "3597e264e6c131e5",
+    "rcept_no": "20260515002181",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00161383",
+    "graph": "00161383 -> 00164779",
+    "chunk_id": "2d48fe3107bac285",
+    "rcept_no": "20240314001257",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "4a03453000e0da43",
+    "rcept_no": "20260319000264",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "6a4208f9f48fa4de",
+    "rcept_no": "20240814003284",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "e0b85c837017c07e",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "270048ee1f784f45",
+    "rcept_no": "20260515002181",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "cc6faf4b4413f2dc",
+    "rcept_no": "20240314001382",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "e1be834a20e688fd",
+    "rcept_no": "20241114002173",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "bcd17eb18ac05398",
+    "rcept_no": "20250814001977",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "6ec38acb6d3512a2",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126362 -> 01489648",
+    "graph": "01489648 -> 00126362",
+    "chunk_id": "4965ae5a82336cc4",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00118804",
+    "graph": "00118804 -> 00126380",
+    "chunk_id": "4da0702ea8fd70b2",
+    "rcept_no": "20260515001804",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "a0e1a80d7604e2bf",
+    "rcept_no": "20251114002447",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 01489648",
+    "graph": "01489648 -> 00912006",
+    "chunk_id": "6ec38acb6d3512a2",
+    "rcept_no": "20240318000832",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "9a5db6467c4a4ddb",
+    "rcept_no": "20240516002064",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 00118804",
+    "graph": "00118804 -> 00164779",
+    "chunk_id": "4ca09ba4f9922fa8",
+    "rcept_no": "20250319000732",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 01489648",
+    "graph": "01489648 -> 00126380",
+    "chunk_id": "10e0996e92fb9b32",
+    "rcept_no": "20260310002820",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "ce36bf486f276416",
+    "rcept_no": "20251114002576",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "1aaf6c9df2e6e52c",
+    "rcept_no": "20250311001190",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00164779 -> 01489648",
+    "graph": "01489648 -> 00164779",
+    "chunk_id": "3fc6be37430a7794",
+    "rcept_no": "20250515002401",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00912006 -> 00118804",
+    "graph": "00118804 -> 00912006",
+    "chunk_id": "16c522a44a5aae95",
+    "rcept_no": "20251114003132",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  },
+  {
+    "kind": "ledger_graph_direction_conflict",
+    "ledger": "00126380 -> 00126371",
+    "graph": "00126371 -> 00126380",
+    "chunk_id": "33d7077ca46953a5",
+    "rcept_no": "20240312000778",
+    "조치": "그래프가 SSOT(정리 반영분) — 원장 직답 금지 확인. 본문 재확인 시 chunk_id 사용"
+  }
+]
