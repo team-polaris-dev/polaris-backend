@@ -9,7 +9,6 @@ langchain-core
 
 # LLM Provider
 langchain-openai
-langchain-ollama
 
 # apimaker (claude CLI 세션 래퍼) - in-process 라이브러리로 직접 사용 (별도 HTTP 서버 불필요)
 -e ../../apimaker[claude]
@@ -26,5 +25,6 @@ python-dotenv
 # Test
 pytest
 
-langchain_google_genai
-pymysql
+#vector DB
+qdrant_client
+rank_bm25
