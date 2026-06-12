@@ -30,7 +30,7 @@ from schemas.pipeline import (
     JobCreateRequest,
     JobResponse,
 )
-from services import pipeline_jobs, pipeline_runner
+from services import chat_analytics, pipeline_jobs, pipeline_runner
 from services.sse import stream_job
 from tool.rdb_client import mariadb_conn
 
@@ -151,6 +151,50 @@ async def cancel_job_route(job_id: str, _=Depends(verify_admin_token)) -> Cancel
         raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
     cancelled, was_running = await pipeline_runner.cancel_job(job_id)
     return CancelResponse(job_id=job_id, cancelled=cancelled, was_running=was_running)
+
+
+# ===== 챗봇 통계 (analytics) =====
+
+@router.get("/analytics/overview")
+async def analytics_overview(_=Depends(verify_admin_token)) -> dict:
+    return chat_analytics.overview()
+
+
+@router.get("/analytics/volume")
+async def analytics_volume(
+    days: int = Query(default=30, ge=1, le=180),
+    _=Depends(verify_admin_token),
+) -> list[dict]:
+    return chat_analytics.volume_series(days=days)
+
+
+@router.get("/analytics/intents")
+async def analytics_intents(
+    limit: int = Query(default=12, ge=1, le=50),
+    _=Depends(verify_admin_token),
+) -> list[dict]:
+    return chat_analytics.intent_distribution(limit=limit)
+
+
+@router.get("/analytics/tools")
+async def analytics_tools(_=Depends(verify_admin_token)) -> list[dict]:
+    return chat_analytics.tool_usage()
+
+
+@router.get("/analytics/users")
+async def analytics_users(
+    limit: int = Query(default=10, ge=1, le=100),
+    _=Depends(verify_admin_token),
+) -> list[dict]:
+    return chat_analytics.top_users(limit=limit)
+
+
+@router.get("/analytics/sessions")
+async def analytics_sessions(
+    limit: int = Query(default=15, ge=1, le=100),
+    _=Depends(verify_admin_token),
+) -> list[dict]:
+    return chat_analytics.recent_sessions(limit=limit)
 
 
 # ----- 내부 헬퍼 -----
