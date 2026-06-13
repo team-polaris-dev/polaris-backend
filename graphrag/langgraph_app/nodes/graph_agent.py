@@ -166,6 +166,27 @@ def _resolve_provenance(
     return prov
 
 
+# ── 쌍(pair) fact → graph_paths 경로 합성 ────────────────────────────────────
+# build_graph(core/serialize.py)는 그래프 패널을 graph_paths 의 홀수 인덱스를
+# 관계 토큰으로 보고 REL_LABELS 로 한글화하므로, serialize.REL_LABELS 와 같은
+# 정규 토큰을 내보낸다.
+_PATH_PAIRS = (
+    ("supplier", "buyer", "SUPPLIES_TO"),
+    ("investor", "investee", "INVESTS"),
+    ("holder", "org", "IS_MAJOR_SHAREHOLDER_OF"),
+    ("sub_name", "parent", "IS_SUBSIDIARY_OF"),
+    ("person", "org", "EXECUTIVE_OF"),
+)
+
+
+def _pair_path(fact: dict[str, Any]) -> list[str]:
+    """쌍 관계 fact → [시작노드, 관계토큰, 끝노드]. 쌍이 아니면 []."""
+    for a, b, rel in _PATH_PAIRS:
+        if fact.get(a) and fact.get(b):
+            return [str(fact[a]), rel, str(fact[b])]
+    return []
+
+
 def graph_search_node(state: dict[str, Any]) -> dict[str, Any]:
     """polaris-backend LangGraph 그래프 노드 — 공개 진입점.
 
@@ -212,6 +233,13 @@ def graph_search_node(state: dict[str, Any]) -> dict[str, Any]:
 
     facts = [_normalize_fact(f) for f in raw_facts]
     provenance = _resolve_provenance(raw_facts, chunk_ids)
+
+    # runner 는 anchor_chunks(stage>=2 / 무facts)에서만 graph_paths 를 채운다.
+    # stage-1 에서 템플릿/LLM 으로 쌍 관계 fact 를 찾으면 paths 가 비어, 그래프
+    # 패널(graph_paths 만 읽음)이 비게 된다. paths 가 비면 쌍 fact 에서 경로를
+    # 합성한다(raw_facts 와 1:1 정렬 → build_graph 의 rcept_no 매칭 유지).
+    if not paths:
+        paths = [_pair_path(f) for f in raw_facts]
 
     return {
         "graph_facts": facts,
