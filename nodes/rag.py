@@ -10,6 +10,7 @@ from config.llm import llm, json_llm
 import re
 from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
+from graphrag import graph_search_node as _graphrag_search_node
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
 from tool.graph_client import execute_cypher_query, GraphQueryError
@@ -161,76 +162,22 @@ def vector_search_node(state: AgentState):
     except Exception:
         return {"vec_results": []}
 
-CYPHER_PROMPT = """당신은 한국 DART 공시 KG 전문가다.
-다음 자연어 질문을 Neo4j Cypher로 변환하라.
-스키마:
-- (:Organization {{corp_code,name}})
-- (:FilingDocument {{rcept_no}})
-- (:Organization)-[:IS_SUBSIDIARY_OF]->(:Organization)
-- (:Person)-[:EXECUTIVE_OF]->(:Organization)
-- (:Organization)-[:IS_MAJOR_SHAREHOLDER_OF {{qota_rt}}]->(:Organization)
-반드시 RETURN에 path와 rcept_no를 포함하라.
-질문: {q}
-Cypher:"""
 
-
-def _looks_like_cypher(q: str) -> bool:
-    """LLM이 생성한 쿼리가 최소한의 Cypher 문법(MATCH/RETURN)을 갖추었는지 검사."""
-    if not q or len(q) < 10:
-        return False
-    up = q.upper()
-    return "MATCH" in up and "RETURN" in up
-
-
-def _row_to_unified(row: dict) -> UnifiedResult:
-    """그래프DB row → UnifiedResult(type/code/name/value/extra/source) 변환."""
-    nodes = [x for x in row["path"] if "corp_code" in x]
-    tail = nodes[-1] if nodes else {"corp_code": "", "name": ""}
-    rels = [x.get("rel") for x in row["path"] if "rel" in x]
-
-    return {
-        "type": "graph_path",
-        "code": tail["corp_code"],
-        "name": tail["name"],
-        "value": " -> ".join(rels) if rels else "",
-        "extra": {"hops": len(rels)},
-        "source": row.get("rcept_no", ""),
-    }
-
-
-
+#======================================================================
+# Graph RAG 노드 — graphrag 패키지(self-contained) 위임
+#======================================================================
 def graph_search_node(state: AgentState):
-    """자연어 질문 → Cypher → 그래프DB → graph_facts/paths/provenance.
+    """LangGraph 노드 진입점. 본체는 graphrag 패키지가 담당.
 
-    현재 ``execute_cypher_query``는 목업. 실제 Neo4j 드라이버 연결과
-    쿼리 템플릿 라우팅(___test/hybrid_rag 자산 이식)은 후속 이슈로 분리.
+    I/O 계약(core/state.py:AgentState):
+      입력  reconstructed_query: str
+      출력  graph_facts: List[UnifiedResult]
+            graph_paths: List[List[str]]
+            graph_provenance: List[str]   # rcept_no
+    Neo4j/Anthropic 키 등 외부 의존이 끊기면 graphrag 가 빈 결과로 degrade.
     """
-    q = state.get("reconstructed_query") or ""
-    empty = {"graph_facts": [], "graph_paths": [], "graph_provenance": []}
-
-    try:
-        resp = llm.invoke(CYPHER_PROMPT.format(q=q))
-        cypher = getattr(resp, "content", str(resp)).strip().strip("`")
-
-        if not _looks_like_cypher(cypher):
-            raise GraphQueryError(f"LLM produced non-cypher: {cypher!r}")
-
-        rows = execute_cypher_query(cypher)
-    except Exception as e:   # GraphQueryError 포함
-        print(f"[graph_search_node] degraded: {e}")
-        return empty
-
-    facts: list[UnifiedResult] = []
-    paths: list[list[str]] = []
-    prov: list[str] = []
-    for row in rows:
-        facts.append(_row_to_unified(row))
-        paths.append([x.get("name") or x.get("rel", "") for x in row["path"]])
-        if row.get("rcept_no"):
-            prov.append(row["rcept_no"])
-
-    return {"graph_facts": facts, "graph_paths": paths, "graph_provenance": prov}
-
+    return _graphrag_search_node(state)
+#======================================================================
 def synthesizer_node(state: AgentState):
     """
     Syn: 3개의 DB(RDB, Vector, Graph)에서 검색된 결과를 하나의 텍스트로 병합합니다.
