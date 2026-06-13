@@ -42,6 +42,7 @@
 3. **파라미터 사용**: 회사/연도/계정은 `$corp_code`, `$year`, `$account_id` 등 placeholder. 문자열 보간 금지.
 4. **허용 라벨/관계만** 사용. 위 목록 외 라벨/관계 사용 시 거부.
 5. **단일 statement** 만 출력. 세미콜론 금지.
+6. **RETURN 별칭 표준**: 회사·사람 이름 컬럼은 `name` 으로 별칭한다 (역할이 더 명확하면 `holder`/`investee`/`supplier`/`buyer`/`person`/`parent` 허용 — 이 목록 밖 별칭 금지). 관계 종류를 반환할 땐 `relation`, 회사코드는 `corp_code`. 매칭한 관계 `r` 에 `rcept_no` 속성이 있으면 `r.rcept_no AS rcept_no` 를 함께 RETURN 한다 (근거 공시 추적용).
 
 ## 출력 형식 (JSON 단일 객체, 다른 텍스트 금지)
 

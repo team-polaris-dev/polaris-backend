@@ -15,13 +15,14 @@ import glob
 import unicodedata
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\kimkuhyn\Desktop\mnnk525")
-RAW = ROOT / "db" / "raw"
-OUT = ROOT / "db" / "chunk" / "output"
+# pipeline_scripts/ 기준 상대 경로 — 솔로레포(mnnk525) 의존 제거 (2026-06-13).
+ROOT = Path(__file__).resolve().parent.parent  # pipeline_scripts/
+RAW = ROOT / "raw"
+OUT = ROOT / "chunk" / "output"
 
 # corps.tsv 로드: 회사명 -> corp_code
 def load_companies():
-    tsv = ROOT / "db" / "extra28" / "corps.tsv"
+    tsv = ROOT / "extra28" / "corps.tsv"
     result = {}
     with open(tsv, encoding='utf-8') as f:
         for i, line in enumerate(f):

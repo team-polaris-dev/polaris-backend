@@ -318,11 +318,15 @@ def fetch_pdf(client: httpx.Client, rn: str, out_pdf: Path) -> None:
 
 
 def fetch_documents(client: httpx.Client, items: list[dict], out: Path) -> None:
-    """정기보고서만 원본 zip(서술 청킹용) + PDF(적재용 보관) 다운로드."""
+    """정기보고서만 원본 zip(서술 청킹용) 다운로드.
+
+    PDF 는 받지 않는다(2026-06-13) — documents/*.zip 의 XML 본문과 같은 내용을
+    PDF 로 또 받던 것인데, 어떤 적재·청킹 단계도 PDF 를 읽지 않아 순수 낭비였다.
+    """
     periodic = [it for it in items if is_periodic(it.get("report_nm", ""))]
     keep = {it["rcept_no"] for it in periodic}
     clean_nonperiodic_zips(out, keep)
-    log(f"    정기보고서 {len(periodic)}건 → zip+PDF")
+    log(f"    정기보고서 {len(periodic)}건 → zip")
     for it in sorted(periodic, key=lambda x: x["rcept_no"]):
         rn = it["rcept_no"]
         # 원본 zip (XML/HTML 본문)
@@ -353,8 +357,6 @@ def fetch_documents(client: httpx.Client, items: list[dict], out: Path) -> None:
                 except Exception as e:  # noqa: BLE001
                     log(f"      ! zip {rn} 재시도 {attempt+1}: {e}")
                     time.sleep(2 * (attempt + 1))
-        # PDF (적재용 보관)
-        fetch_pdf(client, rn, out / "pdf" / f"{rn}.pdf")
         log(f"      {rn} {it.get('report_nm','').strip()} done")
 
 
@@ -374,8 +376,11 @@ def main() -> int:
         log(f"쿨다운 대기 {args.wait}s …")
         time.sleep(args.wait)
 
-    codes = (ENV.get("POLARIS_CORPS") or "").split(",")
-    names = (ENV.get("POLARIS_CORP_NAMES") or "").split(",")
+    # 관리자 파이프라인 러너는 회사코드를 os.environ 으로 주입한다.
+    # 단독 실행(.env 기반)과 러너 구동(os.environ) 둘 다 지원: env 우선, 없으면 .env.
+    import os as _os
+    codes = (_os.environ.get("POLARIS_CORPS") or ENV.get("POLARIS_CORPS") or "").split(",")
+    names = (_os.environ.get("POLARIS_CORP_NAMES") or ENV.get("POLARIS_CORP_NAMES") or "").split(",")
     global CORPS
     CORPS = [(c.strip(), n.strip()) for c, n in zip(codes, names) if c.strip()]
     if not CORPS:

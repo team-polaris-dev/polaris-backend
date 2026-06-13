@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 import httpx
@@ -228,6 +229,40 @@ def clean_item(raw: dict, *, chunk_id: str, subject: str, text: str) -> tuple[di
     return clean, review
 
 
+# ---------------------------------------------------------------- apimaker 경로
+# 하이브리드 정책: 기본은 Ollama(로컬 무료·temperature=0 결정론). apimaker(Gemini CLI)는
+# qwen 이 자주 틀리는 고난도 청크의 재추출/QC 용 — 구독 쿼터를 소모하고 샘플링 제어가
+# 없어 재현성이 떨어지므로 대량 배치에는 쓰지 않는다. anchored() 검증은 동일 적용.
+_APIMAKER_LLM = None
+
+
+def _get_apimaker_llm(model: str | None):
+    """config.llm의 in-process Gemini 어댑터 지연 로드 (백엔드 단일 LLM 경로 재사용)."""
+    global _APIMAKER_LLM
+    if _APIMAKER_LLM is None:
+        backend_root = HERE.parent.parent  # polaris-backend/
+        if str(backend_root) not in sys.path:
+            sys.path.insert(0, str(backend_root))
+        from config.llm import ApimakerLLM
+
+        kwargs: dict = {"json_mode": True}
+        if model:
+            kwargs["model"] = model
+        _APIMAKER_LLM = ApimakerLLM(**kwargs)
+    return _APIMAKER_LLM
+
+
+def call_apimaker(*, subject: str, text: str, model: str | None) -> dict:
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    llm = _get_apimaker_llm(model)
+    resp = llm.invoke([
+        SystemMessage(content=SYSTEM),
+        HumanMessage(content=USER_TEMPLATE.format(subject=subject, text=text)),
+    ])
+    return parse_json_response(str(resp.content))
+
+
 def call_ollama(client: httpx.Client, *, base: str, model: str, subject: str, text: str) -> dict:
     payload = {
         "model": model,
@@ -251,7 +286,10 @@ def call_ollama(client: httpx.Client, *, base: str, model: str, subject: str, te
     return parse_json_response(content)
 
 
-def process_batch(path: Path, *, base: str, model: str, timeout: int) -> tuple[int, int, int]:
+def process_batch(
+    path: Path, *, base: str, model: str, timeout: int,
+    provider: str = "ollama", apimaker_model: str | None = None,
+) -> tuple[int, int, int]:
     batch = json.loads(path.read_text(encoding="utf-8"))
     subject = batch["subject"]
     chunks = batch.get("chunks", [])
@@ -266,7 +304,10 @@ def process_batch(path: Path, *, base: str, model: str, timeout: int) -> tuple[i
             cid = chunk["chunk_id"]
             text = chunk.get("text") or ""
             try:
-                raw = call_ollama(client, base=base, model=model, subject=subject, text=text)
+                if provider == "apimaker":
+                    raw = call_apimaker(subject=subject, text=text, model=apimaker_model)
+                else:
+                    raw = call_ollama(client, base=base, model=model, subject=subject, text=text)
                 clean, review = clean_item(raw, chunk_id=cid, subject=subject, text=text)
             except Exception as e:  # noqa: BLE001
                 clean = {"chunk_id": cid, "entities": [], "edges": []}
@@ -291,7 +332,11 @@ def process_batch(path: Path, *, base: str, model: str, timeout: int) -> tuple[i
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("corp_code")
-    ap.add_argument("--model", default="qwen3.5:9b")
+    ap.add_argument("--provider", choices=["ollama", "apimaker"], default="ollama",
+                    help="ollama=로컬 대량 추출(기본), apimaker=in-process Gemini CLI(소량 QC용)")
+    ap.add_argument("--model", default="qwen3.5:9b", help="ollama 모델명")
+    ap.add_argument("--apimaker-model", default=None,
+                    help="apimaker(Gemini) 모델명. 생략 시 CLI 기본 모델")
     ap.add_argument("--base", default="http://localhost:11434")
     ap.add_argument("--timeout", type=int, default=180)
     args = ap.parse_args()
@@ -304,14 +349,19 @@ def main() -> int:
     total_chunks = total_edges = total_rejected = 0
     for batch in batches:
         n_chunk, n_edge, n_reject = process_batch(
-            batch, base=args.base, model=args.model, timeout=args.timeout
+            batch, base=args.base, model=args.model, timeout=args.timeout,
+            provider=args.provider, apimaker_model=args.apimaker_model,
         )
         total_chunks += n_chunk
         total_edges += n_edge
         total_rejected += n_reject
 
     print("\n=== ollama_extract summary ===")
-    print(f"model={args.model}")
+    if args.provider == "apimaker":
+        shown_model = args.apimaker_model or "(gemini-cli-default)"
+    else:
+        shown_model = args.model
+    print(f"provider={args.provider} model={shown_model}")
     print(f"chunks={total_chunks} clean_edges={total_edges} rejected={total_rejected}")
     print(f"review: {AUTO / ('review_' + args.corp_code + '_*.jsonl')}")
     print(f"result: {AUTO / ('result_' + args.corp_code + '_*.json')}")

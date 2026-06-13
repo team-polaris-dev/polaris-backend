@@ -46,15 +46,25 @@ def _ds002_files(folder: str, prefix: str) -> list[Path]:
     return sorted(d.glob(f"{prefix}__*.json"))
 
 
-# ── 1) 3사 Organization (company.json) ─────────────────────
+# ── 1) base Organization (company.json) ─────────────────────
 def base_orgs() -> list[dict]:
+    """이번 잡이 적재하는 회사의 base 노드를 company.json 으로 만든다.
+
+    company.json 은 노드에 넣을 데이터(이름·종목코드·설립일)를 얻으려고 읽는다 — 따라서
+    지금 적재하는(=raw 가 있는) 회사한테만 필요하다. company.json 이 없는 회사는 cleanup
+    으로 raw 가 정리된 과거 적재분이라, 노드가 이미 그래프에 있고(멱등 MERGE) 다시 만들
+    데이터 출처도 없으므로 그냥 건너뛴다.
+    (2026-06-13: 적재 후 raw 정리된 회사가 CORP_CODE 에 섞여 FileNotFoundError 로 죽던 버그)"""
     orgs = []
     for folder, corp_code in CORP_CODE.items():
-        cj = json.loads((RAW_DIR / folder / "company.json").read_text(encoding="utf-8"))
+        cj_path = RAW_DIR / folder / "company.json"
+        if not cj_path.exists():
+            continue  # 이미 적재된 회사 — 재처리 불필요
+        cj = json.loads(cj_path.read_text(encoding="utf-8"))
         orgs.append(
             {
                 "corp_code": corp_code,
-                "name": cj.get("corp_name") or CORP_NAME[corp_code],
+                "name": cj.get("corp_name") or CORP_NAME.get(corp_code, folder),
                 "stock_code": (cj.get("stock_code") or "").strip() or None,
                 "founded": (cj.get("est_dt") or "").strip() or None,
             }

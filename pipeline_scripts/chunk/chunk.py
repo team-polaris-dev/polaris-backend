@@ -7,6 +7,7 @@ LLM 호출/네트워크 없음. 표준 라이브러리만 사용.
     PYTHONIOENCODING=utf-8 python -X utf8 db/chunk/chunk.py
 출력 깨지면 PYTHONIOENCODING=utf-8 확인.
 """
+import os
 import zipfile
 import re
 import html
@@ -16,16 +17,31 @@ import glob
 import unicodedata
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\kimkuhyn\Desktop\mnnk525")
-RAW = ROOT / "db" / "raw"
-OUT = ROOT / "db" / "chunk" / "output"
+# pipeline_scripts/ 기준 상대 경로 — 솔로레포(mnnk525) 의존 제거 (2026-06-13).
+# 구 레이아웃 mnnk525/db/{raw,chunk/output} ↔ 신 레이아웃 pipeline_scripts/{raw,chunk/output}
+ROOT = Path(__file__).resolve().parent.parent  # pipeline_scripts/
+RAW = ROOT / "raw"
+OUT = ROOT / "chunk" / "output"
 
-# 회사명 -> corp_code
+# 회사명 -> corp_code (기본 3사)
 COMPANIES = {
     "삼성전자": "00126380",
     "SK하이닉스": "00164779",
     "한미반도체": "00161383",
 }
+
+
+def _merge_env_companies(table: dict) -> dict:
+    """콘솔 러너가 주입하는 신규 회사 반영 — POLARIS_CORPS(코드들)와
+    POLARIS_CORP_NAMES(이름들)가 1:1 대응. 하드코딩 3사 외 회사도 처리 가능."""
+    codes = [c.strip() for c in os.getenv("POLARIS_CORPS", "").split(",") if c.strip()]
+    names = [n.strip() for n in os.getenv("POLARIS_CORP_NAMES", "").split(",") if n.strip()]
+    for name, code in zip(names, codes):
+        table.setdefault(name, code)
+    return table
+
+
+COMPANIES = _merge_env_companies(COMPANIES)
 
 # 청킹 정책
 MAX_CHARS = 800

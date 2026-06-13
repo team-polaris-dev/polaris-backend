@@ -55,8 +55,11 @@ class ChatResponse(BaseModel):
     intent: str
 
 # 3. POST 엔드포인트 구현
+# sync def — app.invoke()가 블로킹이라 async def 로 두면 요청 내내 이벤트 루프가
+# 정지한다(동시 요청·graphrag 의 자기 자신 /health 호출이 전부 타임아웃 → 500).
+# sync 핸들러는 FastAPI 가 스레드풀에서 돌려 루프가 살아있다.
 @api.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
+def chat_endpoint(request: ChatRequest):
     import time as _time
 
     started = _time.perf_counter()

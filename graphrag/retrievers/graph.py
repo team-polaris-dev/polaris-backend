@@ -98,14 +98,21 @@ class GraphRetriever:
 
     # ── 1) 엔티티 앵커 → 청크 회수 ──────────────────────────
     def anchor_chunks(self, corp_codes: list[str]) -> list[GraphHit]:
+        """관계 근거 청크 회수.
+
+        적재 데이터에서 (:Organization)-[r]-(:Chunk) 직접 엣지는 0이고
+        (Chunk 는 hasObject 로 Product/Technology 에만 연결), 대신 비정형 추출
+        관계(SUPPLIES_TO·RELATED_PARTY 등)가 근거 chunk_id 를 엣지 속성으로
+        품고 있다 — 트래버설 대신 엣지 속성에서 직접 회수한다.
+        """
         if not corp_codes:
             return []
         cypher = """
         UNWIND $codes AS code
-        MATCH (o:Organization {corp_code: code})
-        OPTIONAL MATCH (o)-[r]-(c:Chunk)
-        WITH o, c, r LIMIT $limit
-        RETURN o.corp_code AS code, c.chunk_id AS chunk_id, type(r) AS rel
+        MATCH (o:Organization {corp_code: code})-[r]-()
+        WHERE r.chunk_id IS NOT NULL AND r.qc_disabled_at IS NULL
+        RETURN DISTINCT o.corp_code AS code, r.chunk_id AS chunk_id, type(r) AS rel
+        LIMIT $limit
         """
         hits: list[GraphHit] = []
         with self.driver.session() as s:
@@ -174,6 +181,8 @@ class GraphRetriever:
                 """
                 MATCH (sub:Organization)-[r:IS_SUBSIDIARY_OF]->(o:Organization)
                 WHERE o.corp_code IN $codes
+                  AND NONE(pat IN ['신탁', '자사주', '투자조합', '사모투자', 'ETF', 'KODEX', 'KoAct']
+                           WHERE sub.name CONTAINS pat)
                 RETURN o.corp_code AS code, o.name AS parent,
                        sub.corp_code AS sub_code, sub.name AS sub_name LIMIT 1500
                 """,
@@ -291,6 +300,8 @@ class GraphRetriever:
                 UNWIND $codes AS code
                 MATCH (o:Organization {corp_code: code})
                 OPTIONAL MATCH (sub:Organization)-[:IS_SUBSIDIARY_OF]->(o)
+                WHERE NONE(pat IN ['신탁', '자사주', '투자조합', '사모투자', 'ETF', 'KODEX', 'KoAct']
+                           WHERE sub.name CONTAINS pat)
                 OPTIONAL MATCH (p:Person)-[re:EXECUTIVE_OF]->(o)
                 WHERE re.valid_to IS NULL
                 OPTIONAL MATCH (h)-[rh:IS_MAJOR_SHAREHOLDER_OF]->(o)

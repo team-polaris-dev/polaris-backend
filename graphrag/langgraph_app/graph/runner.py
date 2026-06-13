@@ -190,12 +190,15 @@ class GraphAgentRunner:
                 errors.append(f"template_exec[{tpl_key}]: {e}")
                 tpl_key = None
 
-        # [4-B] 템플릿 miss → LLM Cypher
-        if not facts and not tpl_key:
+        # [4-B] 템플릿 miss "또는" 템플릿 0건 → LLM Cypher
+        # (템플릿이 형식상 매칭돼도 해당 엣지가 없어 빈손이면 LLM 이 다른
+        #  관계(INVESTS_IN 등)로 우회할 수 있다)
+        if not facts:
             llm_facts, llm_cyphers, llm_tag = self._llm_path(query, entities, slots, errors)
             facts = llm_facts
             cypher_executed.extend(llm_cyphers)
-            template_used = llm_tag
+            if llm_tag:  # LLM 도 빈손이면 템플릿 실행 이력을 지우지 않는다
+                template_used = llm_tag
 
         # [5] anchor_chunks 보완 (멀티홉/교차/온톨로지 또는 결과 빈약)
         if entities and (stage >= 2 or not facts):

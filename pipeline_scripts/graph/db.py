@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -37,6 +38,16 @@ CORP_NAME = {
     "00161383": "한미반도체(주)",
 }
 
+# 콘솔 러너가 주입하는 신규 회사 병합 (POLARIS_CORPS=코드, POLARIS_CORP_NAMES=이름).
+# load_structured(neo4j_struct)의 base_orgs 가 CORP_CODE.items() 로 corp 노드를 만들고
+# CORP_NAME 으로 폴백하므로, 신규 회사가 여기 없으면 그 회사 corp_code 노드 자체가
+# 생성되지 않아 추출 엣지가 needs_er 노드에 갇힌다(2026-06-13 버그). 양쪽 모두 병합.
+_env_codes = [c.strip() for c in os.getenv("POLARIS_CORPS", "").split(",") if c.strip()]
+_env_names = [n.strip() for n in os.getenv("POLARIS_CORP_NAMES", "").split(",") if n.strip()]
+for _name, _code in zip(_env_names, _env_codes):
+    CORP_CODE.setdefault(_name, _code)
+    CORP_NAME.setdefault(_code, _name)
+
 # 사업보고서 rcept (XII 종속회사 표 파싱 대상) — 회사폴더별
 BIZ_REPORT_RCEPT = {
     "삼성전자": ["20250311001085", "20260310002820"],
@@ -44,7 +55,8 @@ BIZ_REPORT_RCEPT = {
     "한미반도체": ["20250313001171", "20260312001230"],
 }
 
-RAW_DIR = Path(r"C:\Users\kimkuhyn\Desktop\mnnk525\db\raw")
+# pipeline_scripts/raw — 솔로레포(mnnk525) 의존 제거 (2026-06-13)
+RAW_DIR = Path(__file__).resolve().parent.parent / "raw"
 
 
 def mariadb_conn() -> pymysql.connections.Connection:

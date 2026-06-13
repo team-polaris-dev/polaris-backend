@@ -1,16 +1,11 @@
-# pipeline_scripts/ — DART 수집·적재 스크립트 스냅샷
+# pipeline_scripts/ — DART 수집·적재 스크립트
 
-관리자 콘솔(`routers/admin.py` → `services/pipeline_runner.py`)이 `subprocess` 로 호출하는 스크립트들. **SSOT 는 솔로레포 `mnnk525/db/`** — 여기는 스냅샷 사본이다. 변경은 항상 솔로레포 → 여기 단방향.
+관리자 콘솔(`routers/admin.py` → `services/pipeline_runner.py`)이 `subprocess` 로 호출하는 스크립트들.
 
-## 동기 방법
-```
-# mnnk525/db/ 의 코드만(데이터 제외) 다시 가져오기
-tar --exclude='__pycache__' --exclude='chunk/output' --exclude='raw' \
-    --exclude='graph/_auto' --exclude='graph/ledger' --exclude='extra_finance/raw' \
-    --exclude='*.jsonl' \
-    -C <mnnk525>/db -cf - fetch_dart.py chunk load graph events extra28 extra_finance \
-  | tar -C pipeline_scripts -xf -
-```
+**SSOT 는 이 디렉터리다 (2026-06-13~).** 구 솔로레포 `mnnk525/db/` 스냅샷 정책은 폐기 —
+mnnk525 는 테스트 레포로, 더 이상 어떤 코드/데이터 경로도 그쪽을 참조하지 않는다.
+모든 경로는 `Path(__file__)` 기준 pipeline_scripts/ 상대 경로이며, 기존 mnnk525 의
+raw·청크 데이터는 2026-06-13 에 이쪽으로 복사 완료.
 
 ## 런타임 데이터 (gitignore)
 - `raw/` — fetch 가 다운로드하는 DART 원본

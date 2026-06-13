@@ -107,14 +107,17 @@ investee_executives:
 supply_chain_2hop:
   intents: [supply_chain]
   stage: 2
-  triggers: ["공급사의 공급사", "2차", "공급망", "납품"]
+  # "공급망/납품" 같은 일반어는 제외 — 이 템플릿은 상류(incoming) 공급사 전용이라
+  # 일반 공급 질문은 양방향 1홉 supplies_pair 로 흘려보낸다 (명시적 2차 질문만 매칭)
+  triggers: ["공급사의 공급사", "2차"]
   required_entities: 1
   required_slots: []
   fact_type: multihop
   # 공급사의 공급사 (2차 공급망) — SUPPLIES_TO← *1..2
   cypher: |
     MATCH (o:Organization {corp_code: $corp_code})
-    MATCH path = (sup:Organization)-[:SUPPLIES_TO*1..2]->(o)
+    MATCH path = (sup:Organization)-[rels:SUPPLIES_TO*1..2]->(o)
+    WHERE ALL(r IN rels WHERE r.qc_disabled_at IS NULL)
     RETURN sup.corp_code AS code, sup.name AS supplier,
            length(path) AS hops
     ORDER BY hops
@@ -134,7 +137,8 @@ shareholder_top:
     MATCH (x)-[r:IS_MAJOR_SHAREHOLDER_OF]->(o:Organization {corp_code: $corp_code})
     WHERE r.valid_to IS NULL
     RETURN coalesce(x.name, x.corp_code) AS holder,
-           r.qota_rt AS qota_rt, o.corp_code AS code, o.name AS org
+           r.qota_rt AS qota_rt, o.corp_code AS code, o.name AS org,
+           r.rcept_no AS rcept_no
     ORDER BY toFloat(r.qota_rt) DESC
     LIMIT 10
 
@@ -148,7 +152,8 @@ executive_of:
   cypher: |
     MATCH (p:Person)-[r:EXECUTIVE_OF]->(o:Organization {corp_code: $corp_code})
     WHERE r.valid_to IS NULL
-    RETURN p.name AS person, r.ofcps AS pos, o.corp_code AS code, o.name AS org
+    RETURN p.name AS person, r.ofcps AS pos, o.corp_code AS code, o.name AS org,
+           r.rcept_no AS rcept_no
     LIMIT 200
 
 subsidiary_list:
@@ -159,9 +164,10 @@ subsidiary_list:
   required_slots: []
   fact_type: subsidiary
   cypher: |
-    MATCH (sub:Organization)-[:IS_SUBSIDIARY_OF]->(o:Organization {corp_code: $corp_code})
+    MATCH (sub:Organization)-[r:IS_SUBSIDIARY_OF]->(o:Organization {corp_code: $corp_code})
+    WHERE NONE(pat IN ['신탁', '자사주', '투자조합', '사모투자', 'ETF', 'KODEX', 'KoAct'] WHERE sub.name CONTAINS pat)
     RETURN sub.corp_code AS sub_code, sub.name AS sub_name,
-           o.corp_code AS code, o.name AS parent
+           o.corp_code AS code, o.name AS parent, r.rcept_no AS rcept_no
     ORDER BY sub.name
     LIMIT 1500
 
@@ -176,7 +182,8 @@ investment_of:
     MATCH (o:Organization {corp_code: $corp_code})-[r:INVESTS_IN]->(t)
     WHERE r.valid_to IS NULL
     RETURN coalesce(t.name, t.corp_code) AS investee,
-           o.corp_code AS code, o.name AS investor, r.amount AS amount
+           o.corp_code AS code, o.name AS investor,
+           r.qota_rt AS qota, r.rcept_no AS rcept_no
     ORDER BY t.name
     LIMIT 1500
 
@@ -188,10 +195,11 @@ supplies_pair:
   required_slots: []
   fact_type: supplies_to
   cypher: |
-    MATCH (s:Organization)-[:SUPPLIES_TO]->(b:Organization)
-    WHERE s.corp_code = $corp_code OR b.corp_code = $corp_code
+    MATCH (s:Organization)-[r:SUPPLIES_TO]->(b:Organization)
+    WHERE (s.corp_code IN $corp_codes OR b.corp_code IN $corp_codes)
+      AND r.qc_disabled_at IS NULL
     RETURN s.corp_code AS s_code, s.name AS supplier,
-           b.corp_code AS b_code, b.name AS buyer
+           b.corp_code AS b_code, b.name AS buyer, r.rcept_no AS rcept_no
     LIMIT 80
 
 produces_of:

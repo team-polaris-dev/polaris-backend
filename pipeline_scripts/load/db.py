@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import os
 import time
 
 import httpx
@@ -30,12 +31,17 @@ EMBED_CHAR_LIMIT = 5000
 
 COLLECTION_CHUNKS = "polaris-chunks"
 
-# 회사 폴더명 → corp_code
+# 회사 폴더명 → corp_code (기본 3사 + 콘솔 러너 주입분)
 CORP_CODE = {
     "삼성전자": "00126380",
     "SK하이닉스": "00164779",
     "한미반도체": "00161383",
 }
+# 러너가 POLARIS_CORPS(코드)·POLARIS_CORP_NAMES(이름)를 주입하면 신규 회사도 적재
+_env_codes = [c.strip() for c in os.getenv("POLARIS_CORPS", "").split(",") if c.strip()]
+_env_names = [n.strip() for n in os.getenv("POLARIS_CORP_NAMES", "").split(",") if n.strip()]
+for _name, _code in zip(_env_names, _env_codes):
+    CORP_CODE.setdefault(_name, _code)
 
 
 def mariadb_conn() -> pymysql.connections.Connection:

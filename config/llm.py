@@ -88,6 +88,53 @@ def _patch_gemini_for_windows() -> None:
 _patch_gemini_for_windows()
 
 
+# --- Windows: 긴 프롬프트를 stdin 으로 전달 (CreateProcess 32,767자 한계 회피) ---
+# 프롬프트를 '-p <전체 프롬프트>' 인자로 넘기면 syn 결과가 큰 턴에서 명령줄이
+# 한계를 넘어 FileNotFoundError[WinError 206] 가 나고, apimaker 는 이를
+# 'gemini CLI is not installed' 로 오보한다. stdin 은 한계가 없으므로 모든
+# 호출을 stdin 경로로 통일한다 (gemini CLI 는 파이프 입력을 프롬프트로 읽음).
+def _patch_gemini_stdin() -> None:
+    if sys.platform != "win32":
+        return
+    import apimaker.providers.gemini as _gem
+
+    async def _run_via_stdin(session, prompt: str) -> str:
+        args = _gem._gemini_cli_args(session, prompt)  # 위 런처 패치 반영됨
+        final_prompt = prompt
+        if "-p" in args:
+            i = args.index("-p")
+            final_prompt = args[i + 1]
+            args = args[:i] + args[i + 2:]
+        process_env = os.environ.copy()
+        process_env.update(session.options.env)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                cwd=session.options.cwd,
+                env=process_env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise _gem.ProviderRuntimeError(
+                "gemini CLI is not installed or is not on PATH. Install "
+                "@google/gemini-cli and run `gemini` once to sign in with Google."
+            ) from exc
+        stdout, stderr = await process.communicate(input=final_prompt.encode("utf-8"))
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        if process.returncode != 0:
+            detail = stderr_text.strip() or stdout_text.strip()
+            raise _gem.ProviderRuntimeError(f"gemini CLI failed: {detail}")
+        return _gem._parse_gemini_json_response(stdout_text)
+
+    _gem._run_gemini_cli = _run_via_stdin
+
+
+_patch_gemini_stdin()
+
+
 # 환경 변수 (하드코딩 금지 — .env 기반)
 APIMAKER_PROVIDER = os.environ.get("APIMAKER_PROVIDER", "gemini")
 # 모델 미지정 시 gemini CLI 기본값 사용. 지정 시 -m 로 전달 (예: gemini-2.5-flash).

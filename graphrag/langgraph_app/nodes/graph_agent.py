@@ -48,6 +48,15 @@ _NAME_KEYS = (
 )
 _USED_TOP = {"type", "rcept_no"} | set(_CODE_KEYS) | set(_NAME_KEYS)
 
+# (시작점 키, 끝점 키, 관계 라벨) — 템플릿 RETURN 별칭과 1:1 대응
+_PAIR_RULES = (
+    ("supplier", "buyer", "공급(SUPPLIES_TO)"),
+    ("investor", "investee", "출자(INVESTS_IN)"),
+    ("holder", "org", "주요주주(지분율%)"),
+    ("sub_name", "parent", "종속회사(IS_SUBSIDIARY_OF)"),
+    ("person", "org", "임원(EXECUTIVE_OF)"),
+)
+
 
 def _normalize_fact(fact: dict[str, Any]) -> dict[str, Any]:
     """런너 fact dict → UnifiedResult(6키).
@@ -70,11 +79,47 @@ def _normalize_fact(fact: dict[str, Any]) -> dict[str, Any]:
         }
 
     code = next((str(fact[k]) for k in _CODE_KEYS if fact.get(k)), "")
-    name = next((str(fact[k]) for k in _NAME_KEYS if fact.get(k)), "")
+
+    # 쌍(pair) 관계는 'A → B' 로 양끝을 보존한다 — 한쪽 이름만 남기면 syn 단계
+    # (name/value 만 렌더링)에서 상대방·방향·관계종류가 통째로 소실된다.
+    name = ""
+    rel_label: str | None = None
+    for a, b, label in _PAIR_RULES:
+        if fact.get(a) and fact.get(b):
+            name = f"{fact[a]} → {fact[b]}"
+            rel_label = label
+            break
+    if not name:
+        name = next((str(fact[k]) for k in _NAME_KEYS if fact.get(k)), "")
+    if not name:
+        # LLM Cypher 가 별칭 규칙을 어기고 자유형 키(company_name 등)로 반환한
+        # 경우의 폴백 — 이름일 가능성이 높은 첫 문자열 값을 채택.
+        deny = {"type", "rcept_no", "relation", "unit", "rationale"}
+        name = next(
+            (str(v) for k, v in fact.items()
+             if k not in deny and isinstance(v, str) and v.strip()),
+            "",
+        )
+
     if "value" in fact:
         value: Any = fact["value"]
     else:
-        value = fact.get("qota") or fact.get("year") or fact.get("score")
+        # 내용 있는 필드만 값으로 쓴다. score 는 랭킹 가중치라 값으로 쓰면
+        # LLM 이 '연관성 0.84' 같은 의미를 창작하므로 절대 사용 금지.
+        detail = next(
+            (fact[k] for k in ("qota_rt", "qota", "pos", "relation_type",
+                               "relation", "hops", "year")
+             if fact.get(k) not in (None, "")),
+            None,
+        )
+        if rel_label and detail is not None:
+            value = f"{rel_label} {detail}"
+        elif detail is not None:
+            value = detail
+        else:
+            value = rel_label or ""
+    if isinstance(value, str):
+        value = " ".join(value.split())  # 직책 등의 개행이 syn 라인 포맷을 깨지 않게
     source = str(fact.get("rcept_no") or "")
     extra = {k: v for k, v in fact.items() if k not in _USED_TOP and k != "value"}
     return {
@@ -132,11 +177,22 @@ def graph_search_node(state: dict[str, Any]) -> dict[str, Any]:
     if not query:
         return empty
 
-    runner = build_default_runner()
+    print(f"🛠️ [GraphRAG]  검색 시뮬레이션 중: {query}")
     try:
+        runner = build_default_runner()
         out = runner.run({"query": query})
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ [GraphRAG] 실패 → 빈 결과로 degrade: {type(e).__name__}: {e}")
         return empty
+
+    print(
+        f"   -> intent={out.get('intent')} route={out.get('route')}"
+        f" stage={out.get('stage')} rejected={out.get('rejected')}"
+        f" template={out.get('template_used')}"
+        f" facts={len(out.get('graph_facts') or [])}"
+        f" chunks={len(out.get('graph_chunk_ids') or [])}"
+        f" errors={out.get('errors') or []}"
+    )
 
     raw_facts: list[dict[str, Any]] = list(out.get("graph_facts") or [])
     paths: list[list[str]] = list(out.get("graph_paths") or [])

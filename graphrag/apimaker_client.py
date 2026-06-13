@@ -1,119 +1,64 @@
-"""apimaker HTTP 클라이언트 — graphrag 의 모든 LLM 호출은 이 클라이언트를 통해 나간다.
+"""graphrag LLM 어댑터 — 백엔드 본체와 같은 in-process LLM(config.llm)에 위임.
 
-apimaker(=Claude/Codex CLI 세션 영속 래퍼) 는 Claude CLI 의 구독 인증을 쓰므로
-ANTHROPIC_API_KEY 가 필요 없다. 서버 unreachable → NoApimakerAvailable raise →
-호출자(intent_classifier·text_to_cypher) 가 규칙 fallback 으로 degrade.
+구 구현은 별도 apimaker HTTP 서버(기본 127.0.0.1:8000)를 전제한 테스트 시절
+자산이었는데, 이 환경에선 그 서버가 없어(8000 = polaris 백엔드 자신) 의도분류가
+항상 rule fallback 으로 degrade 됐다. 2026-06-12 폐기하고 config/llm.py 의
+ApimakerLLM(in-process Gemini CLI) 단일 경로로 통합 — LLM 접속정보 이중 관리 금지.
 
-HTTP shape (___test/src/apimaker/README.md):
-    POST   /sessions                              -> {session_id, provider}
-    POST   /sessions/{session_id}/messages        -> {response}
-    DELETE /sessions/{session_id}
-    GET    /health
-
-graphrag 의 LLM 호출은 모두 stateless 분류·생성(JSON 출력). 세션 재사용 시
-이전 턴이 입력 토큰으로 누적돼 분류 결정성을 흐릴 수 있어 **호출당 fresh
-session** 정책. localhost HTTP 3 roundtrip 비용은 감수.
-
-설정:
-    APIMAKER_URL          기본 http://127.0.0.1:8000
-    APIMAKER_MODEL        기본 claude-haiku-4-5  (Haiku=빠른 분류용)
-    APIMAKER_PROVIDER     기본 claude
+공개 표면(호출자 intent_classifier·text_to_cypher 는 무수정 호환):
+    ApimakerClient(model=...).chat(system_prompt, user_prompt) -> str
+    NoApimakerAvailable  — 어댑터 초기화 실패 (호출자가 rule fallback 으로 degrade)
+    ApimakerError        — 호출 실패 (호출자가 재시도/fallback 결정)
 """
 from __future__ import annotations
 
-import json
-import os
-import urllib.error
-import urllib.request
-from typing import Any
-
 
 class NoApimakerAvailable(Exception):
-    """apimaker 서버 미가동 / /health 실패. 초기화 단계에서만 발생."""
+    """in-process LLM 초기화 실패. 초기화 단계에서만 발생."""
 
 
 class ApimakerError(Exception):
-    """apimaker 가 4xx/5xx 또는 네트워크 에러. 호출자가 재시도/fallback 결정."""
-
-
-def _post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8") or "{}")
-    except urllib.error.HTTPError as e:
-        snippet = e.read().decode("utf-8", "replace")[:200]
-        raise ApimakerError(f"POST {url} -> {e.code}: {snippet}") from e
-    except urllib.error.URLError as e:
-        raise ApimakerError(f"POST {url} network: {e.reason}") from e
-
-
-def _delete(url: str, timeout: float) -> None:
-    req = urllib.request.Request(url, method="DELETE")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            r.read()
-    except (urllib.error.HTTPError, urllib.error.URLError):
-        pass  # 세션 누수는 apimaker 종료 시 close_all 로 정리됨
+    """LLM 호출 실패. 호출자가 재시도/fallback 결정."""
 
 
 class ApimakerClient:
-    """한 번의 LLM 호출 = 세션 생성 → 메시지 1회 → 세션 삭제."""
+    """구 HTTP 클라이언트와 같은 표면, 내부는 config.llm 의 in-process Gemini.
+
+    graphrag 의 호출은 모두 JSON 출력을 기대하므로 json_mode=True 로 생성한다
+    (JSON 지시문 추가 + 응답에서 JSON 블록 추출).
+    """
 
     def __init__(
         self,
-        base_url: str | None = None,
+        base_url: str | None = None,  # 구 시그니처 호환용 — 더 이상 의미 없음
         model: str | None = None,
         provider: str | None = None,
-        timeout: float = 60.0,
+        timeout: float | None = None,
     ) -> None:
-        self.base_url = (
-            base_url or os.environ.get("APIMAKER_URL", "http://127.0.0.1:8000")
-        ).rstrip("/")
-        self.model = model or os.environ.get("APIMAKER_MODEL", "claude-haiku-4-5")
-        self.provider = provider or os.environ.get("APIMAKER_PROVIDER", "claude")
-        self.timeout = timeout
-
-        # health check — 서버 죽었으면 빠르게 NoApimakerAvailable
-        health_url = f"{self.base_url}/health"
         try:
-            with urllib.request.urlopen(health_url, timeout=min(self.timeout, 3.0)) as r:
-                if r.status != 200:
-                    raise NoApimakerAvailable(f"/health -> {r.status}")
-        except urllib.error.HTTPError as e:
-            raise NoApimakerAvailable(f"/health -> {e.code}") from e
-        except urllib.error.URLError as e:
-            raise NoApimakerAvailable(
-                f"apimaker unreachable at {self.base_url}: {e.reason}"
-            ) from e
+            from config.llm import ApimakerLLM
+        except Exception as e:  # noqa: BLE001 — import 실패는 전부 degrade 신호
+            raise NoApimakerAvailable(f"config.llm import 실패: {e}") from e
+
+        kwargs: dict = {"json_mode": True}
+        if model:
+            kwargs["model"] = model
+        if provider:
+            kwargs["provider"] = provider
+        if timeout:
+            kwargs["timeout"] = timeout
+        self._llm = ApimakerLLM(**kwargs)
+        self.provider = self._llm.provider
+        self.model = self._llm.model or f"{self.provider}-cli-default"
 
     def chat(self, system_prompt: str, user_prompt: str) -> str:
-        """system + user → 모델 응답 텍스트. 실패 시 ApimakerError."""
-        created = _post_json(
-            f"{self.base_url}/sessions",
-            {
-                "provider": self.provider,
-                "model": self.model,
-                "system_prompt": system_prompt,
-            },
-            timeout=self.timeout,
-        )
-        sid = created.get("session_id")
-        if not sid:
-            raise ApimakerError(f"start_session: missing session_id in {created!r}")
-
+        """system + user → 모델 응답 텍스트(JSON 추출됨). 실패 시 ApimakerError."""
         try:
-            msg = _post_json(
-                f"{self.base_url}/sessions/{sid}/messages",
-                {"prompt": user_prompt},
-                timeout=self.timeout,
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            resp = self._llm.invoke(
+                [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
             )
-            return str(msg.get("response") or "")
-        finally:
-            _delete(f"{self.base_url}/sessions/{sid}", timeout=self.timeout)
+            return str(resp.content)
+        except Exception as e:  # noqa: BLE001 — 타임아웃 포함 전부 호출자 fallback 으로
+            raise ApimakerError(f"in-process LLM 호출 실패: {e}") from e
