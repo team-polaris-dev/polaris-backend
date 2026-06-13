@@ -234,12 +234,14 @@ def graph_search_node(state: dict[str, Any]) -> dict[str, Any]:
     facts = [_normalize_fact(f) for f in raw_facts]
     provenance = _resolve_provenance(raw_facts, chunk_ids)
 
-    # runner 는 anchor_chunks(stage>=2 / 무facts)에서만 graph_paths 를 채운다.
-    # stage-1 에서 템플릿/LLM 으로 쌍 관계 fact 를 찾으면 paths 가 비어, 그래프
-    # 패널(graph_paths 만 읽음)이 비게 된다. paths 가 비면 쌍 fact 에서 경로를
-    # 합성한다(raw_facts 와 1:1 정렬 → build_graph 의 rcept_no 매칭 유지).
-    if not paths:
-        paths = [_pair_path(f) for f in raw_facts]
+    # 그래프 패널(core/serialize.build_graph)은 graph_paths([노드,관계,노드])로만
+    # 엣지를 만든다. runner 의 graph_paths 는 anchor_chunks(stage>=2)의 청크
+    # 프로비넌스 경로라 관계 엣지가 없을 때가 많다(고립 노드 1개 등). 따라서 쌍
+    # 관계 fact 가 하나라도 있으면 그것으로 경로를 합성해 관계 그래프를 만든다.
+    # (raw_facts 와 1:1 정렬 → build_graph 의 facts[i].source rcept_no 매칭 유지)
+    fact_paths = [_pair_path(f) for f in raw_facts]
+    if any(fact_paths):
+        paths = fact_paths
 
     return {
         "graph_facts": facts,
