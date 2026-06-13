@@ -31,7 +31,10 @@ from services.sse import drop_job_buffer, push_sse
 logger = logging.getLogger(__name__)
 
 _WORKER_LOCK = asyncio.Lock()
-_ACTIVE_PROC: dict[str, asyncio.subprocess.Process] = {}
+# 동기 Popen 사용 — Windows + uvicorn reload 는 SelectorEventLoop 라
+# asyncio.create_subprocess_exec 이 NotImplementedError 를 던진다.
+# stdout 읽기는 asyncio.to_thread 로 감싸서 메인 루프(push_sse/SSE 큐)를 유지한다.
+_ACTIVE_PROC: dict[str, subprocess.Popen] = {}
 _MARKER_PREFIX = "POLARIS_PIPELINE "
 
 
@@ -119,12 +122,12 @@ async def _run_step(
 
     script_path = PIPELINE_WORKDIR / spec.script
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0  # type: ignore[attr-defined]
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-X", "utf8", str(script_path), *args,
+    proc = subprocess.Popen(
+        [sys.executable, "-X", "utf8", str(script_path), *args],
         cwd=str(PIPELINE_WORKDIR),
         env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         creationflags=flags,
     )
     _ACTIVE_PROC[job_id] = proc
@@ -134,7 +137,11 @@ async def _run_step(
     try:
         with open(log_path, "w", encoding="utf-8") as logf:
             assert proc.stdout is not None
-            async for raw in proc.stdout:
+            while True:
+                # blocking readline 은 스레드로 — 라인 처리(push_sse 등)는 메인 루프에서
+                raw = await asyncio.to_thread(proc.stdout.readline)
+                if not raw:
+                    break
                 line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                 logf.write(line + "\n")
                 push_sse(job_id, {
@@ -146,7 +153,7 @@ async def _run_step(
                 if progress is not None and progress != last_progress:
                     last_progress = progress
                     update_step(job_id, corp_code, step_id, progress=progress, counters=counters)
-        rc = await proc.wait()
+        rc = await asyncio.to_thread(proc.wait)
     finally:
         _ACTIVE_PROC.pop(job_id, None)
 
@@ -219,7 +226,7 @@ async def cancel_job(job_id: str) -> tuple[bool, bool]:
     else:
         proc.terminate()
     try:
-        await asyncio.wait_for(proc.wait(), timeout=5)
+        await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=5)
     except asyncio.TimeoutError:
         proc.kill()
     return True, True

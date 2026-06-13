@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -38,27 +37,26 @@ def _fetch_args(corp_code: str, params: dict[str, Any], ctx: JobCtx) -> list[str
 
 
 def _extract_args(corp_code: str, params: dict[str, Any], ctx: JobCtx) -> list[str]:
-    window = params.get("chunk_window") or [0, 200]
-    args = ["prep", corp_code, str(window[0]), str(window[1])]
+    # extract_step.py(prep→추출→load 일괄) CLI. 기본 = pending 전부, limit 은 선택 상한.
+    args = [corp_code]
+    limit = params.get("limit")
+    if isinstance(limit, (int, float)) and limit > 0:
+        args += ["--limit", str(int(limit))]
     if params.get("positive_only"):
         args.append("--positive")
-    provider = params.get("provider", "ollama")
-    args += ["--provider", str(provider)]
+    args += ["--provider", str(params.get("provider", "ollama"))]
     if params.get("model"):
         args += ["--model", str(params["model"])]
     return args
 
 
 def _extract_env(params: dict[str, Any]) -> dict[str, str]:
-    env: dict[str, str] = {
+    # provider: ollama(기본·로컬) | apimaker(in-process Gemini CLI — API 키 불필요).
+    # 구 'claude'(ANTHROPIC_API_KEY) 경로는 2026-06-13 폐기 — API 미사용 방침.
+    return {
         "POLARIS_EXTRACT_PROVIDER": str(params.get("provider", "ollama")),
         "POLARIS_EXTRACT_MODEL": str(params.get("model", "")),
     }
-    if params.get("provider") == "claude":
-        if "ANTHROPIC_API_KEY" not in os.environ:
-            raise RuntimeError("extract.provider=claude requires ANTHROPIC_API_KEY env")
-        env["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
-    return env
 
 
 STEP_REGISTRY: dict[str, StepSpec] = {
@@ -67,5 +65,10 @@ STEP_REGISTRY: dict[str, StepSpec] = {
     "mariadb": StepSpec(script="load/load_mariadb.py", build_args=lambda *_a: []),
     "qdrant": StepSpec(script="load/embed_qdrant.py", build_args=lambda *_a: []),
     "neo4j_struct": StepSpec(script="graph/load_structured.py", build_args=lambda *_a: []),
-    "extract": StepSpec(script="graph/auto_runner.py", build_args=_extract_args, extra_env=_extract_env),
+    "extract": StepSpec(script="graph/extract_step.py", build_args=_extract_args, extra_env=_extract_env),
+    "qc": StepSpec(script="graph/qc_step.py", build_args=lambda corp_code, _p, _c: [corp_code]),
+    # 글로벌 엔티티 통합 — needs_er→corp_code 병합 + Product/Tech 재캐논. 전역·인자 없음.
+    "canon": StepSpec(script="graph/canonicalize.py", build_args=lambda *_a: []),
+    # 원본 정리 — 인자 없음(POLARIS_CORP_NAMES env 로 대상 회사 인식)
+    "cleanup": StepSpec(script="cleanup_raw.py", build_args=lambda *_a: []),
 }
