@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POLARIS Backend GraphRAG 수정 계획</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --paper: #ffffff;
+      --ink: #172033;
+      --muted: #647084;
+      --line: #dbe2ec;
+      --soft: #eef3f8;
+      --blue: #2563eb;
+      --green: #12805c;
+      --teal: #0f766e;
+      --orange: #b45309;
+      --red: #b42318;
+      --purple: #6d28d9;
+      --code-bg: #111827;
+      --code: #e5eefb;
+      --shadow: 0 18px 50px rgba(22, 32, 51, 0.08);
+      --mono: Consolas, "SFMono-Regular", "Cascadia Mono", "D2Coding", monospace;
+      --sans: "Segoe UI", "Pretendard", "Apple SD Gothic Neo", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.65;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre, .mono { font-family: var(--mono); }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: rgba(246, 248, 251, 0.92);
+      backdrop-filter: blur(12px);
+    }
+    nav .shell {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .brand {
+      color: var(--ink);
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      margin-right: 8px;
+    }
+    nav a {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    header {
+      padding: 70px 0 42px;
+      background:
+        linear-gradient(180deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0)),
+        var(--bg);
+      border-bottom: 1px solid var(--line);
+    }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--paper);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      box-shadow: 0 6px 22px rgba(22, 32, 51, 0.04);
+    }
+    h1 {
+      margin: 18px 0 14px;
+      max-width: 920px;
+      font-size: clamp(34px, 6vw, 62px);
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+    }
+    .lead {
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 19px;
+      margin: 0;
+    }
+    .summary-band {
+      margin-top: 28px;
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 16px;
+    }
+    .summary-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: var(--shadow);
+    }
+    .summary-card strong { color: var(--blue); }
+    section {
+      padding: 46px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      letter-spacing: -0.02em;
+    }
+    h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      letter-spacing: -0.01em;
+    }
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .num {
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .grid { display: grid; gap: 16px; }
+    .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 10px 28px rgba(22, 32, 51, 0.045);
+    }
+    .card p { margin: 0; color: var(--muted); }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      margin: 2px 4px 2px 0;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .tag.blue { background: #e8f0ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .tag.green { background: #e8f7f1; color: #047857; border-color: #a7f3d0; }
+    .tag.orange { background: #fff4e5; color: #a15c07; border-color: #fed7aa; }
+    .tag.red { background: #fff0ee; color: #b42318; border-color: #fecaca; }
+    .callout {
+      margin: 18px 0;
+      padding: 17px 18px;
+      border-radius: 12px;
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid var(--blue);
+      background: #eef6ff;
+      color: #1e3a5f;
+    }
+    .callout.warn {
+      border-color: #fed7aa;
+      border-left-color: var(--orange);
+      background: #fff7ed;
+      color: #6b3d08;
+    }
+    .callout.good {
+      border-color: #a7f3d0;
+      border-left-color: var(--green);
+      background: #ecfdf5;
+      color: #065f46;
+    }
+    .visual-card {
+      overflow: hidden;
+      padding: 0;
+    }
+    .visual-card .shot {
+      display: block;
+      width: 100%;
+      height: 270px;
+      object-fit: cover;
+      object-position: top left;
+      border-bottom: 1px solid var(--line);
+      background: #e5e7eb;
+    }
+    .visual-card .body {
+      padding: 16px 18px 18px;
+    }
+    .visual-card .body p {
+      font-size: 14px;
+    }
+    .mini {
+      font-size: 12px;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-top: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+      box-shadow: 0 10px 28px rgba(22, 32, 51, 0.045);
+    }
+    th, td {
+      padding: 13px 14px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+    th {
+      background: var(--soft);
+      color: #3b4758;
+      font-size: 12px;
+      font-family: var(--mono);
+      letter-spacing: 0.02em;
+    }
+    tr:last-child td { border-bottom: 0; }
+    td code {
+      color: #1d4ed8;
+      background: #eff6ff;
+      padding: 2px 5px;
+      border-radius: 5px;
+      font-size: 12px;
+    }
+    .diagram {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 20px;
+      overflow-x: auto;
+      box-shadow: var(--shadow);
+    }
+    svg { max-width: 100%; display: block; }
+    .node { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.4; }
+    .node.blue { fill: #eff6ff; stroke: #93c5fd; }
+    .node.green { fill: #ecfdf5; stroke: #86efac; }
+    .node.orange { fill: #fff7ed; stroke: #fdba74; }
+    .node.purple { fill: #f5f3ff; stroke: #c4b5fd; }
+    .svg-title { font: 700 14px var(--sans); fill: var(--ink); }
+    .svg-sub { font: 12px var(--mono); fill: var(--muted); }
+    .arrow { stroke: #94a3b8; stroke-width: 2; marker-end: url(#arrow); }
+    pre {
+      margin: 12px 0 0;
+      padding: 16px;
+      border-radius: 10px;
+      background: var(--code-bg);
+      color: var(--code);
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    .timeline {
+      display: grid;
+      gap: 12px;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 58px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .step .bubble {
+      height: 42px;
+      border-radius: 12px;
+      background: var(--ink);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-family: var(--mono);
+      font-weight: 800;
+    }
+    .step .box {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: 0 8px 24px rgba(22, 32, 51, 0.045);
+    }
+    .step .box p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+    ul.clean {
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    ul.clean li {
+      margin: 8px 0;
+      padding-left: 18px;
+      position: relative;
+      color: var(--muted);
+    }
+    ul.clean li:before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 12px;
+      width: 7px;
+      height: 7px;
+      border-radius: 2px;
+      background: var(--blue);
+    }
+    .footer {
+      padding: 28px 0 42px;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    @media (max-width: 900px) {
+      .summary-band, .g2, .g3, .split { grid-template-columns: 1fr; }
+      .visual-card .shot { height: 210px; }
+      nav .shell { gap: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="shell">
+      <span class="brand">POLARIS GraphRAG Plan</span>
+      <a href="#diagnosis">진단</a>
+      <a href="#cases">외부 사례</a>
+      <a href="#compare">코드 비교</a>
+      <a href="#target">목표 구조</a>
+      <a href="#roadmap">수정 순서</a>
+      <a href="#eval">검증</a>
+      <a href="#sources">출처</a>
+    </div>
+  </nav>
+
+  <header>
+    <div class="shell">
+      <span class="kicker">작성일 2026-06-14 · backend GraphRAG revision plan</span>
+      <h1>자유 질문을 받기 위한 GraphRAG 백엔드 수정 계획</h1>
+      <p class="lead">
+        현재 POLARIS는 데이터 적재와 각 DB 검색기는 꽤 갖춰졌지만, 질문을 읽고 어떤 DB에 어떤 형태로 요청할지
+        정하는 계층이 약합니다. 로컬 LLM 전제의 템플릿 중심 구조에서, Apimaker를 이용한
+        <b>질문 분석-계획-검증 루프</b> 중심 구조로 바꾸는 것이 핵심입니다.
+      </p>
+
+      <div class="summary-band">
+        <div class="summary-card">
+          <h3>결론</h3>
+          <p>
+            사용자의 판단처럼 병목은 대체로 <strong>검색 이후보다 검색 이전</strong>입니다.
+            다만 검색 이후도 완전히 안전하지는 않습니다. 현재 합성 단계는 검색 결과를 문자열로 합치기 때문에
+            점수, 출처, self-check, 실행 쿼리 같은 근거 메타가 답변까지 살아남지 못합니다.
+          </p>
+        </div>
+        <div class="summary-card">
+          <h3>가장 먼저 고칠 것</h3>
+          <span class="tag blue">QueryPlanner</span>
+          <span class="tag green">structured JSON</span>
+          <span class="tag orange">tool-specific request</span>
+          <span class="tag red">retry/repair loop</span>
+          <p style="margin-top: 10px;">
+            `ctx` 뒤에 계획 노드를 넣고, `rdb/vec/graph`를 무조건 병렬 실행하지 말고
+            계획된 도구만 실행하도록 바꿉니다.
+          </p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="diagnosis">
+      <div class="shell">
+        <div class="section-head">
+          <span class="num">01</span>
+          <h2>현재 진단</h2>
+        </div>
+
+        <div class="callout">
+          <b>핵심 문제:</b> 지금 상위 LangGraph는 `direct` 또는 `ctx`만 고른 뒤,
+          공시 질문이면 `rdb`, `vec`, `graph`를 모두 같은 재구성 질문으로 실행합니다.
+          즉 자유 질문을 도구별 요청으로 분해하는 계획자가 없습니다.
+        </div>
+
+        <div class="grid g3">
+          <div class="card">
+            <h3>1. 상위 라우터가 너무 얕음</h3>
+            <p>
+              `nodes/router.py`는 `ctx/direct`만 반환합니다. "재무 비교 + 공급망 리스크 + 출처"처럼
+              복합 질의가 들어와도 RDB, Vector, Graph에 서로 다른 하위 질의를 주지 못합니다.
+            </p>
+            <div class="mini">파일: polaris-backend/nodes/router.py:31-57</div>
+          </div>
+          <div class="card">
+            <h3>2. search_plan은 선언만 있음</h3>
+            <p>
+              `AgentState`와 채팅 로그 테이블에는 `search_plan`이 있지만 실제 생성 노드가 없습니다.
+              관리자 통계는 도구 사용량을 읽을 준비가 되어 있는데, 상태에는 값이 채워지지 않습니다.
+            </p>
+            <div class="mini">파일: core/state.py:18-20, main.py:100-106</div>
+          </div>
+          <div class="card">
+            <h3>3. reflection 루프가 꺼져 있음</h3>
+            <p>
+              충분성 검증이 실패해도 현재 코드는 개발 단계 로직으로 바로 `is_sufficient=True`를 반환합니다.
+              자유 질문에서 가장 필요한 "질문 재작성 후 재검색" 루프가 사실상 동작하지 않습니다.
+            </p>
+            <div class="mini">파일: nodes/rag.py:277-283</div>
+          </div>
+        </div>
+
+        <div class="diagram" style="margin-top: 22px;">
+          <svg viewBox="0 0 1040 250" role="img" aria-label="현재 POLARIS 흐름">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L9,3 L0,6 Z" fill="#94a3b8"></path>
+              </marker>
+            </defs>
+            <rect class="node" x="20" y="96" width="110" height="50" rx="10"></rect>
+            <text class="svg-title" x="75" y="119" text-anchor="middle">mem</text>
+            <text class="svg-sub" x="75" y="137" text-anchor="middle">history</text>
+            <line class="arrow" x1="130" y1="121" x2="175" y2="121"></line>
+
+            <rect class="node blue" x="180" y="96" width="120" height="50" rx="10"></rect>
+            <text class="svg-title" x="240" y="119" text-anchor="middle">route</text>
+            <text class="svg-sub" x="240" y="137" text-anchor="middle">ctx/direct</text>
+            <line class="arrow" x1="300" y1="121" x2="345" y2="121"></line>
+
+            <rect class="node blue" x="350" y="96" width="130" height="50" rx="10"></rect>
+            <text class="svg-title" x="415" y="119" text-anchor="middle">ctx</text>
+            <text class="svg-sub" x="415" y="137" text-anchor="middle">rewrite only</text>
+
+            <line class="arrow" x1="480" y1="121" x2="540" y2="61"></line>
+            <line class="arrow" x1="480" y1="121" x2="540" y2="121"></line>
+            <line class="arrow" x1="480" y1="121" x2="540" y2="181"></line>
+            <rect class="node orange" x="545" y="36" width="110" height="50" rx="10"></rect>
+            <text class="svg-title" x="600" y="59" text-anchor="middle">rdb</text>
+            <text class="svg-sub" x="600" y="77" text-anchor="middle">same query</text>
+            <rect class="node green" x="545" y="96" width="110" height="50" rx="10"></rect>
+            <text class="svg-title" x="600" y="119" text-anchor="middle">vec</text>
+            <text class="svg-sub" x="600" y="137" text-anchor="middle">same query</text>
+            <rect class="node purple" x="545" y="156" width="110" height="50" rx="10"></rect>
+            <text class="svg-title" x="600" y="179" text-anchor="middle">graph</text>
+            <text class="svg-sub" x="600" y="197" text-anchor="middle">same query</text>
+
+            <line class="arrow" x1="655" y1="61" x2="715" y2="121"></line>
+            <line class="arrow" x1="655" y1="121" x2="715" y2="121"></line>
+            <line class="arrow" x1="655" y1="181" x2="715" y2="121"></line>
+            <rect class="node" x="720" y="96" width="110" height="50" rx="10"></rect>
+            <text class="svg-title" x="775" y="119" text-anchor="middle">syn</text>
+            <text class="svg-sub" x="775" y="137" text-anchor="middle">string merge</text>
+            <line class="arrow" x1="830" y1="121" x2="875" y2="121"></line>
+            <rect class="node orange" x="880" y="96" width="130" height="50" rx="10"></rect>
+            <text class="svg-title" x="945" y="119" text-anchor="middle">reflect</text>
+            <text class="svg-sub" x="945" y="137" text-anchor="middle">forced pass</text>
+          </svg>
+        </div>
+
+        <table style="margin-top: 22px;">
+          <thead>
+            <tr>
+              <th>현재 구현</th>
+              <th>좋은 점</th>
+              <th>자유 질문에서 막히는 이유</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>GraphAgentRunner</code></td>
+              <td>12의도, route, stage, 템플릿, Text-to-Cypher, guard, self_check가 이미 있음</td>
+              <td>상위 파이프라인이 이 결과를 검색 계획으로 재사용하지 않고, wrapper가 메타를 대부분 버림</td>
+            </tr>
+            <tr>
+              <td><code>rdb_search_node</code></td>
+              <td>Apimaker 기반 NL-to-SQL과 SELECT-only guard가 있음</td>
+              <td>질문 전체를 바로 SQL로 바꾸므로 복합 질문의 RDB 부분만 분리하지 못함</td>
+            </tr>
+            <tr>
+              <td><code>vector_search_node</code></td>
+              <td>Dense + BM25 + RRF와 회사/연도 필터 추출이 있음</td>
+              <td>검색어, 필터, 문서 타입, 답변 목적이 계획에서 내려오지 않음</td>
+            </tr>
+            <tr>
+              <td><code>synthesizer_node</code></td>
+              <td>3개 DB 결과를 하나로 묶는 최소 구현이 있음</td>
+              <td>구조화 evidence가 아니라 문자열이라 점수, 출처, 실행 쿼리, 누락 사유가 손실됨</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="cases">
+      <div class="shell">
+        <div class="section-head">
+          <span class="num">02</span>
+          <h2>외부 사례 분석</h2>
+        </div>
+        <p style="max-width: 900px; color: var(--muted); margin-top: -8px;">
+          아래 캡처는 2026-06-14에 공식 문서 페이지를 직접 캡처한 것입니다.
+          비공식 블로그보다 문서와 공개 코드가 함께 있는 사례를 우선했습니다.
+        </p>
+
+        <div class="grid g2" style="margin-top: 18px;">
+          <article class="card visual-card">
+            <img class="shot" src="output/playwright/microsoft-graphrag-home.png" alt="Microsoft GraphRAG 공식 문서 캡처" loading="lazy">
+            <div class="body">
+              <h3>Microsoft GraphRAG</h3>
+              <p>
+                원문에서 강조하는 구조는 텍스트를 TextUnit으로 나누고, 엔티티/관계/커뮤니티 요약을 만든 뒤
+                질의 시 Global, Local, DRIFT, Basic Search 중 맞는 검색 모드를 쓰는 방식입니다.
+              </p>
+              <div>
+                <span class="tag blue">community summaries</span>
+                <span class="tag green">local search</span>
+                <span class="tag orange">global search</span>
+              </div>
+              <div class="mini">
+                소스:
+                <a href="https://microsoft.github.io/graphrag/">GraphRAG docs</a>,
+                <a href="https://microsoft.github.io/graphrag/query/global_search/">Global Search</a>,
+                <a href="https://microsoft.github.io/graphrag/query/local_search/">Local Search</a>
+              </div>
+            </div>
+          </article>
+
+          <article class="card visual-card">
+            <img class="shot" src="output/playwright/neo4j-text2cypher-source.png" alt="Neo4j Text2CypherRetriever 코드 문서 캡처" loading="lazy">
+            <div class="body">
+              <h3>Neo4j GraphRAG Text2Cypher</h3>
+              <p>
+                Neo4j의 Text2CypherRetriever는 자연어 질문을 LLM으로 Cypher로 바꾸고,
+                실행 결과 레코드를 다시 답변 컨텍스트로 넣는 분리 구조입니다. Cypher 생성 LLM과 답변 LLM을 나눌 수 있습니다.
+              </p>
+              <div>
+                <span class="tag blue">schema prompt</span>
+                <span class="tag green">Text2Cypher</span>
+                <span class="tag orange">result formatter</span>
+              </div>
+              <div class="mini">
+                소스:
+                <a href="https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html">Neo4j GraphRAG RAG Guide</a>,
+                <a href="https://neo4j.com/docs/neo4j-graphrag-python/current/_modules/neo4j_graphrag/retrievers/text2cypher.html">Text2Cypher source docs</a>
+              </div>
+            </div>
+          </article>
+
+          <article class="card visual-card">
+            <img class="shot" src="output/playwright/llamaindex-property-graph.png" alt="LlamaIndex PropertyGraphIndex 문서 캡처" loading="lazy">
+            <div class="body">
+              <h3>LlamaIndex PropertyGraphIndex</h3>
+              <p>
+                LlamaIndex는 chunk마다 여러 `kg_extractors`를 적용해 엔티티/관계를 노드 메타로 붙입니다.
+                특히 SchemaLLMPathExtractor는 허용 엔티티/관계와 연결 규칙을 검증합니다.
+              </p>
+              <div>
+                <span class="tag green">kg_extractors</span>
+                <span class="tag blue">schema validation</span>
+                <span class="tag orange">ingestion-first</span>
+              </div>
+              <div class="mini">
+                소스:
+                <a href="https://developers.llamaindex.ai/python/framework/module_guides/indexing/lpg_index_guide/">LlamaIndex Property Graph guide</a>
+              </div>
+            </div>
+          </article>
+
+          <article class="card visual-card">
+            <img class="shot" src="output/playwright/langgraph-agentic-rag.png" alt="LangGraph Agentic RAG 문서 캡처" loading="lazy">
+            <div class="body">
+              <h3>LangGraph Agentic RAG</h3>
+              <p>
+                LangGraph 예시는 검색 도구 사용 여부 결정, 문서 관련성 평가, 질문 재작성, 최종 생성 노드를 분리합니다.
+                자유 질문 대응에는 이 "grade and rewrite" 루프가 중요합니다.
+              </p>
+              <div>
+                <span class="tag blue">tool decision</span>
+                <span class="tag green">grade documents</span>
+                <span class="tag orange">rewrite question</span>
+              </div>
+              <div class="mini">
+                소스:
+                <a href="https://docs.langchain.com/oss/python/langgraph/agentic-rag">LangGraph custom RAG agent</a>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="callout good">
+          <b>POLARIS에 바로 가져올 점:</b>
+          Microsoft의 검색 모드 분리, Neo4j의 자연어-Cypher 분리, LlamaIndex의 schema-driven 추출 관점,
+          LangGraph의 질문 재작성 루프를 모두 합치되, POLARIS의 장점인 DART 정형 데이터와 Cypher guard는 그대로 유지합니다.
+        </div>
+
+        <article class="card visual-card" style="margin-top: 18px;">
+          <img class="shot" src="output/playwright/microsoft-global-search.png" alt="Microsoft GraphRAG Global Search 문서 캡처" loading="lazy">
+          <div class="body">
+            <h3>Microsoft Global Search가 주는 힌트</h3>
+            <p>
+              커뮤니티 리포트를 바로 최종 답변에 넣는 것이 아니라, 중간 응답을 만들고 중요한 포인트만 다시 줄이는
+              map/reduce식 흐름이 핵심입니다. POLARIS의 `community_cards`도 이 방향으로 확장하면
+              "반도체 생태계 전체를 요약해줘" 같은 질문을 관계 1개짜리 템플릿으로 억지 처리하지 않아도 됩니다.
+            </p>
+            <div class="mini">
+              캡처 소스:
+              <a href="https://microsoft.github.io/graphrag/query/global_search/">Microsoft GraphRAG Global Search</a>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="compare">
+      <div class="shell">
+        <div class="section-head">
+          <span class="num">03</span>
+          <h2>현재 코드와 사례 코드 비교</h2>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>영역</th>
+              <th>외부 사례의 패턴</th>
+              <th>POLARIS 현재 코드</th>
+              <th>수정 방향</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>검색 모드 선택</td>
+              <td>Microsoft GraphRAG는 Global, Local, DRIFT, Basic을 질의 성격에 따라 나눔</td>
+              <td><code>router_node</code>는 `ctx/direct`만 선택. 이후 `rdb/vec/graph` 모두 실행</td>
+              <td>Apimaker 기반 `QueryPlanner`가 tool과 mode를 구조화 JSON으로 선택</td>
+            </tr>
+            <tr>
+              <td>Text-to-Cypher</td>
+              <td>Neo4j는 schema/examples/custom prompt를 넣어 Cypher를 만들고 record를 컨텍스트화</td>
+              <td><code>TextToCypher.generate</code>와 <code>validate_cypher</code>는 이미 유사하게 구현</td>
+              <td>상위 plan의 entities/slots/relations를 runner에 주입하고 결과 메타를 보존</td>
+            </tr>
+            <tr>
+              <td>그래프 추출</td>
+              <td>LlamaIndex는 `kg_extractors`와 strict schema extractor로 추출 규칙을 명시</td>
+              <td>POLARIS는 `pipeline_scripts/graph/extract_*.py`가 회사별/문서별 스크립트로 흩어져 있음</td>
+              <td>질문 단계보다 후순위지만, 공급망/제품/기술 추출은 schema registry로 통일</td>
+            </tr>
+            <tr>
+              <td>자기 수정 루프</td>
+              <td>LangGraph 예시는 grade 실패 시 질문을 rewrite하고 다시 검색</td>
+              <td><code>reflection_node</code>는 실패해도 현재 바로 통과 처리</td>
+              <td>coverage 실패 시 `repair_plan`으로 재검색. 2회 제한 후 부족함을 답변에 표시</td>
+            </tr>
+            <tr>
+              <td>관측 가능성</td>
+              <td>retriever 결과와 query metadata를 분리해 디버그 가능</td>
+              <td><code>graph_agent.py</code> 주석상 runner의 13키 중 대부분을 버림</td>
+              <td>`ToolTrace`, `graph_debug`, `cypher_executed`, `self_check`를 상태와 응답 옵션에 보존</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="split" style="margin-top: 22px;">
+          <div class="card">
+            <h3>POLARIS의 이미 좋은 부분</h3>
+            <ul class="clean">
+              <li>Apimaker in-process LLM 어댑터가 이미 들어와 있음</li>
+              <li>GraphAgentRunner는 의도, route, stage, template, Text-to-Cypher, self_check를 갖춤</li>
+              <li>Cypher guard가 write/admin 차단, 라벨/관계 whitelist, LIMIT, EXPLAIN dry-run을 수행</li>
+              <li>Vector는 Dense + BM25 + RRF를 이미 사용</li>
+              <li>MariaDB는 SELECT-only 실행기와 큐레이션된 schema prompt를 갖춤</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>현재 가장 큰 누락</h3>
+            <pre>사용자 자유 질문
+  -> 대화 맥락 재구성
+  -> [없음] 도구별 검색 계획
+  -> 같은 질문을 rdb/vec/graph 모두에 투입
+  -> 문자열 합성
+  -> 부족해도 통과
+
+필요한 구조
+  -> QueryPlanner JSON
+  -> 도구별 sub-query / filters / slots
+  -> selective 또는 parallel tool execution
+  -> structured EvidenceBundle
+  -> coverage check
+  -> repair or final answer</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="target">
+      <div class="shell">
+        <div class="section-head">
+          <span class="num">04</span>
+          <h2>목표 구조</h2>
+        </div>
+
+        <div class="diagram">
+          <svg viewBox="0 0 1140 380" role="img" aria-label="목표 구조">
+            <defs>
+              <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L9,3 L0,6 Z" fill="#94a3b8"></path>
+              </marker>
+            </defs>
+            <style>
+              .a2 { stroke: #94a3b8; stroke-width: 2; marker-end: url(#arrow2); }
+            </style>
+
+            <rect class="node" x="24" y="158" width="105" height="54" rx="10"></rect>
+            <text class="svg-title" x="76" y="182" text-anchor="middle">mem</text>
+            <text class="svg-sub" x="76" y="200" text-anchor="middle">history</text>
+            <line class="a2" x1="129" y1="185" x2="168" y2="185"></line>
+
+            <rect class="node blue" x="174" y="158" width="130" height="54" rx="10"></rect>
+            <text class="svg-title" x="239" y="182" text-anchor="middle">reconstruct</text>
+            <text class="svg-sub" x="239" y="200" text-anchor="middle">standalone Q</text>
+            <line class="a2" x1="304" y1="185" x2="345" y2="185"></line>
+
+            <rect class="node purple" x="350" y="140" width="180" height="90" rx="12"></rect>
+            <text class="svg-title" x="440" y="169" text-anchor="middle">QueryPlanner</text>
+            <text class="svg-sub" x="440" y="190" text-anchor="middle">Apimaker JSON</text>
+            <text class="svg-sub" x="440" y="209" text-anchor="middle">tools · slots · modes</text>
+
+            <line class="a2" x1="530" y1="185" x2="595" y2="75"></line>
+            <line class="a2" x1="530" y1="185" x2="595" y2="185"></line>
+            <line class="a2" x1="530" y1="185" x2="595" y2="295"></line>
+
+            <rect class="node orange" x="600" y="45" width="165" height="70" rx="12"></rect>
+            <text class="svg-title" x="682" y="72" text-anchor="middle">RDB adapter</text>
+            <text class="svg-sub" x="682" y="92" text-anchor="middle">planned SQL task</text>
+            <rect class="node green" x="600" y="150" width="165" height="70" rx="12"></rect>
+            <text class="svg-title" x="682" y="177" text-anchor="middle">Vector adapter</text>
+            <text class="svg-sub" x="682" y="197" text-anchor="middle">planned semantic task</text>
+            <rect class="node blue" x="600" y="255" width="165" height="70" rx="12"></rect>
+            <text class="svg-title" x="682" y="282" text-anchor="middle">Graph adapter</text>
+            <text class="svg-sub" x="682" y="302" text-anchor="middle">local/global/cypher</text>
+
+            <line class="a2" x1="765" y1="80" x2="835" y2="185"></line>
+            <line class="a2" x1="765" y1="185" x2="835" y2="185"></line>
+            <line class="a2" x1="765" y1="290" x2="835" y2="185"></line>
+
+            <rect class="node" x="840" y="140" width="150" height="90" rx="12"></rect>
+            <text class="svg-title" x="915" y="169" text-anchor="middle">EvidenceBuilder</text>
+            <text class="svg-sub" x="915" y="190" text-anchor="middle">facts · chunks · rows</text>
+            <text class="svg-sub" x="915" y="209" text-anchor="middle">scores · citations</text>
+            <line class="a2" x1="990" y1="185" x2="1030" y2="185"></line>
+
+            <rect class="node orange" x="1035" y="120" width="90" height="70" rx="12"></rect>
+            <text class="svg-title" x="1080" y="148" text-anchor="middle">grade</text>
+            <text class="svg-sub" x="1080" y="168" text-anchor="middle">coverage</text>
+            <path d="M1080 120 C1080 35 440 35 440 140" fill="none" stroke="#b45309" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow2)"></path>
+            <text class="svg-sub" x="790" y="29" text-anchor="middle">fail: repair plan and retry, max 2</text>
+            <line class="a2" x1="1080" y1="190" x2="1080" y2="250"></line>
+            <rect class="node green" x="1035" y="255" width="90" height="70" rx="12"></rect>
+            <text class="svg-title" x="1080" y="283" text-anchor="middle">answer</text>
+            <text class="svg-sub" x="1080" y="303" text-anchor="middle">grounded</text>
+          </svg>
+        </div>
+
+        <div class="grid g2" style="margin-top: 20px;">
+          <div class="card">
+            <h3>QueryPlanner 출력 스키마 초안</h3>
+            <pre>{
+  "needs_retrieval": true,
+  "answer_shape": "comparison | list | number | explanation",
+  "tasks": [
+    {
+      "tool": "rdb",
+      "purpose": "2024 revenue comparison",
+      "query": "삼성전자와 SK하이닉스 2024년 매출액",
+      "slots": {"year": 2024, "account_id": "ifrs-full_Revenue"},
+      "entities": ["00126380", "00164779"]
+    },
+    {
+      "tool": "graph",
+      "mode": "local",
+      "intent": "supply_chain",
+      "relations": ["supplies"],
+      "entities": ["00126380", "00164779"],
+      "max_hops": 2
+    }
+  ],
+  "fallback": {"if_no_entity": "ask_clarification"}
+}</pre>
+          </div>
+          <div class="card">
+            <h3>핵심 설계 원칙</h3>
+            <ul class="clean">
+              <li><b>LLM은 planner</b>로 쓰고, 숫자와 관계는 DB가 결정한다.</li>
+              <li><b>템플릿 우선, Text-to-Cypher 보조</b>를 유지한다.</li>
+              <li><b>검색 결과는 문자열이 아니라 Evidence 객체</b>로 합친다.</li>
+              <li><b>부족하면 rewrite/repair</b>한다. 부족함을 숨기고 답하지 않는다.</li>
+              <li><b>관측 메타를 버리지 않는다.</b> 실행 SQL/Cypher, self_check, source, score를 남긴다.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="shell">
+        <div class="section-head">
+          <span class="num">05</span>
+          <h2>수정 순서</h2>
+        </div>
+
+        <div class="timeline">
+          <div class="step">
+            <div class="bubble">0</div>
+            <div class="box">
+              <h3>상태와 로그 확장</h3>
+              <p>
+                `AgentState`에 `query_plan`, `tool_traces`, `evidence_bundle`, `graph_debug`,
+                `planner_errors`를 추가합니다. `ChatResponse`는 기본 응답은 유지하되 debug 옵션으로 plan/trace를 받을 수 있게 합니다.
+              </p>
+              <div class="mini">대상: core/state.py, main.py, services/chat_logging.py</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="bubble">1</div>
+            <div class="box">
+              <h3>Apimaker 기반 QueryPlanner 추가</h3>
+              <p>
+                `nodes/planner.py`를 새로 만들고, `reconstructed_query + 대화 기록 + DB 역할 설명 + graph intent catalog`를 입력해
+                엄격한 JSON plan을 생성합니다. 실패 시 규칙 fallback은 가능하지만 fallback 여부를 trace에 남깁니다.
+              </p>
+              <div class="mini">대상: nodes/planner.py, prompts/query_plan.md</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="bubble">2</div>
+            <div class="box">
+              <h3>core/graph.py를 계획 기반 조건부 실행으로 변경</h3>
+              <p>
+                `ctx -> rdb/vec/graph` 전체 병렬 실행을 `ctx -> plan -> planned tools`로 바꿉니다.
+                복합 질문이면 선택된 도구만 병렬 실행하고, 단일 질문이면 하나만 실행합니다.
+              </p>
+              <div class="mini">대상: core/graph.py:64-71 교체</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="bubble">3</div>
+            <div class="box">
+              <h3>도구별 adapter가 plan을 소비하도록 변경</h3>
+              <p>
+                RDB는 `tasks[].query/slots/entities`를 기준으로 SQL을 만들고, Vector는 `semantic_query + filters`를 받습니다.
+                Graph는 `GraphAgentRunner.run({"query", "intent", "entities", "slots", "requested_relations", "max_hops"})` 형태로
+                planner 결과를 직접 주입합니다.
+              </p>
+              <div class="mini">대상: nodes/rag.py, graphrag/langgraph_app/nodes/graph_agent.py</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="bubble">4</div>
+            <div class="box">
+              <h3>EvidenceBuilder로 합성 계층 교체</h3>
+              <p>
+                `synthesized_info` 문자열은 최종 prompt용 렌더링 결과로만 남기고, 내부 상태는
+                `{items, source_map, scores, missing, executed_queries}` 형태로 유지합니다.
+                이렇게 해야 답변 근거와 누락 사유를 정확히 제어할 수 있습니다.
+              </p>
+              <div class="mini">대상: nodes/rag.py:synthesizer_node</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="bubble">5</div>
+            <div class="box">
+              <h3>Reflection을 coverage checker + repair loop로 복구</h3>
+              <p>
+                `current_retry >= 0` 강제 통과 조건을 제거합니다. coverage가 낮으면 planner로 되돌아가
+                `prior_missing`과 `tool_errors`를 넣고 1-2회 재계획합니다.
+              </p>
+              <div class="mini">대상: nodes/rag.py:250-286</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="bubble">6</div>
+            <div class="box">
+              <h3>프론트/관리자에서 plan trace 확인</h3>
+              <p>
+                사용자는 평소에는 답변만 보고, 개발/관리자 모드에서는 어떤 도구를 왜 썼는지,
+                어떤 SQL/Cypher가 실행됐는지, 어느 단계에서 누락됐는지 확인할 수 있게 합니다.
+              </p>
+              <div class="mini">대상: polaris-frontend Chatbot/Admin Analytics</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <b>주의:</b> `GraphAgentRunner`를 버릴 필요는 없습니다. 오히려 가장 완성도가 높은 부분입니다.
+          수정의 중심은 GraphAgent 자체가 아니라, 그 앞단의 planner와 뒷단의 evidence/coverage입니다.
+        </div>
+      </div>
+    </section>
+
+    <section id="eval">
+      <div class="shell">
+        <div class="section-head">
+          <span class="num">06</span>
+          <h2>검증 기준</h2>
+        </div>
+
+        <div class="grid g3">
+          <div class="card">
+            <h3>Plan validity</h3>
+            <p>
+              자유 질문 50개에 대해 planner JSON이 schema를 통과하고, 필요한 도구를 빠뜨리지 않는지 봅니다.
+              복합 질문은 `tasks.length > 1`이 자연스럽게 나와야 합니다.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Entity/slot F1</h3>
+            <p>
+              회사명, corp_code, 연도, IFRS account_id, 관계 타입을 얼마나 잘 잡는지 따로 측정합니다.
+              "DB 정확도"라는 말은 이 단계와 실행 결과 정확도를 분리해서 봐야 합니다.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Cypher/SQL safety</h3>
+            <p>
+              generated query가 guard를 통과하는 비율, guard 실패 후 retry 성공률, 실행 시간,
+              빈 결과의 원인 분류를 로그로 남깁니다.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Context recall</h3>
+            <p>
+              정답 근거가 top-k evidence 안에 들어오는지 측정합니다. Graph는 `graph_path_validity`,
+              Vector는 chunk recall, RDB는 row match를 분리합니다.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Grounded answer</h3>
+            <p>
+              답변이 evidence에 없는 숫자/관계를 만들지 않는지 봅니다.
+              부족한 경우 "자료 없음"을 말하는 것도 성공 케이스로 둡니다.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Latency budget</h3>
+            <p>
+              planner 1회, 도구 실행, coverage check, repair 재시도별 시간을 나눠 기록합니다.
+              모든 질문에 모든 DB를 치는 현재 방식보다 평균 지연은 줄어야 합니다.
+            </p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 18px;">
+          <h3>테스트 질문 세트 예시</h3>
+          <pre>1. "삼성전자와 SK하이닉스 중 2024년 매출이 더 크고, 공급망 관계가 더 많이 잡힌 곳은?"
+2. "한미반도체의 주요 고객사와 그 근거 공시를 같이 보여줘."
+3. "삼성 계열 반도체 생태계를 한 문단으로 요약하고 핵심 관계 5개만 뽑아줘."
+4. "작년에 매출이 늘어난 회사 중 공급망 관계가 있는 회사를 찾아줘."
+5. "그 회사 자회사 중 재무 데이터가 있는 곳만 표로 정리해줘."</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="shell">
+        <div class="section-head">
+          <span class="num">07</span>
+          <h2>근거 자료와 코드 위치</h2>
+        </div>
+
+        <div class="grid g2">
+          <div class="card">
+            <h3>외부 공식 자료</h3>
+            <ul class="clean">
+              <li><a href="https://microsoft.github.io/graphrag/">Microsoft GraphRAG Welcome</a> - 인덱싱, 커뮤니티, query mode 개요</li>
+              <li><a href="https://microsoft.github.io/graphrag/query/global_search/">Microsoft GraphRAG Global Search</a> - community report 기반 map/reduce</li>
+              <li><a href="https://microsoft.github.io/graphrag/query/local_search/">Microsoft GraphRAG Local Search</a> - 엔티티 기반 local context 구성</li>
+              <li><a href="https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html">Neo4j GraphRAG User Guide</a> - retriever/LLM/driver 구조</li>
+              <li><a href="https://neo4j.com/docs/neo4j-graphrag-python/current/_modules/neo4j_graphrag/retrievers/text2cypher.html">Neo4j Text2CypherRetriever source docs</a></li>
+              <li><a href="https://developers.llamaindex.ai/python/framework/module_guides/indexing/lpg_index_guide/">LlamaIndex Property Graph Index guide</a></li>
+              <li><a href="https://docs.langchain.com/oss/python/langgraph/agentic-rag">LangGraph custom RAG agent guide</a></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>POLARIS 코드 확인 위치</h3>
+            <ul class="clean">
+              <li><code>polaris-backend/core/graph.py</code> - 현재 상위 LangGraph 흐름</li>
+              <li><code>polaris-backend/core/state.py</code> - AgentState와 아직 비어 있는 search_plan</li>
+              <li><code>polaris-backend/nodes/router.py</code> - ctx/direct 라우터와 질문 재구성</li>
+              <li><code>polaris-backend/nodes/rag.py</code> - RDB/Vector/Graph 실행, 문자열 합성, reflection</li>
+              <li><code>polaris-backend/graphrag/langgraph_app/graph/runner.py</code> - GraphAgentRunner 본체</li>
+              <li><code>polaris-backend/graphrag/langgraph_app/graph/text_to_cypher.py</code> - Apimaker Text-to-Cypher</li>
+              <li><code>polaris-backend/graphrag/langgraph_app/graph/cypher_guard.py</code> - Cypher 안전 검증</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout">
+          <b>최종 권고:</b> "템플릿 기반 GraphAgent"를 폐기하지 말고, 그 앞에 Apimaker planner를 세우십시오.
+          자유 질문 대응은 template 수를 무한히 늘리는 문제가 아니라, 질문을 작은 데이터 요청으로 분해하는 문제입니다.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      POLARIS backend GraphRAG revision plan · local screenshots stored in output/playwright · generated for workspace root
+    </div>
+  </footer>
+</body>
+</html>
