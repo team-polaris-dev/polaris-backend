@@ -6,12 +6,11 @@ from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from core.state import AgentState
-# config.llm 의 llm/json_llm 은 이미 생성된 ApimakerLLM 인스턴스다(호출 X).
-# json_llm 은 JSON 강제 모드 — 라우터/리플렉션처럼 JSON 응답이 필요한 곳에 쓴다.
 from config.llm import llm, json_llm
 import re
 from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
+from graphrag import graph_search_node as _graphrag_search_node
 from tool.rdb_client import execute_sql_query, get_schema_prompt
 from tool.vector_store import search_vector_db
 from tool.graph_client import execute_cypher_query, GraphQueryError
@@ -170,50 +169,21 @@ def vector_search_node(state: AgentState):
     except Exception:
         return {"vec_results": []}
 
-CYPHER_PROMPT = """당신은 한국 DART 공시 KG 전문가다.
-다음 자연어 질문을 Neo4j Cypher로 변환하라.
-스키마:
-- (:Organization {{corp_code,name}})
-- (:FilingDocument {{rcept_no}})
-- (:Organization)-[:IS_SUBSIDIARY_OF]->(:Organization)
-- (:Person)-[:EXECUTIVE_OF]->(:Organization)
-- (:Organization)-[:IS_MAJOR_SHAREHOLDER_OF {{qota_rt}}]->(:Organization)
-반드시 RETURN에 path와 rcept_no를 포함하라.
-질문: {q}
-Cypher:"""
 
-
-def _looks_like_cypher(q: str) -> bool:
-    """LLM이 생성한 쿼리가 최소한의 Cypher 문법(MATCH/RETURN)을 갖추었는지 검사."""
-    if not q or len(q) < 10:
-        return False
-    up = q.upper()
-    return "MATCH" in up and "RETURN" in up
-
-
-def _row_to_unified(row: dict) -> UnifiedResult:
-    """그래프DB row → UnifiedResult(type/code/name/value/extra/source) 변환."""
-    nodes = [x for x in row["path"] if "corp_code" in x]
-    tail = nodes[-1] if nodes else {"corp_code": "", "name": ""}
-    rels = [x.get("rel") for x in row["path"] if "rel" in x]
-
-    return {
-        "type": "graph_path",
-        "code": tail["corp_code"],
-        "name": tail["name"],
-        "value": " -> ".join(rels) if rels else "",
-        "extra": {"hops": len(rels)},
-        "source": row.get("rcept_no", ""),
-    }
-
-
-
+#======================================================================
+# Graph RAG 노드 — graphrag 패키지(self-contained) 위임
+#======================================================================
 def graph_search_node(state: AgentState):
-    """자연어 질문 → Cypher → 그래프DB → graph_facts/paths/provenance.
+    """LangGraph 노드 진입점. 본체는 graphrag 패키지가 담당.
 
-    현재 ``execute_cypher_query``는 목업. 실제 Neo4j 드라이버 연결과
-    쿼리 템플릿 라우팅(___test/hybrid_rag 자산 이식)은 후속 이슈로 분리.
+    I/O 계약(core/state.py:AgentState):
+      입력  reconstructed_query: str
+      출력  graph_facts: List[UnifiedResult]
+            graph_paths: List[List[str]]
+            graph_provenance: List[str]   # rcept_no
+    Neo4j/Anthropic 키 등 외부 의존이 끊기면 graphrag 가 빈 결과로 degrade.
     """
+
     q = state.get("reconstructed_query") or ""
     empty = {"graph_facts": [], "graph_paths": [], "graph_provenance": []}
 
@@ -273,6 +243,8 @@ def _format_graph_path(path: list[str]) -> str:
     return " ".join(parts)
 
 
+    return _graphrag_search_node(state)
+  
 def synthesizer_node(state: AgentState):
     """
     Syn: 3개의 DB(RDB, Vector, Graph)에서 검색된 결과를 하나의 텍스트로 병합합니다.
@@ -353,8 +325,6 @@ reflection_prompt = PromptTemplate(
     input_variables=["query", "info"]
 )
 
-# ApimakerLLM 은 Runnable 이 아니라 LCEL 파이프(|)를 쓸 수 없다.
-# 프롬프트 포맷 → json_llm.invoke → JsonOutputParser 로 직접 연결한다.
 def _run_reflection(query: str, info: str) -> dict:
     prompt_text = reflection_prompt.format(query=query, info=info)
     return json_parser.invoke(json_llm.invoke(prompt_text))
@@ -363,20 +333,19 @@ def _run_reflection(query: str, info: str) -> dict:
 # ==========================================
 # 2. 개선된 Reflection 노드
 # ==========================================
-def reflection_node(state: dict): # AgentState 대신 dict 타입 힌트 (환경에 맞게 수정)
+def reflection_node(state: dict):
     """
     Reflect: 취합된 정보가 사용자의 질문에 답변하기에 충분한지 자체 검증합니다.
     """
     query = state.get("reconstructed_query", "")
     info = state.get("synthesized_info", "")
     current_retry = state.get("retry_count", 0)
-    
-    print("🔍 [Reflect Node] 데이터 충분성 자체 검증 중...")
-    
-    try:
-        # 프롬프트 완성 → json_llm 호출 → JSON 딕셔너리로 파싱
-        parsed_response = _run_reflection(query, info)
 
+    print("🔍 [Reflect Node] 데이터 충분성 자체 검증 중...")
+
+    try:
+        parsed_response = _run_reflection(query, info)
+        
         is_sufficient = parsed_response.get("is_sufficient", True)
         reason = parsed_response.get("reason", "검증 완료")
         
