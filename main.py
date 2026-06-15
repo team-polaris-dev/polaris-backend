@@ -207,8 +207,6 @@ def chat_endpoint(request: ChatRequest):
                 final_message,
                 intent=final_intent,
                 latency_ms=latency_ms,
-                is_sufficient=result.get("is_sufficient"),
-                retry_count=result.get("retry_count"),
                 panel=panel_data,
             )
         except Exception as log_err:
@@ -240,8 +238,6 @@ def _log_chat_turn(request, result, final_message, final_intent, latency_ms):
             assistant_message=final_message,
             intent=final_intent,
             search_plan=result.get("search_plan"),
-            is_sufficient=result.get("is_sufficient"),
-            retry_count=result.get("retry_count"),
             latency_ms=latency_ms,
         )
     except Exception:  # noqa: BLE001

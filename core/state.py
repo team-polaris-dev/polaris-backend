@@ -27,8 +27,5 @@ class AgentState(TypedDict):
     # 기타 그래프 관련 키 분리 유지
     graph_paths: List[List[str]]
     graph_provenance: List[str]  # 근거 rcept_no
-    
-    synthesized_info: str
+
     final_draft: str
-    is_sufficient: bool
-    retry_count: int  # 재시도 횟수를 추적하기 위해 추가
