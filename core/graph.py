@@ -6,9 +6,9 @@ from langgraph.store.memory import InMemoryStore
 # 1. 분리해둔 모듈들 불러오기
 from core.state import AgentState
 from nodes.memory import load_memory_node, save_memory_node
-from nodes.router import router_node, direct_response_node, context_reconstruct_node
-from nodes.rag import ( rdb_search_node, vector_search_node, 
-                       graph_search_node, synthesizer_node, reflection_node)
+from nodes.router import ( router_node, direct_response_node, context_reconstruct_node,
+                          result_check_node, route_result_check)
+from nodes.rag import rdb_search_node, vector_search_node, graph_search_node
 from nodes.render import generate_report_node
 
 # 2. 라우팅 조건 함수들 정의
@@ -17,9 +17,6 @@ def route_after_intent(state: AgentState):
 
 def route_search_plan(state: AgentState):
     return state["search_plan"]
-
-def route_reflection(state: AgentState):
-    return "gen" if state.get("is_sufficient") else "ctx"
 
 # 3. 그래프 조립 시작
 workflow = StateGraph(AgentState)
@@ -35,8 +32,7 @@ workflow.add_node("ctx", context_reconstruct_node)
 workflow.add_node("rdb", rdb_search_node)
 workflow.add_node("vec", vector_search_node)
 workflow.add_node("graph", graph_search_node)
-workflow.add_node("syn", synthesizer_node)
-workflow.add_node("reflect", reflection_node)
+workflow.add_node("result_check", result_check_node)
 workflow.add_node("gen", generate_report_node)
 
 workflow.add_node("save", save_memory_node)
@@ -65,20 +61,18 @@ workflow.add_edge("ctx", "rdb")
 workflow.add_edge("ctx", "vec")
 workflow.add_edge("ctx", "graph")
 
-# 검색 결과들을 하나로 모으기 (합성)
-workflow.add_edge("rdb", "syn")
-workflow.add_edge("vec", "syn")
-workflow.add_edge("graph", "syn")
+# 세 검색 결과가 모두 모이면 규칙 기반 충분성 체크로
+workflow.add_edge("rdb", "result_check")
+workflow.add_edge("vec", "result_check")
+workflow.add_edge("graph", "result_check")
 
-workflow.add_edge("syn", "reflect")
-
-# 충분성 검증 후 분기
+# 결과 충분성 검증 후 분기 (LLM 미사용 — AgentState 직접 체크)
 workflow.add_conditional_edges(
-    "reflect",
-    route_reflection,
+    "result_check",
+    route_result_check,
     {
-        "ctx": "ctx", # 부족하면 다시 검색 계획 수립으로
-        "gen": "gen"  # 충분하면 보고서 생성으로
+        "gen": "gen",   # 셋 다 결과 있음 → 보고서 생성으로
+        "end": "save",  # 하나라도 비어 있음 → 재질문 안내 후 종료(저장 경유)
     }
 )
 

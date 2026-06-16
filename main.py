@@ -17,6 +17,7 @@ from routers.admin import router as admin_router
 from services.pipeline_jobs import init_pipeline_tables, sweep_stale_jobs
 from services.chat_logging import init_chat_tables
 from core.serialize import serialize_state
+from nodes.router import empty_sources
 from tool import chat_store
 
 @asynccontextmanager
@@ -193,7 +194,13 @@ def chat_endpoint(request: ChatRequest):
         # 통계용 대화 로깅 (best-effort — 실패해도 응답엔 영향 없음)
         _log_chat_turn(request, result, final_message, final_intent, latency_ms=latency_ms)
         # 최종 state → 우측 패널용 그래프/원본문서 페이로드
-        panel_data = serialize_state(result)
+        # 단, result_check 가 재질문을 요청한 턴(필수 검색 소스 일부가 비어 END)에는
+        # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
+        # 않도록. 판정은 result_check 와 동일하게 empty_sources(필수 소스) 로 한다.
+        if empty_sources(result):
+            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "panel": "none"}
+        else:
+            panel_data = serialize_state(result)
 
         # 어시스턴트 응답 기록 — 우측 패널 데이터(관계도/원본문서)도 함께 저장한다.
         # 스키마 변경 없이, 비어 있던 search_plan(longtext) 컬럼에 JSON 으로 보관해
@@ -207,8 +214,6 @@ def chat_endpoint(request: ChatRequest):
                 final_message,
                 intent=final_intent,
                 latency_ms=latency_ms,
-                is_sufficient=result.get("is_sufficient"),
-                retry_count=result.get("retry_count"),
                 panel=panel_data,
             )
         except Exception as log_err:
@@ -240,8 +245,6 @@ def _log_chat_turn(request, result, final_message, final_intent, latency_ms):
             assistant_message=final_message,
             intent=final_intent,
             search_plan=result.get("search_plan"),
-            is_sufficient=result.get("is_sufficient"),
-            retry_count=result.get("retry_count"),
             latency_ms=latency_ms,
         )
     except Exception:  # noqa: BLE001
