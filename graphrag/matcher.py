@@ -11,6 +11,12 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+from config.graphrag import (
+    FULLTEXT_POOL,
+    FULLTEXT_THRESHOLD,
+    MAX_SEEDS,
+    SEED_SCORE_BAND,
+)
 from tool.graph_client import neo4j_driver
 from graphrag.schema import Seed
 
@@ -24,6 +30,50 @@ def escape_lucene(q: str) -> str:
     if not q:
         return ""
     return _LUCENE_SPECIAL.sub(r"\\\1", q)
+
+
+# ── 과매칭 억제 (튠 파라미터는 config.graphrag) ───────────────────
+# cjk analyzer 는 "에스케이하이닉스" 를 bigram 으로 쪼개 SK 계열 수십 곳에 매칭한다.
+# 상위 N개를 그대로 시드로 쓰면 ego 그래프가 계열 합집합(헤어볼)이 된다. 그래서
+# 결과를 (1) 정규화 정확매칭 우선 (2) top score 밴드컷 (3) 시드 상한 으로 좁힌다.
+_SUFFIX_RE = re.compile(
+    r"\(주\)|㈜|\(유\)|㈜|주식회사|유한회사|\(재\)|,?\s*inc\.?|,?\s*co\.?,?\s*ltd\.?",
+    re.IGNORECASE,
+)
+
+
+def _norm(s: str) -> str:
+    """회사명 정규화 — 법인 접미사·공백 제거 후 소문자. 정확매칭 판정용."""
+    return re.sub(r"\s+", "", _SUFFIX_RE.sub("", s or "")).lower()
+
+
+def _select(rows: list[dict], query: str, *, max_seeds: int, band: float) -> list[dict]:
+    """FULLTEXT 풀(score 내림차순)에서 시드를 좁힌다.
+
+    유지 조건(OR): ① 후보 정규화 이름이 질의에 그대로 포함(사용자가 그 이름을 직접 침)
+                  ② top score 대비 band 이상(약칭으로 들어온 근접 매치 보존)
+    둘 다 아니면 버린다(= 계열 bigram 부분일치 노이즈). 최대 max_seeds 개.
+    """
+    if not rows:
+        return []
+    qn = _norm(query)
+    top = float(rows[0].get("score") or 0.0)
+    cut = top * band
+    chosen: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        nm = _norm(r.get("name") or "")
+        strong = bool(nm) and nm in qn
+        near = float(r.get("score") or 0.0) >= cut
+        if not (strong or near):
+            continue
+        if r["id"] in seen:
+            continue
+        seen.add(r["id"])
+        chosen.append(r)
+        if len(chosen) >= max_seeds:
+            break
+    return chosen
 
 
 _FULLTEXT_CYPHER = """
@@ -67,13 +117,22 @@ _LABEL_MAP = {
 }
 
 
-def match_fulltext(query: str, *, threshold: float = 0.5, limit: int = 20) -> list[Seed]:
-    """FULLTEXT 단일 호출. 빈 질의면 빈 리스트."""
+def match_fulltext(
+    query: str,
+    *,
+    threshold: float = FULLTEXT_THRESHOLD,
+    limit: int = FULLTEXT_POOL,
+    max_seeds: int = MAX_SEEDS,
+    band: float = SEED_SCORE_BAND,
+) -> list[Seed]:
+    """FULLTEXT 단일 호출 → 과매칭 억제(_select) → Seed 리스트. 빈 질의면 빈 리스트.
+
+    limit 은 FULLTEXT 후보 풀 크기, max_seeds 는 최종 시드 상한이다.
+    """
     q = escape_lucene((query or "").strip())
     if not q:
         return []
 
-    seeds: list[Seed] = []
     with neo4j_driver.session() as s:
         rows = s.run(
             _FULLTEXT_CYPHER,
@@ -82,10 +141,13 @@ def match_fulltext(query: str, *, threshold: float = 0.5, limit: int = 20) -> li
             limit=limit,
         ).data()
 
+    # 유효 행만 남기고 과매칭 억제
+    rows = [r for r in rows if r.get("id") and r.get("key_value")]
+    rows = _select(rows, query, max_seeds=max_seeds, band=band)
+
+    seeds: list[Seed] = []
     for row in rows:
         label = _LABEL_MAP.get(row["raw_label"], row["raw_label"].lower())
-        if not row.get("id") or not row.get("key_value"):
-            continue
         seeds.append(Seed(
             label=label,
             id=row["id"],
@@ -212,7 +274,7 @@ def match_upstream(upstream_ids: Iterable[str]) -> list[Seed]:
 
 
 def match(query: str, upstream_seeds: Iterable[str] | None = None,
-          *, threshold: float = 0.5, limit: int = 20) -> list[Seed]:
+          *, threshold: float = FULLTEXT_THRESHOLD, limit: int = FULLTEXT_POOL) -> list[Seed]:
     """Public entry — upstream 우선, 없으면 FULLTEXT."""
     seeds = match_upstream(upstream_seeds or [])
     if seeds:

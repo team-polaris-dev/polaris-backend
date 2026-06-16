@@ -7,7 +7,8 @@
 CALL (o) {
   OPTIONAL MATCH (o)-[r:HAS_METRIC]->(m:FinMetric)
     WHERE m.reprt_code = '11011' AND m.fs_div = 'CFS' AND m.bsns_year >= 2024
-  RETURN collect(DISTINCT m {.metric_id, .account_id, .value, .unit, .bsns_year, source: r.rcept_no})[..20] AS metrics
+      AND m.account_id IN $fin_accounts
+  RETURN collect(DISTINCT m {.metric_id, .account_id, .value, .unit, .bsns_year, source: r.rcept_no})[..40] AS metrics
 }
 CALL (o) {
   OPTIONAL MATCH (p:Person)-[r:EXECUTIVE_OF]->(o) WHERE r.valid_to IS NULL
@@ -70,6 +71,7 @@ RETURN
 {{ORG_MATCH}}
 CALL (o) {
   OPTIONAL MATCH downpath = (o)-[:SUPPLIES_TO*1..3]->(buyer:Organization)
+  WHERE ALL(rr IN relationships(downpath) WHERE rr.qc_disabled_at IS NULL)
   RETURN collect(DISTINCT {
     id: coalesce(buyer.corp_code, 'org:' + coalesce(buyer.er_name, buyer.name)),
     name: buyer.name,
@@ -79,6 +81,7 @@ CALL (o) {
 }
 CALL (o) {
   OPTIONAL MATCH uppath = (supplier:Organization)-[:SUPPLIES_TO*1..3]->(o)
+  WHERE ALL(rr IN relationships(uppath) WHERE rr.qc_disabled_at IS NULL)
   RETURN collect(DISTINCT {
     id: coalesce(supplier.corp_code, 'org:' + coalesce(supplier.er_name, supplier.name)),
     name: supplier.name,

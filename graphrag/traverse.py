@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from config.graphrag import FIN_KEY_ACCOUNTS, MAX_EDGES
 from tool.graph_client import neo4j_driver
 from graphrag.schema import GraphHit, Seed
 
@@ -100,7 +101,9 @@ def _run_company_immediate(seed: Seed) -> list[GraphHit]:
     cypher = pattern.replace("{{ORG_MATCH}}", _org_match("o", seed["key_type"]))
 
     with neo4j_driver.session() as s:
-        row = s.run(cypher, key_value=seed["key_value"]).single()
+        row = s.run(
+            cypher, key_value=seed["key_value"], fin_accounts=FIN_KEY_ACCOUNTS
+        ).single()
     if not row:
         return []
 
@@ -481,6 +484,56 @@ def _seed_match_for_internal_id(seed: Seed) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────
+# 후처리 — 중복 제거(#3) + 엣지 cap(#4)
+# ─────────────────────────────────────────────────────────────
+# 금융기관(은행·펀드) 노이즈는 여기서 키워드로 거르지 않는다 — 그건 데이터/QC
+# 레이어의 책임이다. SUPPLIES_TO 의 비회사 끝점(은행·국가 등)은 어드민 QC 가
+# LLM 으로 판정해 qc_disabled_at 로 소프트삭제하고, traverse(cypher)의 SUPPLIES_TO
+# 패턴이 그 플래그를 존중(qc_disabled_at IS NULL)한다. 쿼리타임 키워드 매칭 폐기.
+
+# 노드 폭주(헤어볼) 방지용 엣지 cap 시 남길 순서 — 정보가치 높은 관계 우선.
+_REL_PRIORITY = {
+    "IS_MAJOR_SHAREHOLDER_OF": 0,
+    "EXECUTIVE_OF": 1,
+    "IS_SUBSIDIARY_OF": 2,
+    "INVESTS_IN": 3,
+    "PRODUCES": 4,
+    "USES_TECH": 5,
+    "RELATED_PARTY": 6,
+    "INTERLOCKING_DIRECTORATE": 7,
+    "SUPPLIES_TO": 8,
+    "BRIDGE": 9,
+}
+
+
+def _postprocess(hits: list[GraphHit]) -> list[GraphHit]:
+    """#3 중복 제거 + #4 엣지 cap(config.graphrag.MAX_EDGES).
+
+    중복은 GraphHit.id(rel:type:from:to 또는 노드 id) 기준 1회만. 엣지가 너무 많으면
+    정보가치 우선순위로 잘라 노드 폭주(헤어볼)를 막는다.
+    """
+    node_hits: list[GraphHit] = []
+    rel_hits: list[GraphHit] = []
+    seen: set[str] = set()
+
+    for h in hits:
+        hid = h.get("id")
+        if not hid or hid in seen:
+            continue
+        seen.add(hid)
+        (rel_hits if h.get("label") == "relationship" else node_hits).append(h)
+
+    # 엣지 cap — 우선순위(관계 종류) → score 내림차순
+    rel_hits.sort(key=lambda h: (
+        _REL_PRIORITY.get((h.get("attrs") or {}).get("rel_type"), 5),
+        -float(h.get("score") or 0.0),
+    ))
+    rel_hits = rel_hits[:MAX_EDGES]
+
+    return node_hits + rel_hits
+
+
+# ─────────────────────────────────────────────────────────────
 # Public dispatch
 # ─────────────────────────────────────────────────────────────
 
@@ -524,9 +577,9 @@ def expand(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
         hits.extend(_run_2hop_bridge(org_seeds[0], org_seeds[1]))
         patterns_run.append(f"2hop_bridge({org_seeds[0]['id']},{org_seeds[1]['id']})")
 
-    return hits, patterns_run
+    return _postprocess(hits), patterns_run
 
 
 def fallback_for(seed: Seed) -> list[GraphHit]:
     """정적 패턴이 비었을 때 호출자가 명시적으로 부르는 fallback."""
-    return _run_fallback(seed, use_apoc=True)
+    return _postprocess(_run_fallback(seed, use_apoc=True))
