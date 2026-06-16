@@ -20,7 +20,11 @@ from config.graphrag import (
     SEED_SPOKE_CAP,
 )
 from tool.graph_client import neo4j_driver
-from graphrag.ppr import ppr_rank, _DOMAIN_RELS as _PPR_DOMAIN_RELS
+from graphrag.ppr import (
+    ppr_rank,
+    _seed_element_ids as _ppr_seed_eids,
+    _DOMAIN_RELS as _PPR_DOMAIN_RELS,
+)
 from graphrag.schema import GraphHit, Seed
 
 
@@ -780,6 +784,56 @@ def _run_seed_financial(seed: Seed) -> list[GraphHit]:
     return hits
 
 
+def _run_shared_connections(seeds: list[Seed]) -> list[GraphHit]:
+    """멀티 기업 숨은 연결 — 시드 2곳 이상에 동시 연결된 노드(공통 공급사·공통 주주 등).
+
+    문서 하나로는 안 보이는 그래프 전용 인사이트. 엣지 cap 에 묻히지 않게 최우선 score 로
+    태그(seed_origin='shared')해 호출자가 보존한다.
+    """
+    org_seeds = [s for s in seeds if s.get("label") == "organization"]
+    if len(org_seeds) < 2:
+        return []
+    with neo4j_driver.session() as s:
+        seed_eids = _ppr_seed_eids(s, org_seeds)
+        if len(seed_eids) < 2:
+            return []
+        rows = s.run(
+            PATTERNS["pattern_shared_connections"],
+            seed_eids=seed_eids, rels=_PPR_DOMAIN_RELS,
+        ).data()
+
+    hits: list[GraphHit] = []
+    for r in rows:
+        shared_id = r.get("shared_id")
+        shared_name = r.get("shared_name") or ""
+        nseeds = r.get("nseeds") or 0
+        if not shared_id:
+            continue
+        for link in r.get("links") or []:
+            seed_id = link.get("seed_id")
+            seed_name = link.get("seed_name") or ""
+            rel = link.get("rel")
+            if not seed_id or not rel:
+                continue
+            if link.get("seed_is_start"):
+                from_id, from_name, to_id, to_name = seed_id, seed_name, shared_id, shared_name
+            else:
+                from_id, from_name, to_id, to_name = shared_id, shared_name, seed_id, seed_name
+            attrs: dict[str, Any] = {"shared_with": nseeds}
+            if link.get("qota_rt") is not None:
+                attrs["qota_rt"] = link["qota_rt"]
+            if rel == "SUPPLIES_TO":
+                attrs["role"] = "supplier" if to_id == seed_id else "buyer"
+            hit = _rel_hit(
+                rel, from_id=from_id, from_name=from_name,
+                to_id=to_id, to_name=to_name, attrs=attrs,
+            )
+            hit["seed_origin"] = "shared"
+            hit["score"] = 0.97  # 공통연결은 최우선 — cap 에서 항상 생존
+            hits.append(hit)
+    return hits
+
+
 def _ppr_typed_edges(eids: list[str], seed_our_ids: set[str]) -> list[GraphHit]:
     """PPR 선별 노드($eids) 내부의 타입 엣지(지분율·직책·출처). 2-hop 포함."""
     if not eids:
@@ -872,9 +926,15 @@ def expand_ppr(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
             return max(vals)
         return max(relevance.get(a, 0.0), relevance.get(b, 0.0))
 
+    # 멀티 기업 숨은 연결(공통 공급사·공통 주주 등) — cap 에 묻히지 않게 항상 보존
+    shared_hits = _run_shared_connections(seeds)
+    if shared_hits:
+        patterns_run.append(f"shared_connections({len(shared_hits)})")
+
     seen_rel: set[str] = set()
-    dedup_rel: list[GraphHit] = []
-    for h in rel_hits + ppr_edge_hits:
+    shared_kept: list[GraphHit] = []
+    other_rel: list[GraphHit] = []
+    for h in shared_hits + rel_hits + ppr_edge_hits:
         hid = h.get("id")
         if not hid or hid in seen_rel:
             continue
@@ -886,12 +946,16 @@ def expand_ppr(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
                 attrs["role"] = "supplier"
             elif attrs.get("from_id") in seed_our_ids:
                 attrs["role"] = "buyer"
-        h["score"] = round(_edge_relevance(attrs), 4)
-        dedup_rel.append(h)
+        if h.get("seed_origin") == "shared":
+            shared_kept.append(h)
+        else:
+            h["score"] = round(_edge_relevance(attrs), 4)
+            other_rel.append(h)
 
-    # 별→웹: 시드 스포크 제한 + 교차엣지(관계망) 우선
-    rel_capped = _cap_relations_web(
-        dedup_rel, MAX_EDGES + MAX_INDUCED_EDGES, seed_our_ids, SEED_SPOKE_CAP
+    # 공통연결은 항상 보존, 나머지는 별→웹 cap(시드 스포크 제한 + 교차엣지 우선)
+    budget = max(0, (MAX_EDGES + MAX_INDUCED_EDGES) - len(shared_kept))
+    rel_capped = shared_kept + _cap_relations_web(
+        other_rel, budget, seed_our_ids, SEED_SPOKE_CAP
     )
 
     return node_hits + rel_capped, patterns_run

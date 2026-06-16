@@ -158,6 +158,34 @@ RETURN
   [r IN relationships(path) | type(r)] AS rels
 LIMIT 5;
 
+-- @name pattern_shared_connections
+// 멀티 기업 숨은 연결 — 시드 2곳 이상($seed_eids)에 동시에 연결된 노드(공통 공급사·공통
+// 주주·공통 투자처 등). 문서 하나로는 안 보이는 그래프 전용 인사이트. 노이즈·펀드 제외.
+MATCH (seed:Organization) WHERE elementId(seed) IN $seed_eids
+MATCH (seed)-[r]-(m:Organization)
+WHERE type(r) IN $rels
+  AND coalesce(r.valid_to,'') = '' AND r.qc_disabled_at IS NULL
+  AND NOT coalesce(m.name,'') IN ['계','소계','합계','-','주','']
+  AND NOT (m.name CONTAINS '투자신탁' OR m.name CONTAINS '사모' OR m.name CONTAINS '펀드')
+  AND NOT elementId(m) IN $seed_eids
+WITH m,
+     collect(DISTINCT {
+       seed_id: coalesce(seed.corp_code, 'org:' + seed.er_name),
+       seed_name: seed.name,
+       rel: type(r),
+       seed_is_start: startNode(r) = seed,
+       qota_rt: r.qota_rt
+     }) AS links,
+     count(DISTINCT seed) AS nseeds
+WHERE nseeds >= 2
+RETURN
+  coalesce(m.corp_code, 'org:' + m.er_name) AS shared_id,
+  m.name AS shared_name,
+  nseeds,
+  links
+ORDER BY nseeds DESC, size(links) DESC
+LIMIT 40;
+
 -- @name pattern_typed_edges_among
 // PPR 선별 노드 집합($eids = elementId 리스트) 내부의 타입 엣지 + 속성(지분율·직책·출처).
 // 시점·qc 필터. 방향은 startNode 로 복원.
