@@ -17,6 +17,7 @@ from config.graphrag import (
     INDUCED_MAX_NODES,
     MAX_EDGES,
     MAX_INDUCED_EDGES,
+    SEED_SPOKE_CAP,
 )
 from tool.graph_client import neo4j_driver
 from graphrag.ppr import ppr_rank, _DOMAIN_RELS as _PPR_DOMAIN_RELS
@@ -555,6 +556,28 @@ def _cap_relations(rel_hits: list[GraphHit], max_edges: int) -> list[GraphHit]:
     return out
 
 
+def _cap_relations_web(
+    rel_hits: list[GraphHit], max_edges: int, seed_ids: set[str], seed_spoke_cap: int
+) -> list[GraphHit]:
+    """별→웹 cap. 시드 직접 엣지(스포크)를 seed_spoke_cap 으로 제한하고 남는 예산을
+    이웃끼리 관계(교차엣지=관계망)에 우선 배정한다. 각 파티션은 종류별 라운드로빈.
+
+    시드 ego는 본질적으로 별이라(시드 차수 수백), 스포크를 그대로 두면 관계망(교차엣지)이
+    cap 에 밀려 안 보인다. 스포크를 줄여 '속성 나열'을 '관계망'으로 전환.
+    """
+    seed_inc: list[GraphHit] = []
+    cross: list[GraphHit] = []
+    for h in rel_hits:
+        attrs = h.get("attrs") or {}
+        if attrs.get("from_id") in seed_ids or attrs.get("to_id") in seed_ids:
+            seed_inc.append(h)
+        else:
+            cross.append(h)
+    seed_kept = _cap_relations(seed_inc, min(seed_spoke_cap, max_edges))
+    cross_kept = _cap_relations(cross, max_edges - len(seed_kept))
+    return seed_kept + cross_kept
+
+
 def _postprocess(hits: list[GraphHit]) -> list[GraphHit]:
     """#3 중복 제거 + #4 엣지 cap(라운드로빈, config.graphrag.MAX_EDGES).
 
@@ -840,6 +863,15 @@ def expand_ppr(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
             h.setdefault("attrs", {})["relevance"] = relevance[hid]
         node_hits.append(h)
 
+    def _edge_relevance(attrs: dict[str, Any]) -> float:
+        """엣지 score = 상대(비-시드) 노드의 PPR 관련성. 시드(1.0)는 제외해 스포크끼리도
+        상대 노드 관련성으로 변별 → cap 이 관련성 높은 관계를 남긴다."""
+        a, b = attrs.get("from_id"), attrs.get("to_id")
+        vals = [relevance.get(nid, 0.0) for nid in (a, b) if nid not in seed_our_ids]
+        if vals:
+            return max(vals)
+        return max(relevance.get(a, 0.0), relevance.get(b, 0.0))
+
     seen_rel: set[str] = set()
     dedup_rel: list[GraphHit] = []
     for h in rel_hits + ppr_edge_hits:
@@ -847,8 +879,20 @@ def expand_ppr(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
         if not hid or hid in seen_rel:
             continue
         seen_rel.add(hid)
+        attrs = h.get("attrs") or {}
+        # 시드 인접 공급엣지(induced 경유로 role 미설정분 포함)에 방향 라벨 보정
+        if attrs.get("rel_type") == "SUPPLIES_TO" and not attrs.get("role"):
+            if attrs.get("to_id") in seed_our_ids:
+                attrs["role"] = "supplier"
+            elif attrs.get("from_id") in seed_our_ids:
+                attrs["role"] = "buyer"
+        h["score"] = round(_edge_relevance(attrs), 4)
         dedup_rel.append(h)
-    rel_capped = _cap_relations(dedup_rel, MAX_EDGES + MAX_INDUCED_EDGES)
+
+    # 별→웹: 시드 스포크 제한 + 교차엣지(관계망) 우선
+    rel_capped = _cap_relations_web(
+        dedup_rel, MAX_EDGES + MAX_INDUCED_EDGES, seed_our_ids, SEED_SPOKE_CAP
+    )
 
     return node_hits + rel_capped, patterns_run
 

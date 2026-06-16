@@ -37,6 +37,10 @@ PPR_ITERS = int(os.environ.get("GRAPHRAG_PPR_ITERS", "30"))              # power
 PPR_NEIGHBORHOOD_LIMIT = int(os.environ.get("GRAPHRAG_PPR_NBR_LIMIT", "1500"))  # depth-2 이웃 상한
 PPR_TOP_NODES = int(os.environ.get("GRAPHRAG_PPR_TOP_NODES", "50"))      # PPR 상위 N 노드 선별
 
+# 시드 ego는 본질적으로 별(시드 차수만 수백). 시드에 직접 붙은 스포크를 이 수로 제한하고
+# 남는 예산을 이웃끼리 관계(교차엣지=관계망)에 우선 배정해 '속성 나열' → '관계망'으로 바꾼다.
+SEED_SPOKE_CAP = int(os.environ.get("GRAPHRAG_SEED_SPOKE_CAP", "35"))
+
 # 회사 재무(HAS_METRIC)를 가져올 때 핵심 계정만 선별한다. 예전엔 collect[..20]이
 # 아무 계정 20개나 집어 매출·영업이익이 빠지는 일이 있었다(IFRS 표준 계정 코드).
 # 손익(매출~순이익) + 재무상태(자산·부채·자본·현금) 핵심만.
