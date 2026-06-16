@@ -1,13 +1,22 @@
 # tool/rdb_client.py — MariaDB 커넥션 + RDB 스키마 설명 + SELECT-only 안전 실행기
+#                       + DB introspection / 결정론 resolve 헬퍼
 from __future__ import annotations
 
+import logging
 import os
 import re
+import threading
 from contextlib import contextmanager
 
 import pymysql
+import sqlglot
+from sqlglot import exp
 
 MAX_ROWS = 50
+
+# sqlglot 은 미지원 구문(CALL 등)을 Command 로 폴백하며 warning 을 남긴다 — 임의의
+# LLM SQL 을 검증하는 용도라 이 경고는 정상 동작(거부 대상)이므로 로그 소음만 줄인다.
+logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
 
 def _connect() -> "pymysql.connections.Connection":
@@ -32,17 +41,9 @@ def mariadb_conn():
     finally:
         conn.close()
 
-# SELECT 외 변경/DDL 키워드 + 파일 쓰기(INTO OUTFILE/DUMPFILE) + 파일 읽기
-# (LOAD_FILE/LOAD DATA) 차단 (이중 방어).
-# REPLACE/MERGE 는 SELECT 내 함수명과 충돌하므로 제외 — DML 문장은 어차피
-# "SELECT/WITH 로 시작" 검사에서 걸러진다.
-_FORBIDDEN = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|"
-    r"CALL|LOCK|RENAME|HANDLER|LOAD_FILE)\b"
-    r"|\bLOAD\s+DATA\b"
-    r"|\bINTO\s+(OUTFILE|DUMPFILE)\b",
-    re.IGNORECASE,
-)
+# 서버 파일 읽기 함수 차단 — 변경/DDL/CALL/다중문/INTO 파일쓰기는 AST 구조
+# (읽기 쿼리 루트 여부)에서 자연히 걸러지므로 키워드 블록리스트가 필요 없다.
+_FILE_FUNCS = {"load_file", "load_data"}
 
 
 def _strip(sql: str) -> str:
@@ -50,34 +51,92 @@ def _strip(sql: str) -> str:
 
 
 def is_safe_select(sql: str) -> bool:
-    """단일 읽기 쿼리(SELECT/WITH)이고 변경·파일쓰기 키워드가 없으면 True."""
+    """단일 읽기 쿼리(SELECT/CTE/UNION)인지 sqlglot AST 로 검증한다.
+
+    정규식 블록리스트 대신 구문 트리를 본다 — 'updated_at' 같은 컬럼명이
+    'UPDATE' 로 오탐되지 않고, 다중문·DML·DDL·CALL·INTO OUTFILE·LOAD DATA 는
+    파싱 실패 또는 루트 노드 타입(읽기 쿼리 아님)에서 걸러진다.
+    파싱 불가/예외는 fail-closed(거부)로 처리한다.
+    """
     s = _strip(sql)
     if not s:
         return False
-    if ";" in s:  # 다중 문장 차단 (끝 세미콜론은 _strip 이 이미 제거)
+    try:
+        statements = [st for st in sqlglot.parse(s, read="mysql") if st is not None]
+    except Exception:
+        return False  # 파싱 실패 = 거부 (fail-closed)
+    if len(statements) != 1:  # 다중 문장 차단
         return False
-    if not re.match(r"(?is)^\s*(SELECT|WITH)\b", s):  # CTE(WITH) 허용
+    root = statements[0]
+    if not isinstance(root, (exp.Query, exp.Subquery)):  # 읽기 쿼리만 (DML/DDL/CALL 등 제외)
         return False
-    if _FORBIDDEN.search(s):
+    if list(root.find_all(exp.Into)):  # SELECT ... INTO OUTFILE/DUMPFILE/@var 차단
+        return False
+    if any(fn.name.lower() in _FILE_FUNCS for fn in root.find_all(exp.Anonymous)):
         return False
     return True
 
 
 def enforce_limit(sql: str, max_rows: int = MAX_ROWS) -> str:
-    """끝에 단순 LIMIT N 이면 상한으로 클램프, LIMIT 이 없으면 부여.
+    """LIMIT 이 없으면 부여하고, 상한 초과면 클램프한다(AST 기반).
 
-    LIMIT 이 OFFSET/콤마 형태로 이미 있으면 SQL 을 훼손하지 않고 그대로 둔다
-    (행 수 상한은 execute_sql_query 가 fetch 후 슬라이스로 최종 보장).
+    콤마/OFFSET 형태(`LIMIT 10, 20`)도 sqlglot 이 count/offset 으로 분해하므로
+    정규식과 달리 안전하게 클램프된다. 상한 이내면 원본을 그대로 둬 불필요한
+    재생성을 피한다. (행 수 상한은 execute_sql_query 가 fetch 후 슬라이스로도 최종 보장)
     """
     s = _strip(sql)
-    m = re.search(r"(?is)\blimit\s+(\d+)\s*$", s)
-    if m:
-        if int(m.group(1)) > max_rows:
-            s = re.sub(r"(?is)\blimit\s+\d+\s*$", f"LIMIT {max_rows}", s)
+    try:
+        root = sqlglot.parse_one(s, read="mysql")
+    except Exception:
         return s
-    if re.search(r"(?is)\blimit\b", s):  # OFFSET/콤마 등 복합 LIMIT → 건드리지 않음
-        return s
-    return f"{s} LIMIT {max_rows}"
+    limit = root.args.get("limit")
+    if limit is None:
+        return root.limit(max_rows).sql(dialect="mysql")
+    try:
+        current = int(limit.expression.sql())
+    except (ValueError, AttributeError):
+        return s  # 파라미터·표현식 LIMIT 은 건드리지 않음
+    if current > max_rows:
+        return root.limit(max_rows).sql(dialect="mysql")
+    return s
+
+
+# 회사/doc_type 하드코딩을 DB introspection 으로 대체하기 위한 폴백 상수
+# (DB 미가용 시에만 사용 — 테스트/eval 무중단 보장).
+_CORP_CODES_FALLBACK = "삼성전자=00126380, SK하이닉스=00164779, 한미반도체=00161383"
+_DOC_TYPE_EXAMPLES_FALLBACK = (
+    "'임원ㆍ주요주주특정증권등소유상황보고서', '기업설명회(IR)개최(안내공시)',\n"
+    "     '현금ㆍ현물배당결정', '연결재무제표기준영업(잠정)실적(공정공시)',\n"
+    "     '주식등의대량보유상황보고서(일반)', '주요사항보고서(자기주식처분결정)'"
+)
+
+
+def _format_corp_codes() -> str:
+    """회사 corp_code 안내 문자열 — DB introspection 우선, 미가용 시 폴백.
+
+    코퍼스가 3사에서 수십 개로 늘어 하드코딩이 한계다. 실제 적재된 회사를
+    전부 노출한다(이름순 정렬).
+    """
+    mapping = get_corp_name_to_code()
+    if not mapping:
+        return _CORP_CODES_FALLBACK
+    return ", ".join(f"{name}={code}" for name, code in sorted(mapping.items()))
+
+
+def _format_doc_type_examples(limit: int = 12) -> str:
+    """doc_type 예시 문자열 — DB introspection 우선, 미가용 시 폴백.
+
+    손으로 적던 예시 대신 실제 적재값을 노출한다. 'ㆍ'(U+318D) 포함 값을 우선
+    보여 특수문자 패턴을 학습시키고, 나머지로 채운다. 이는 '예시'이며 목록에
+    없는 값은 규칙 4의 LIKE 우회로 처리되므로 부분 노출이어도 안전하다.
+    """
+    values = get_doc_type_values()
+    if not values:
+        return _DOC_TYPE_EXAMPLES_FALLBACK
+    special = sorted(v for v in values if "ㆍ" in v)
+    others = sorted(v for v in values if "ㆍ" not in v)
+    picked = (special + others)[:limit]
+    return ", ".join(f"'{v}'" for v in picked)
 
 
 def get_schema_prompt() -> str:
@@ -89,9 +148,14 @@ def get_schema_prompt() -> str:
     4개 테이블 자체가 없고, 남은 3개 테이블에도 run_id/key_facts 컬럼이 없다
     (DESCRIBE로 직접 확인함). SSOT를 그대로 옮기면 LLM이 존재하지 않는
     테이블·컬럼을 조회해 매번 실패하므로, 실제 적재된 컬럼만 기술한다.
-    덤프가 SSOT 스키마로 갱신되면 이 함수도 함께 갱신한다.
+
+    회사 corp_code 와 doc_type 예시는 더 이상 하드코딩하지 않고 DB introspection
+    (_format_corp_codes / _format_doc_type_examples)으로 채운다. DB 미가용 시에만
+    폴백 상수를 쓴다. 덤프 스키마(테이블/컬럼)가 바뀌면 이 함수의 구조 설명만 갱신.
     """
-    return """\
+    corp_codes = _format_corp_codes()
+    doc_type_examples = _format_doc_type_examples()
+    return f"""\
 MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래 테이블만 사용한다.
 (주의: run_id, active_run_manifest, key_facts 등은 이 DB에 존재하지 않는다 —
  절대 조회하지 말 것)
@@ -105,7 +169,7 @@ MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래
 [dart_raw_index] DART 원본 JSON. PK(corp_code, endpoint, hash8)
   - rcept_no, body_json(LONGTEXT), status, collected_at
 
-회사 corp_code: 삼성전자=00126380, SK하이닉스=00164779, 한미반도체=00161383.
+회사 corp_code: {corp_codes}.
 
 ## 질의 작성 규칙 (정확도 핵심)
 1) 답에 "회사"가 등장하면 corp_code(숫자) 말고 corp_name(회사명)을 SELECT 한다.
@@ -129,10 +193,8 @@ MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래
        ② 특수문자·공백을 제거한 연속 핵심어로 LIKE
      예) 사용자가 '현금·현물배당 결정' 이라 써도
          → doc_type='현금ㆍ현물배당결정'  또는  title LIKE '%현물배당결정%'
-   실제 doc_type 예시:
-     '임원ㆍ주요주주특정증권등소유상황보고서', '기업설명회(IR)개최(안내공시)',
-     '현금ㆍ현물배당결정', '연결재무제표기준영업(잠정)실적(공정공시)',
-     '주식등의대량보유상황보고서(일반)', '주요사항보고서(자기주식처분결정)'
+   실제 doc_type 예시(DB에서 추출, 전체 목록 아님):
+     {doc_type_examples}
 5) 청크 "원문/본문"을 직접 보여달라는 게 아니라 "공시가 있는지/몇 건인지/목록"을 묻는
    질문은 chunk_index(본문)가 아니라 document_index(공시 메타)를 조회한다.
 6) 답의 형태(개수 vs 목록)는 질문의 표현으로 정한다:
@@ -157,7 +219,9 @@ def execute_sql_query(sql: str, max_rows: int = MAX_ROWS) -> dict:
             "error": "안전하지 않은 SQL — SELECT 단일 문장만 허용됩니다.",
             "sql": sql,
         }
-        
+
+    # doc_type 리터럴을 실제 DB 값으로 정규화(특수문자 '·'→'ㆍ' 등). 매칭 없으면 no-op.
+    sql = normalize_doc_type_literals(sql)
     safe_sql = enforce_limit(sql, max_rows)
     
     try:
@@ -168,6 +232,124 @@ def execute_sql_query(sql: str, max_rows: int = MAX_ROWS) -> dict:
                 
         # SQL LIMIT 형태와 무관하게 행 수 상한을 최종 보장
         return {"ok": True, "rows": list(rows)[:max_rows], "error": None, "sql": safe_sql}
-        
+
     except Exception as e:
         return {"ok": False, "rows": [], "error": str(e), "sql": safe_sql}
+
+
+# ======================================================================
+# DB introspection — get_schema_prompt 하드코딩 제거용 (회사 코드/doc_type 실제값)
+# ----------------------------------------------------------------------
+# 회사명→코드, doc_type 실제값을 DB 에서 직접 끌어와 프롬프트에 채운다(하드코딩 없이).
+# 질문 구조화(planner/QueryEnvelope)는 상류 노드 담당이며 여기서 하지 않는다.
+# 프로세스 캐시(read-only) — 무효화는 프로세스 재시작.
+# ======================================================================
+
+
+# ---------------------------------------------------------------- introspection
+_DOC_TYPE_CACHE: list[str] | None = None
+_CORP_MAP_CACHE: dict[str, str] | None = None
+_INTROSPECT_LOCK = threading.Lock()
+
+
+def get_doc_type_values() -> list[str]:
+    """document_index 의 실제 doc_type DISTINCT 목록(프로세스 캐시, read-only).
+
+    손으로 적은 예시 대신 실제 적재값을 쓰기 위함. DB 미가용 시 [] 로 degrade.
+    """
+    global _DOC_TYPE_CACHE
+    if _DOC_TYPE_CACHE is not None:
+        return _DOC_TYPE_CACHE
+    with _INTROSPECT_LOCK:
+        if _DOC_TYPE_CACHE is not None:
+            return _DOC_TYPE_CACHE
+        try:
+            with mariadb_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT DISTINCT doc_type FROM document_index WHERE doc_type IS NOT NULL"
+                )
+                rows = cur.fetchall()
+            _DOC_TYPE_CACHE = [str(r["doc_type"]) for r in rows if r.get("doc_type")]
+        except Exception:
+            _DOC_TYPE_CACHE = []
+        return _DOC_TYPE_CACHE
+
+
+def get_corp_name_to_code() -> dict[str, str]:
+    """회사명 → corp_code(8자리) 매핑(프로세스 캐시, read-only).
+
+    document_index 기준. DB 미가용 시 {} 로 degrade.
+    """
+    global _CORP_MAP_CACHE
+    if _CORP_MAP_CACHE is not None:
+        return _CORP_MAP_CACHE
+    with _INTROSPECT_LOCK:
+        if _CORP_MAP_CACHE is not None:
+            return _CORP_MAP_CACHE
+        mapping: dict[str, str] = {}
+        try:
+            with mariadb_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT DISTINCT corp_name, corp_code FROM document_index "
+                    "WHERE corp_name IS NOT NULL AND corp_code IS NOT NULL"
+                )
+                for r in cur.fetchall():
+                    name = str(r.get("corp_name") or "").strip()
+                    code = str(r.get("corp_code") or "").strip().zfill(8)
+                    if name and code:
+                        mapping.setdefault(name, code)
+        except Exception:
+            mapping = {}
+        _CORP_MAP_CACHE = mapping
+        return _CORP_MAP_CACHE
+
+
+# ---------------------------------------------------------------- doc_type 정규화
+_DOCTYPE_NORM_RE = re.compile(r"[^가-힣a-zA-Z0-9]")
+
+
+def _normalize_doctype(s: str) -> str:
+    """doc_type 비교용 정규화 — 특수문자/공백 제거. 'ㆍ'(U+318D)·중점 '·'·공백 차이를 흡수."""
+    return _DOCTYPE_NORM_RE.sub("", s or "")
+
+
+def normalize_doc_type_literals(sql: str) -> str:
+    """생성된 SQL 의 `doc_type = '리터럴'` 을 실제 DB 값으로 정규화(결정론).
+
+    LLM 이 `현금·현물배당`(일반점)·공백 등 표기로 doc_type 정확매칭을 쓰면 0건이 된다.
+    실제 DB 값(`현금ㆍ현물배당결정`, U+318D)과 **정규화(특수문자/공백 제거) 동일**일
+    때만 리터럴을 실제값으로 치환한다. 부분일치는 쓰지 않아(의미 변형 위험) 멀쩡한
+    쿼리를 깨지 않는다. `doc_type LIKE` 는 의도적 fuzzy 라 건드리지 않는다.
+
+    프롬프트를 손대지 않고 #23(특수문자 매칭)을 결정론적으로 해결하는 실행계층 보정.
+    DB 미가용/파싱 실패/매칭 없음 → 원본 SQL 그대로 반환(no-op).
+    """
+    values = get_doc_type_values()
+    if not values:
+        return sql
+    norm_to_val: dict[str, str] = {}
+    for v in values:
+        norm_to_val.setdefault(_normalize_doctype(v), v)
+
+    try:
+        root = sqlglot.parse_one(sql, read="mysql")
+    except Exception:
+        return sql
+
+    changed = False
+    for eq in root.find_all(exp.EQ):
+        # 양변 중 하나가 doc_type 컬럼, 다른 하나가 문자열 리터럴인 경우만
+        for col_side, lit_side in ((eq.left, eq.right), (eq.right, eq.left)):
+            if (
+                isinstance(col_side, exp.Column)
+                and col_side.name.lower() == "doc_type"
+                and isinstance(lit_side, exp.Literal)
+                and lit_side.is_string
+            ):
+                real = norm_to_val.get(_normalize_doctype(lit_side.this))
+                if real and real != lit_side.this:
+                    lit_side.set("this", real)
+                    changed = True
+                break
+
+    return root.sql(dialect="mysql") if changed else sql

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from dotenv import load_dotenv
 
 from tool.rdb_client import mariadb_conn
@@ -26,6 +27,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 RRF_K = 60
 DENSE_FETCH_MIN = 30
 DENSE_FETCH_MULTIPLIER = 5
+MAX_CHUNKS_PER_DOC = 3  # 결과 다양화: 한 공시(rcept_no)에서 가져올 최대 청크 수
 
 _TOKEN_RE = re.compile(r"[가-힣a-zA-Z0-9]+")
 _YEAR_RE = re.compile(r"(20\d{2})\s*년?")
@@ -316,17 +318,27 @@ def _get_bm25():
 
 
 def _bm25_search(query: str, limit: int) -> list[tuple[str, float]]:
+    """BM25 top-N. 전체(~17만) 인덱스에 대한 파이썬 람다 정렬을 numpy argsort 로 교체.
+
+    기존 `sorted(range(n), key=lambda i: scores[i], reverse=True)` 는 17만 회
+    파이썬 람다 호출로 느렸다. `np.argsort(-scores, kind='stable')` 는 C 레벨
+    정렬이라 훨씬 빠르고, 점수 내림차순·동점 시 인덱스 오름차순으로 **기존 결과
+    순서를 그대로 보존**한다(동점 경계 포함).
+    """
     index = _load_chunk_index()
     tokens = _tokenize(query)
     if not tokens:
         return []
-    scores = _get_bm25().get_scores(tokens)
-    ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    scores = np.asarray(_get_bm25().get_scores(tokens), dtype=float)
+    if scores.shape[0] == 0:
+        return []
+    order = np.argsort(-scores, kind="stable")  # 점수 내림차순, 동점은 인덱스 오름차순
     out: list[tuple[str, float]] = []
-    for i in ranked[:limit]:
-        if scores[i] <= 0:
+    for i in order[:limit]:
+        s = float(scores[i])
+        if s <= 0:
             break
-        out.append((index.rows[i].chunk_id, float(scores[i])))
+        out.append((index.rows[int(i)].chunk_id, s))
     return out
 
 
@@ -376,6 +388,39 @@ def _to_retrieved(row: _ChunkRow, score: float) -> RetrievedChunk:
     )
 
 
+# ---------------------------------------------------------------- 결과 다양화
+def _select_diverse(
+    candidates: list[tuple[_ChunkRow, float]],
+    top_k: int,
+    per_doc_cap: int | None,
+) -> list[tuple[_ChunkRow, float]]:
+    """관련도순 후보에서 top_k 선별 — 한 공시(rcept_no)당 청크 수를 cap 으로 제한.
+
+    같은 공시가 여러 청크로 쪼개져 상위를 독차지하는 쏠림을 완화해 더 많은 문서를
+    커버한다. cap 으로 자리가 남으면 넘친 청크로 다시 채워 top_k 개수를 보장한다
+    (관련도 순서 유지). per_doc_cap 이 None/0 이하면 다양화 없이 상위 top_k.
+    """
+    if per_doc_cap is None or per_doc_cap <= 0:
+        return candidates[:top_k]
+    picked: list[tuple[_ChunkRow, float]] = []
+    overflow: list[tuple[_ChunkRow, float]] = []
+    counts: dict[str, int] = {}
+    for row, score in candidates:
+        key = row.rcept_no or row.chunk_id  # 문서 식별(없으면 청크 단위로 폴백)
+        if counts.get(key, 0) < per_doc_cap:
+            picked.append((row, score))
+            counts[key] = counts.get(key, 0) + 1
+            if len(picked) >= top_k:
+                return picked
+        else:
+            overflow.append((row, score))
+    for rs in overflow:  # 다양화로 모자란 만큼 넘친 청크로 backfill
+        if len(picked) >= top_k:
+            break
+        picked.append(rs)
+    return picked
+
+
 # ---------------------------------------------------------------- 진입점
 def hybrid_search(
     query: str,
@@ -385,8 +430,9 @@ def hybrid_search(
     year: int | None = None,
     use_bm25: bool = True,
     chunk_type_filter: str | None = None,
+    per_doc_cap: int | None = MAX_CHUNKS_PER_DOC,
 ) -> list[RetrievedChunk]:
-    """Dense(Qdrant) + BM25 + RRF(k=60)."""
+    """Dense(Qdrant) + BM25 + RRF(k=60) + 문서 단위 다양화(per_doc_cap)."""
     if not query.strip() or top_k <= 0:
         return []
 
@@ -397,6 +443,7 @@ def hybrid_search(
     bm25_results = _bm25_search(query, fetch_limit) if use_bm25 else []
     fused = _rrf_fuse(dense, bm25_results)
 
+    # 메타필터를 통과한 후보를 관련도순으로 모은 뒤, 문서 단위로 다양화해 top_k 선별
     candidates: list[tuple[_ChunkRow, float]] = []
     for chunk_id, score in fused:
         row = index.by_chunk_id.get(chunk_id)
@@ -405,10 +452,9 @@ def hybrid_search(
         if not _passes_meta_filter(row, corp_codes, year, chunk_type_filter):
             continue
         candidates.append((row, score))
-        if len(candidates) >= top_k:
-            break
 
-    return [_to_retrieved(row, score) for row, score in candidates]
+    selected = _select_diverse(candidates, top_k, per_doc_cap)
+    return [_to_retrieved(row, score) for row, score in selected]
 
 
 def search_vector_db(query: str, top_k: int = 10) -> list[dict[str, Any]]:
