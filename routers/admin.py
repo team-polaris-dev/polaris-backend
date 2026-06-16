@@ -39,6 +39,8 @@
   - GET  /analytics/tools
   - GET  /analytics/users
   - GET  /analytics/sessions
+  - GET  /analytics/latency        응답 지연 분포(p50/p90/p95/p99) + 히스토그램
+  - GET  /analytics/sessions/{id}  세션 대화 원문 드릴다운
 """
 from __future__ import annotations
 
@@ -984,6 +986,22 @@ async def analytics_sessions(
     _=Depends(verify_admin_token),
 ) -> list[dict]:
     return chat_analytics.recent_sessions(limit=limit)
+
+
+@router.get("/analytics/latency")
+async def analytics_latency(_=Depends(verify_admin_token)) -> dict:
+    """응답 지연 분포(p50/p90/p95/p99) + 히스토그램. 기존 latency_ms 만 집계."""
+    return chat_analytics.latency_stats()
+
+
+@router.get("/analytics/sessions/{session_id}")
+async def analytics_session_detail(
+    session_id: str, _=Depends(verify_admin_token)
+) -> list[dict]:
+    """세션 대화 원문 드릴다운 — 채팅 사이드바와 같은 list_messages 재사용."""
+    from tool import chat_store  # noqa: PLC0415 — 지연 import (파일 컨벤션)
+
+    return chat_store.list_messages(session_id)
 
 
 # ----- 연결 점검 헬퍼 -----

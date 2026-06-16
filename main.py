@@ -191,8 +191,6 @@ def chat_endpoint(request: ChatRequest):
         final_message = result["messages"][-1].content
         final_intent = result.get("intent", "unknown")
 
-        # 통계용 대화 로깅 (best-effort — 실패해도 응답엔 영향 없음)
-        _log_chat_turn(request, result, final_message, final_intent, latency_ms=latency_ms)
         # 최종 state → 우측 패널용 그래프/원본문서 페이로드
         # 단, result_check 가 재질문을 요청한 턴(필수 검색 소스 일부가 비어 END)에는
         # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
@@ -214,7 +212,10 @@ def chat_endpoint(request: ChatRequest):
                 final_message,
                 intent=final_intent,
                 latency_ms=latency_ms,
-                panel=panel_data,
+                # 패널(관계도/문서)에 도구 사용 목록(search_plan)을 같은 JSON 으로 보관한다.
+                # 통계의 tool_usage 가 이 한 행만 읽으므로 별도 log_turn 적재가 필요 없다
+                # (이전엔 log_turn 이 같은 턴을 한 번 더 INSERT 해 카운트가 2배였음).
+                panel={**panel_data, "tools": result.get("search_plan")},
             )
         except Exception as log_err:
             print(f"⚠️ 응답 기록 실패(무시): {log_err}")
@@ -232,24 +233,6 @@ def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"에이전트 처리 중 오류 발생: {str(e)}")
 
 
-
-def _log_chat_turn(request, result, final_message, final_intent, latency_ms):
-    """대화 한 턴을 통계 테이블에 적재. 어떤 예외도 삼켜서 채팅 흐름을 막지 않는다."""
-    try:
-        from services.chat_logging import log_turn
-
-        log_turn(
-            user_id=request.user_id,
-            session_id=request.thread_id,
-            user_message=request.message,
-            assistant_message=final_message,
-            intent=final_intent,
-            search_plan=result.get("search_plan"),
-            latency_ms=latency_ms,
-        )
-    except Exception:  # noqa: BLE001
-        import logging
-        logging.getLogger(__name__).warning("chat turn logging failed", exc_info=True)
 
 # 직접 실행할 때를 위한 엔트리포인트
 if __name__ == "__main__":
