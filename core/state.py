@@ -1,5 +1,10 @@
 # core/state.py
-from typing import TypedDict, Annotated, List,Any
+from typing import TypedDict, Annotated, List, Any
+try:
+    from typing import NotRequired  # type: ignore[attr-defined]
+except ImportError:
+    from typing_extensions import NotRequired  # type: ignore[no-redef]
+
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
@@ -18,14 +23,22 @@ class AgentState(TypedDict):
     intent: str
     reconstructed_query: str
     search_plan: List[str]
-    
+
     # 분리된 State 키들에 통일된 UnifiedResult 규격 적용
     rdb_results: List[UnifiedResult]
     vec_results: List[UnifiedResult]
     graph_facts: List[UnifiedResult]
-    
+
     # 기타 그래프 관련 키 분리 유지
     graph_paths: List[List[str]]
     graph_provenance: List[str]  # 근거 rcept_no
 
     final_draft: str
+
+    # GraphRAG rewrite (graphrag/) — Sync Node로 넘기는 신규 키. 옵셔널.
+    graph_hits: NotRequired[List[dict]]
+    graph_seeds: NotRequired[List[dict]]
+    graph_meta: NotRequired[dict]
+
+    # 앞단(Gemini)이 단어집 보고 동봉한 엔티티 식별자 (corp_code/org:er_name/...)
+    reconstructed_seeds: NotRequired[List[str]]
