@@ -22,6 +22,7 @@ sqlglot          # SELECT-only 안전 검사 + LIMIT 클램프 (AST 파싱)
 # Vector 하이브리드 검색 (Dense Qdrant + BM25)
 qdrant-client
 rank-bm25
+numpy            # BM25 top-N 정렬 (np.argsort), vector_store.py 필수
 httpx
 
 # Environment Variables
