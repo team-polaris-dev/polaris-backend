@@ -1,10 +1,8 @@
-"""POLARIS Graph RAG 패키지.
+"""GraphRAG 하이브리드 검색 패키지.
 
-polaris-backend `nodes/rag.py` 가 import 하는 공개 진입점은
-`graphrag.langgraph_app.nodes.graph_agent.graph_search_node` 한 개.
-
-설계 SSOT: docs/DBdocs/03_neo4j.md · 04_graphrag.md.
+진입점: graph_search_node(state) → dict
+출력: graph_hits + 셰임 (graph_facts / graph_paths / graph_provenance)
 """
-from .langgraph_app.nodes.graph_agent import graph_search_node
+from graphrag.node import graph_search_node
 
 __all__ = ["graph_search_node"]
