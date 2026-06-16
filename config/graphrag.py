@@ -20,6 +20,13 @@ FULLTEXT_POOL = int(os.environ.get("GRAPHRAG_FULLTEXT_POOL", "25"))        # FUL
 # 그래프 노드 폭주(헤어볼) 방지용 엣지 상한. 정보가치 높은 관계부터 남긴다.
 MAX_EDGES = int(os.environ.get("GRAPHRAG_MAX_EDGES", "90"))
 
+# induced 엣지: seed 중심 확장은 "별 모양"(이웃이 root에만 연결)이라 관계망이 안 보인다.
+# 확장으로 모인 노드 집합 *내부*의 엣지를 한 번 더 조회해 이웃끼리도 이어 "망"으로 만든다.
+# 직접(seed) 엣지보다 후순위로 cap 한다 — 헤어볼 재발 방지.
+INDUCED_EDGES = os.environ.get("GRAPHRAG_INDUCED_EDGES", "1") not in ("0", "false", "False")
+MAX_INDUCED_EDGES = int(os.environ.get("GRAPHRAG_MAX_INDUCED_EDGES", "60"))
+INDUCED_MAX_NODES = int(os.environ.get("GRAPHRAG_INDUCED_MAX_NODES", "120"))
+
 # 회사 재무(HAS_METRIC)를 가져올 때 핵심 계정만 선별한다. 예전엔 collect[..20]이
 # 아무 계정 20개나 집어 매출·영업이익이 빠지는 일이 있었다(IFRS 표준 계정 코드).
 # 손익(매출~순이익) + 재무상태(자산·부채·자본·현금) 핵심만.

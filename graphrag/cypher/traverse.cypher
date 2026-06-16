@@ -158,6 +158,38 @@ RETURN
   [r IN relationships(path) | type(r)] AS rels
 LIMIT 5;
 
+-- @name pattern_induced_edges
+// 확장으로 모인 노드 집합 내부의 엣지(induced subgraph). 별→망 변환.
+// 파라미터: er_names(list), bare(list) — bare 는 corp_code/person/product/tech PK 후보를
+// 라벨 구분 없이 한 리스트로 던진다(PK 전역 유일 가정). FinMetric 은 집합에서 제외.
+MATCH (a)
+WHERE (a:Organization AND (a.corp_code IN $bare OR a.er_name IN $er_names))
+   OR (a:Person AND a.person_id IN $bare)
+   OR (a:Product AND a.product_id IN $bare)
+   OR (a:Technology AND a.tech_id IN $bare)
+WITH collect(DISTINCT a) AS ns
+UNWIND ns AS a
+MATCH (a)-[r]-(b)
+WHERE b IN ns AND elementId(a) < elementId(b)
+  AND coalesce(r.valid_to, '') = ''
+  AND r.qc_disabled_at IS NULL
+WITH DISTINCT r, a, b
+RETURN
+  type(r) AS rel_type,
+  startNode(r) = a AS a_is_start,
+  CASE WHEN a:Organization THEN coalesce(a.corp_code, 'org:' + a.er_name)
+       WHEN a:Person THEN a.person_id
+       WHEN a:Product THEN a.product_id
+       WHEN a:Technology THEN a.tech_id END AS a_id,
+  a.name AS a_name,
+  CASE WHEN b:Organization THEN coalesce(b.corp_code, 'org:' + b.er_name)
+       WHEN b:Person THEN b.person_id
+       WHEN b:Product THEN b.product_id
+       WHEN b:Technology THEN b.tech_id END AS b_id,
+  b.name AS b_name,
+  r.qota_rt AS qota_rt
+LIMIT $cap;
+
 -- @name pattern_fallback_subgraph_apoc
 MATCH (start) WHERE id(start) = $start_internal_id
 CALL apoc.path.subgraphAll(start, {maxLevel: 2, limit: 80, bfs: true})
