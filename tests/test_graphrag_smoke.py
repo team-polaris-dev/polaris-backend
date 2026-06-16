@@ -18,14 +18,16 @@ def test_samsung_executive_query() -> None:
 
 
 def test_supply_chain_role_attrs() -> None:
-    out = graph_search_node({"reconstructed_query": "SK하이닉스 공급망"})
+    # 정규명으로 질의 — 'SK하이닉스' 약칭은 음차 노드(에스케이하이닉스)로 매칭이 안 돼
+    # 별칭 보강 전까지 파편 노드로 빠진다(별도 이슈). 여기선 공급역할 속성 자체를 검증.
+    out = graph_search_node({"reconstructed_query": "에스케이하이닉스(주) 공급망 공급사"})
     supply_hits = [
         h for h in out["graph_hits"]
         if h["label"] == "relationship" and h["attrs"].get("rel_type") == "SUPPLIES_TO"
     ]
-    if supply_hits:
-        roles = {h["attrs"].get("role") for h in supply_hits}
-        assert roles & {"supplier", "buyer"}, f"role 없음/잘못됨: {roles}"
+    assert supply_hits, "공급(SUPPLIES_TO) hit 없음"
+    roles = {h["attrs"].get("role") for h in supply_hits}
+    assert roles & {"supplier", "buyer"}, f"공급역할 없음: {roles}"
 
 
 def test_product_seed_reverse() -> None:

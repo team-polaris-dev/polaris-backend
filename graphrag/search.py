@@ -8,9 +8,10 @@ from __future__ import annotations
 import time
 from typing import Iterable
 
+from config.graphrag import PPR_ENABLED
 from graphrag.matcher import match
 from graphrag.schema import GraphHit, GraphSearchOutput, Seed
-from graphrag.traverse import expand, fallback_for
+from graphrag.traverse import expand, expand_ppr, fallback_for
 
 
 def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSearchOutput:
@@ -33,11 +34,19 @@ def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSear
     fallback_used = False
 
     if seeds:
-        try:
-            hits, patterns_run = expand(seeds)
-        except Exception as e:
-            errors.append(f"traverse: {e}")
-            hits = []
+        # PPR 우선(시드 관련성 멀티홉). 실패·빈 결과면 패턴 확장으로 폴백.
+        if PPR_ENABLED:
+            try:
+                hits, patterns_run = expand_ppr(seeds)
+            except Exception as e:
+                errors.append(f"ppr: {e}")
+                hits = []
+        if not hits:
+            try:
+                hits, patterns_run = expand(seeds)
+            except Exception as e:
+                errors.append(f"traverse: {e}")
+                hits = []
 
         if not hits:
             # 정적 hit 0 → seed별 fallback (모든 seed 합쳐서)

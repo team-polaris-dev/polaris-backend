@@ -19,6 +19,7 @@ from config.graphrag import (
     MAX_INDUCED_EDGES,
 )
 from tool.graph_client import neo4j_driver
+from graphrag.ppr import ppr_rank, _DOMAIN_RELS as _PPR_DOMAIN_RELS
 from graphrag.schema import GraphHit, Seed
 
 
@@ -729,6 +730,127 @@ def expand(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
             patterns_run.append(f"induced_edges(+{len(induced)})")
 
     return assembled, patterns_run
+
+
+def _run_seed_financial(seed: Seed) -> list[GraphHit]:
+    """시드 회사의 핵심 재무(HAS_METRIC) hit. PPR 경로는 관계는 PPR로 모으고 재무만 따로."""
+    cypher = PATTERNS["pattern_seed_financial"].replace(
+        "{{ORG_MATCH}}", _org_match("o", seed["key_type"])
+    )
+    with neo4j_driver.session() as s:
+        row = s.run(
+            cypher, key_value=seed["key_value"], fin_accounts=FIN_KEY_ACCOUNTS
+        ).single()
+    if not row:
+        return []
+    hits: list[GraphHit] = []
+    for m in row.get("metrics") or []:
+        if not m or m.get("metric_id") is None:
+            continue
+        hits.append(_node_hit(
+            "fin_metric",
+            m["metric_id"],
+            m.get("account_id") or m["metric_id"],
+            attrs={k: v for k, v in m.items() if v is not None},
+            source=m.get("source"),
+        ))
+    return hits
+
+
+def _ppr_typed_edges(eids: list[str], seed_our_ids: set[str]) -> list[GraphHit]:
+    """PPR 선별 노드($eids) 내부의 타입 엣지(지분율·직책·출처). 2-hop 포함."""
+    if not eids:
+        return []
+    with neo4j_driver.session() as s:
+        rows = s.run(
+            PATTERNS["pattern_typed_edges_among"],
+            eids=eids, rels=_PPR_DOMAIN_RELS, cap=MAX_EDGES * 4,
+        ).data()
+    out: list[GraphHit] = []
+    for r in rows:
+        rel_type = r.get("rel_type")
+        a_id, b_id = r.get("a_id"), r.get("b_id")
+        if not rel_type or not a_id or not b_id or a_id == b_id:
+            continue
+        if r.get("a_is_start"):
+            from_id, from_name = a_id, r.get("a_name") or ""
+            to_id, to_name = b_id, r.get("b_name") or ""
+        else:
+            from_id, from_name = b_id, r.get("b_name") or ""
+            to_id, to_name = a_id, r.get("a_name") or ""
+        attrs: dict[str, Any] = {}
+        if r.get("qota_rt") is not None:
+            attrs["qota_rt"] = r["qota_rt"]
+        if r.get("ofcps"):
+            attrs["pos"] = r["ofcps"]
+        if rel_type == "SUPPLIES_TO":
+            if to_id in seed_our_ids:
+                attrs["role"] = "supplier"
+            elif from_id in seed_our_ids:
+                attrs["role"] = "buyer"
+        hit = _rel_hit(
+            rel_type,
+            from_id=from_id, from_name=from_name,
+            to_id=to_id, to_name=to_name,
+            attrs=attrs, source=r.get("source"),
+        )
+        hit["seed_origin"] = "ppr"
+        out.append(hit)
+    return out
+
+
+def expand_ppr(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
+    """하이브리드 확장 — 패턴 확장(백본) + PPR 관련성 오버레이.
+
+    백본(expand): 시드 1-hop 타입 엣지(임원·주주·공급역할·재무)·induced. 직접 사실 보장.
+    PPR: 시드 관련성으로 노드 랭킹 + 멀티홉(2-hop) 관련 노드/엣지 보강. 헤어볼은 round-robin
+    cap 으로 억제. 관련성 점수는 노드 hit 의 score·attrs.relevance 로 노출.
+    """
+    base_hits, patterns_run = expand(seeds)
+
+    ranked = ppr_rank(seeds)
+    if not ranked:
+        return base_hits, patterns_run
+
+    patterns_run = patterns_run + [f"ppr_rank(n={len(ranked)})"]
+    relevance = {n["our_id"]: n["score"] for n in ranked}
+    seed_our_ids = {s.get("id") for s in seeds}
+
+    ppr_node_hits = [
+        _node_hit(n["label"], n["our_id"], n["name"],
+                  attrs={"relevance": n["score"]}, score=n["score"])
+        for n in ranked
+    ]
+    ppr_edge_hits = _ppr_typed_edges([n["element_id"] for n in ranked], seed_our_ids)
+    patterns_run.append(f"ppr_typed_edges(raw={len(ppr_edge_hits)})")
+
+    # 병합 + dedup: 노드 id 1회(백본 우선, 관련성 주입), 엣지 round-robin cap
+    node_hits: list[GraphHit] = []
+    rel_hits: list[GraphHit] = []
+    seen_nodes: set[str] = set()
+    for h in base_hits + ppr_node_hits:
+        if h.get("label") == "relationship":
+            rel_hits.append(h)
+            continue
+        hid = h.get("id")
+        if not hid or hid in seen_nodes:
+            continue
+        seen_nodes.add(hid)
+        if "relevance" not in (h.get("attrs") or {}) and hid in relevance:
+            h.setdefault("attrs", {})["relevance"] = relevance[hid]
+        node_hits.append(h)
+
+    seen_rel: set[str] = set()
+    dedup_rel: list[GraphHit] = []
+    for h in rel_hits + ppr_edge_hits:
+        hid = h.get("id")
+        if not hid or hid in seen_rel:
+            continue
+        seen_rel.add(hid)
+        dedup_rel.append(h)
+    rel_capped = _cap_relations(dedup_rel, MAX_EDGES + MAX_INDUCED_EDGES)
+
+    return node_hits + rel_capped, patterns_run
 
 
 def fallback_for(seed: Seed) -> list[GraphHit]:

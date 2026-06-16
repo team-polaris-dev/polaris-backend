@@ -27,6 +27,16 @@ INDUCED_EDGES = os.environ.get("GRAPHRAG_INDUCED_EDGES", "1") not in ("0", "fals
 MAX_INDUCED_EDGES = int(os.environ.get("GRAPHRAG_MAX_INDUCED_EDGES", "60"))
 INDUCED_MAX_NODES = int(os.environ.get("GRAPHRAG_INDUCED_MAX_NODES", "120"))
 
+# ── Personalized PageRank (ppr.py) ──────────────────────────────
+# 하이퍼 연결 그래프(허브 차수 수천)에서 시드 관련성 기반 멀티홉 추출. 시드에서 PPR 을
+# 돌려 거리·허브통과로 점수가 감쇠하게 해, 시드에 *진짜* 가까운 서브그래프만 남기고
+# 허브 우회 노이즈를 억제한다(HippoRAG 방식). 순수 파이썬 power iteration — GDS 불필요.
+PPR_ENABLED = os.environ.get("GRAPHRAG_PPR", "1") not in ("0", "false", "False")
+PPR_ALPHA = float(os.environ.get("GRAPHRAG_PPR_ALPHA", "0.85"))           # 댐핑(restart=1-alpha)
+PPR_ITERS = int(os.environ.get("GRAPHRAG_PPR_ITERS", "30"))              # power iteration 횟수
+PPR_NEIGHBORHOOD_LIMIT = int(os.environ.get("GRAPHRAG_PPR_NBR_LIMIT", "1500"))  # depth-2 이웃 상한
+PPR_TOP_NODES = int(os.environ.get("GRAPHRAG_PPR_TOP_NODES", "50"))      # PPR 상위 N 노드 선별
+
 # 회사 재무(HAS_METRIC)를 가져올 때 핵심 계정만 선별한다. 예전엔 collect[..20]이
 # 아무 계정 20개나 집어 매출·영업이익이 빠지는 일이 있었다(IFRS 표준 계정 코드).
 # 손익(매출~순이익) + 재무상태(자산·부채·자본·현금) 핵심만.

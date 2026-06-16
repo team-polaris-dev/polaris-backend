@@ -158,6 +158,41 @@ RETURN
   [r IN relationships(path) | type(r)] AS rels
 LIMIT 5;
 
+-- @name pattern_typed_edges_among
+// PPR 선별 노드 집합($eids = elementId 리스트) 내부의 타입 엣지 + 속성(지분율·직책·출처).
+// 시점·qc 필터. 방향은 startNode 로 복원.
+MATCH (a)-[r]-(b)
+WHERE elementId(a) IN $eids AND elementId(b) IN $eids
+  AND elementId(a) < elementId(b)
+  AND type(r) IN $rels
+  AND coalesce(r.valid_to,'') = '' AND r.qc_disabled_at IS NULL
+WITH DISTINCT r, a, b
+RETURN
+  type(r) AS rel_type,
+  startNode(r) = a AS a_is_start,
+  CASE WHEN a:Organization THEN coalesce(a.corp_code, 'org:' + a.er_name)
+       WHEN a:Person THEN a.person_id
+       WHEN a:Product THEN a.product_id
+       WHEN a:Technology THEN a.tech_id END AS a_id,
+  a.name AS a_name,
+  CASE WHEN b:Organization THEN coalesce(b.corp_code, 'org:' + b.er_name)
+       WHEN b:Person THEN b.person_id
+       WHEN b:Product THEN b.product_id
+       WHEN b:Technology THEN b.tech_id END AS b_id,
+  b.name AS b_name,
+  r.qota_rt AS qota_rt, r.ofcps AS ofcps, r.rcept_no AS source
+LIMIT $cap;
+
+-- @name pattern_seed_financial
+{{ORG_MATCH}}
+OPTIONAL MATCH (o)-[r:HAS_METRIC]->(m:FinMetric)
+  WHERE m.reprt_code = '11011' AND m.fs_div = 'CFS' AND m.bsns_year >= 2024
+    AND m.account_id IN $fin_accounts
+RETURN
+  coalesce(o.corp_code, 'org:' + coalesce(o.er_name, o.name)) AS root_id,
+  o.name AS root_name,
+  collect(DISTINCT m {.metric_id, .account_id, .value, .unit, .bsns_year, source: r.rcept_no})[..40] AS metrics;
+
 -- @name pattern_induced_edges
 // 확장으로 모인 노드 집합 내부의 엣지(induced subgraph). 별→망 변환.
 // 파라미터: er_names(list), bare(list) — bare 는 corp_code/person/product/tech PK 후보를
