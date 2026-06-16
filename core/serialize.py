@@ -30,6 +30,16 @@ def _humanize_rel(rel: str) -> str:
     return REL_LABELS.get(rel, rel.replace("_", " ").strip() or "관계")
 
 
+_CO_STRIP_RE = re.compile(r"주식회사|\(주\)|㈜|\s+")
+
+
+def _norm_co(s: str) -> str:
+    """회사명 정규화 — 접미사·공백 제거 + SK↔에스케이/LG↔엘지 별칭. 답변 매칭용."""
+    s = _CO_STRIP_RE.sub("", s or "")
+    s = s.replace("에스케이", "SK").replace("엘지", "LG")
+    return s.lower()
+
+
 def _doc_meta_by_rcept(rcept_nos: list[str]) -> dict[str, dict[str, Any]]:
     """document_index 에서 rcept_no 묶음의 메타(회사·공시일·제목·요약)를 조회한다.
 
@@ -59,16 +69,26 @@ def _doc_meta_by_rcept(rcept_nos: list[str]) -> dict[str, dict[str, Any]]:
     return meta
 
 
-def build_graph(state: dict) -> dict:
+def build_graph(state: dict, answer: str = "") -> dict:
     """graph_facts/graph_paths → {nodes:[{id,label,category}], edges:[{...}]}.
 
     graph_paths[i] 는 [노드, 관계, 노드, 관계, …] 로 교차 구성되고(rag._row_to_unified),
     graph_facts[i].source 가 그 경로의 근거 rcept_no 다(둘은 행 단위로 정렬됨).
+
+    answer 가 주어지면, 답변이 실제로 언급한 회사들의 부분그래프만 남긴다(멀티홉 뼈대).
+    이웃 전체를 덤프하지 않고 '답의 근거 구조'만 보여주기 위함. 큐레이션 결과가 너무
+    적으면(엣지<3) 전체를 유지한다(빈 패널 방지).
     """
     facts = state.get("graph_facts") or []
     paths = state.get("graph_paths") or []
     if not paths:
         return {"nodes": [], "edges": []}
+
+    # 인물(임원·개인 주주)은 회사 관계 그래프에서 제외 — 속성이지 회사↔회사 망이 아님
+    person_names = {
+        h.get("name") for h in (state.get("graph_hits") or [])
+        if h.get("label") == "person" and h.get("name")
+    }
 
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
@@ -85,11 +105,15 @@ def build_graph(state: dict) -> dict:
         rels = [p for idx, p in enumerate(path) if idx % 2 == 1]
 
         for name in names:
+            if name in person_names:
+                continue
             nodes.setdefault(name, {"id": name, "label": name, "category": "기업"})
 
         for j in range(len(names) - 1):
             rel = rels[j] if j < len(rels) else ""
             src, tgt = names[j], names[j + 1]
+            if src in person_names or tgt in person_names:
+                continue
             key = (src, tgt, rel)
             if key in seen_edges:
                 continue
@@ -103,6 +127,34 @@ def build_graph(state: dict) -> dict:
                     "rcept_no": rcept_no,
                 }
             )
+
+    # 큐레이션 1순위 — 시드 + 시드의 '직접 이웃' 사이 엣지만. 2차 이웃(질의와 무관한
+    # 다른 회사로 뻗는 가지)을 잘라 답의 핵심 구조만 남긴다.
+    seeds = {s.get("name") for s in (state.get("graph_seeds") or []) if s.get("name")}
+    seed_nodes = {n for n in nodes if n in seeds}
+    if seed_nodes and len(edges) > 6:
+        core = set(seed_nodes)
+        for e in edges:
+            if e["source"] in seed_nodes:
+                core.add(e["target"])
+            if e["target"] in seed_nodes:
+                core.add(e["source"])
+        cur = [e for e in edges if e["source"] in core and e["target"] in core]
+        if len(cur) >= 3:
+            keep = {e["source"] for e in cur} | {e["target"] for e in cur}
+            return {"nodes": [nodes[n] for n in nodes if n in keep], "edges": cur}
+
+    # 큐레이션 2순위(시드 매칭 실패 시) — 답변이 언급한 회사들 사이 엣지만
+    na = _norm_co(answer)
+    if na and len(edges) > 6:
+        mentioned = {
+            nid for nid in nodes
+            if len(_norm_co(nid)) >= 2 and _norm_co(nid) in na
+        }
+        cur = [e for e in edges if e["source"] in mentioned and e["target"] in mentioned]
+        if len(cur) >= 3:
+            keep = {e["source"] for e in cur} | {e["target"] for e in cur}
+            return {"nodes": [nodes[n] for n in nodes if n in keep], "edges": cur}
 
     return {"nodes": list(nodes.values()), "edges": edges}
 
@@ -194,7 +246,14 @@ def serialize_state(state: dict) -> dict:
       'documents' → 원본 문서만 있음
       'none'      → 우측 패널 표시 안 함
     """
-    graph = build_graph(state)
+    msgs = state.get("messages") or []
+    answer = ""
+    if msgs:
+        last = msgs[-1]
+        answer = getattr(last, "content", "") or (
+            last.get("content", "") if isinstance(last, dict) else ""
+        )
+    graph = build_graph(state, answer)
     documents = build_documents(state)
 
     if graph["edges"]:

@@ -77,6 +77,17 @@ _REL_TO_LEGACY_TYPE = {
     "INTERLOCKING_DIRECTORATE": "interlocking_directorate",
 }
 
+# 그래프 망(패널)에 그릴 엣지 = 회사↔회사 사업관계만 (Bloomberg SPLC / MS GraphRAG 방식).
+# 제품·기술·임원·재무는 노드가 아니라 회사의 '속성' → facts/텍스트에만 남기고 망에선 제외.
+_NETWORK_REL_TYPES = {
+    "IS_MAJOR_SHAREHOLDER_OF",
+    "IS_SUBSIDIARY_OF",
+    "SUPPLIES_TO",
+    "INVESTS_IN",
+    "RELATED_PARTY",
+    "INTERLOCKING_DIRECTORATE",
+}
+
 
 def _fact_from_hit(hit: GraphHit) -> dict:
     """GraphHit → legacy UnifiedResult dict.
@@ -134,11 +145,17 @@ def _fact_from_hit(hit: GraphHit) -> dict:
 
 
 def _path_from_hit(hit: GraphHit) -> list[str] | None:
-    """relationship hit → legacy graph_paths 트리플 [from, rel_type, to]."""
+    """relationship hit → legacy graph_paths 트리플 [from, rel_type, to].
+
+    회사↔회사 사업관계(_NETWORK_REL_TYPES)만 망 엣지로. 제품/기술/임원/재무 관계는
+    facts에는 남지만 그래프 패널에는 그리지 않는다 (속성 ≠ 관계).
+    """
     if hit.get("label") != "relationship":
         return None
     attrs = hit.get("attrs", {})
     rel_type = attrs.get("rel_type") or ""
+    if rel_type not in _NETWORK_REL_TYPES:
+        return None
     from_name = attrs.get("from_name") or attrs.get("from") or ""
     to_name = attrs.get("to_name") or attrs.get("to") or ""
     if not (rel_type and from_name and to_name):

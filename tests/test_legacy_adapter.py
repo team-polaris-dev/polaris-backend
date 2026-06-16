@@ -34,8 +34,8 @@ def test_executive_hit_to_fact() -> None:
     assert f["value"] == "대표이사"
     assert f["source"] == "20260317000635"
 
-    assert len(legacy["paths"]) == 1
-    assert legacy["paths"][0] == ["노태문", "EXECUTIVE_OF", "삼성전자(주)"]
+    # 임원은 회사↔회사 사업관계가 아니므로 망 엣지(path)로 그리지 않는다 — 속성(fact)으로만.
+    assert legacy["paths"] == []
 
     assert legacy["provenance"] == ["20260317000635"]
 

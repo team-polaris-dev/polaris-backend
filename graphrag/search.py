@@ -14,6 +14,47 @@ from graphrag.schema import GraphHit, GraphSearchOutput, Seed
 from graphrag.traverse import expand, expand_ppr, fallback_for
 
 
+# 질문 키워드 → 앞세울 관계 유형. 질문이 "주주"면 지분망만, "공급망"이면 공급망만
+# 보여주도록 관계 hit을 스코프한다 (질문 무시하고 동네 전체 덤프하던 문제 해결).
+_FOCUS_KEYWORDS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+    (("주주", "지분", "대주주", "주식", "소유", "오너", "지배구조", "지배", "자회사",
+      "계열", "모회사", "종속"),
+     ("IS_MAJOR_SHAREHOLDER_OF", "IS_SUBSIDIARY_OF", "INVESTS_IN")),
+    (("공급", "납품", "매입", "매출처", "고객", "공급망", "협력사", "벤더", "거래처",
+      "수혜", "이득", "낙수", "납품처"),  # "수혜주" = 거래 상대(공급사)가 수혜
+     ("SUPPLIES_TO",)),
+    (("투자",), ("INVESTS_IN",)),
+    (("특수관계", "계열거래"), ("RELATED_PARTY",)),
+    (("제품", "생산", "만드", "품목"), ("PRODUCES",)),
+    (("기술", "공정"), ("USES_TECH",)),
+    (("임원", "대표", "경영진", "이사", "CEO"), ("EXECUTIVE_OF",)),
+]
+
+
+def _relation_focus(query: str) -> set[str]:
+    """질문에서 어떤 관계를 앞세울지 결정. 매칭 없으면 빈 set(=전체)."""
+    focus: set[str] = set()
+    for keywords, rels in _FOCUS_KEYWORDS:
+        if any(k in query for k in keywords):
+            focus.update(rels)
+    return focus
+
+
+def _apply_focus(hits: list[GraphHit], focus: set[str]) -> list[GraphHit]:
+    """관계 hit을 focus 유형으로 스코프. 비관계 hit(노드/속성)은 보존.
+    과필터로 관계가 0이 되면 원본 유지(빈 망 방지)."""
+    if not focus:
+        return hits
+    kept = [
+        h for h in hits
+        if h.get("label") != "relationship"
+        or h.get("attrs", {}).get("rel_type") in focus
+    ]
+    if any(h.get("label") == "relationship" for h in kept):
+        return kept
+    return hits
+
+
 def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSearchOutput:
     """단일 호출 검색.
 
@@ -57,6 +98,14 @@ def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSear
                     patterns_run.append(f"fallback({sd['id']})")
                 except Exception as e:
                     errors.append(f"fallback({sd['id']}): {e}")
+
+    # 질문 키워드로 관계 스코프 (주주→지분망 / 공급망→공급망). 질문 무관 덤프 방지.
+    focus = _relation_focus(query)
+    if focus:
+        before = len(hits)
+        hits = _apply_focus(hits, focus)
+        if len(hits) != before:
+            patterns_run.append("focus(" + "+".join(sorted(focus)) + ")")
 
     elapsed = (time.perf_counter() - started) * 1000.0
 
