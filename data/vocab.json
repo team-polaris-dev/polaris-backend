@@ -1,10 +1,10 @@
 {
-  "version": "2026-06-15T08:50:19Z",
+  "version": "2026-06-16T07:03:57Z",
   "stats": {
     "organization": 3621,
     "person": 1587,
-    "product": 1726,
-    "technology": 1113,
+    "product": 1684,
+    "technology": 1098,
     "fin_accounts": 30,
     "relation_predicates": 10
   },
@@ -26893,18 +26893,6 @@
       "name": "삼성 아트 스토어"
     },
     {
-      "id": "52dabe963b6be16c",
-      "name": "삼성SDI"
-    },
-    {
-      "id": "9686d0683092455b",
-      "name": "삼성에스디에스"
-    },
-    {
-      "id": "0b06a580c0ca2d3d",
-      "name": "삼성전기"
-    },
-    {
       "id": "3b90eb19f08e77a6",
       "name": "생명보험상품"
     },
@@ -27367,10 +27355,6 @@
     {
       "id": "9e18c6df617a9fdd",
       "name": "AI제품"
-    },
-    {
-      "id": "dae48de45da764cc",
-      "name": "APS"
     },
     {
       "id": "62f5d19b9f296604",
@@ -28165,22 +28149,6 @@
       "name": "HBM TC(Thermal Compression) 본더"
     },
     {
-      "id": "82671affbb12b111",
-      "name": "HBM 제조용"
-    },
-    {
-      "id": "b318c4b8e4dcbdfb",
-      "name": "HBM3E DRAM"
-    },
-    {
-      "id": "97a114ab412b4da0",
-      "name": "HBM제품"
-    },
-    {
-      "id": "281d7a834b3b639f",
-      "name": "HBM칩"
-    },
-    {
       "id": "ecdd7285bc5da6b3",
       "name": "HDI"
     },
@@ -28283,10 +28251,6 @@
     {
       "id": "90f9b69fcbf8f390",
       "name": "INSPECTION"
-    },
-    {
-      "id": "58d6c8ee619167c0",
-      "name": "ISC"
     },
     {
       "id": "6c5522ca8af86fc5",
@@ -29797,10 +29761,6 @@
       "name": "고가 디스플레이"
     },
     {
-      "id": "caf50c7bf74c560f",
-      "name": "고대역폭메모리"
-    },
-    {
       "id": "f6b2a375ee3bb159",
       "name": "고무발포제"
     },
@@ -29887,14 +29847,6 @@
     {
       "id": "68beb6dc322c7961",
       "name": "광경화형 Over Coat 조성물"
-    },
-    {
-      "id": "ec538d6bb654cbab",
-      "name": "광대역폭메모리반도체"
-    },
-    {
-      "id": "c40f537a89a54bb6",
-      "name": "광전자"
     },
     {
       "id": "d049827397c75737",
@@ -30101,10 +30053,6 @@
       "name": "디스플레이용 전자재료"
     },
     {
-      "id": "1242953ac07b4fbd",
-      "name": "디엔에프"
-    },
-    {
       "id": "dd503a73a368f287",
       "name": "디지털TV"
     },
@@ -30143,10 +30091,6 @@
     {
       "id": "9201b8657269f448",
       "name": "레이저마커 및 응용기기"
-    },
-    {
-      "id": "77c48712ba60fe68",
-      "name": "레인보우로보틱스"
     },
     {
       "id": "ba46f25d1de971d8",
@@ -30481,20 +30425,8 @@
       "name": "삼성노블라이프"
     },
     {
-      "id": "de19b50a47e02422",
-      "name": "삼성물산"
-    },
-    {
-      "id": "828a008877b4d748",
-      "name": "삼성바이오로직스"
-    },
-    {
       "id": "92736aa79bfd157b",
       "name": "삼성바이오에피스"
-    },
-    {
-      "id": "5774b8c862e87cbe",
-      "name": "삼성에피스홀딩스"
     },
     {
       "id": "7898c62276a0ccb9",
@@ -30559,10 +30491,6 @@
     {
       "id": "4eef2152fbe7a2c3",
       "name": "소켓"
-    },
-    {
-      "id": "baad6b46db2e04e1",
-      "name": "소프트웨어"
     },
     {
       "id": "2d8ed0712758c51d",
@@ -31025,10 +30953,6 @@
       "name": "제어장치"
     },
     {
-      "id": "24d00c4bca1d9ec6",
-      "name": "제일기획"
-    },
-    {
       "id": "7c4d0d4618119d7b",
       "name": "종합물류대행"
     },
@@ -31409,24 +31333,8 @@
       "name": "화학제품"
     },
     {
-      "id": "1fbc2a3d88cdb1a6",
-      "name": "(주)솔레오"
-    },
-    {
-      "id": "63d7526add0c4c05",
-      "name": "(주)이엠테크"
-    },
-    {
-      "id": "1f03ba64446b2cf0",
-      "name": "(주)이오엘"
-    },
-    {
-      "id": "1815954d3587507f",
-      "name": "(주)잉크테크"
-    },
-    {
-      "id": "bdc92dd08fcce700",
-      "name": "(주)한울반도체"
+      "id": "2f19cbc2b57bd4af",
+      "name": "ALD 증착 장비"
     },
     {
       "id": "f68f0aa0e1ae3bad",
@@ -31445,24 +31353,12 @@
       "name": "Amkor코리아"
     },
     {
-      "id": "b16abd38cf8ca233",
-      "name": "Core HBM"
+      "id": "38b03a62641815df",
+      "name": "CVD 증착 장비"
     },
     {
       "id": "77e9a5bcc25a2589",
       "name": "Fine Pitch Wafer Test 용 Coaxial Interface"
-    },
-    {
-      "id": "f435a7ab2915ecf3",
-      "name": "HBM 칩"
-    },
-    {
-      "id": "fe7d22ed4444e31f",
-      "name": "HBM 칩(Die)"
-    },
-    {
-      "id": "8b5219e7bf9d3931",
-      "name": "HBM: High Bandwidth Memory"
     },
     {
       "id": "38db0b1cf88cf4db",
@@ -31491,10 +31387,6 @@
     {
       "id": "7d9dcb513c4b9ca9",
       "name": "LEENO PIN & IC TEST SOCKET"
-    },
-    {
-      "id": "c4976c16375c8711",
-      "name": "LG이노텍"
     },
     {
       "id": "1e8a8b7e8eb8fd61",
@@ -31533,14 +31425,6 @@
       "name": "PTI"
     },
     {
-      "id": "a6f249470ba0066b",
-      "name": "SFA반도체"
-    },
-    {
-      "id": "e24396ec0811a9a5",
-      "name": "SK하이닉스"
-    },
-    {
       "id": "0184e14d86578c28",
       "name": "ST Micro"
     },
@@ -31553,64 +31437,12 @@
       "name": "TFME"
     },
     {
-      "id": "8263fd430830a363",
-      "name": "공장"
-    },
-    {
-      "id": "a182fb7b9540bec0",
-      "name": "광대역폭메모리반도체 (HBM: High Bandwidth Memory)"
-    },
-    {
       "id": "3aa96c9ea6936105",
       "name": "레이저"
     },
     {
-      "id": "7a0b854aa9166e8a",
-      "name": "반도체구성"
-    },
-    {
-      "id": "b32cfdbadab23706",
-      "name": "부재료"
-    },
-    {
-      "id": "bbb02cb4a0a1b515",
-      "name": "삼성전자"
-    },
-    {
-      "id": "07d25a4bd7a0d307",
-      "name": "시그네틱스"
-    },
-    {
-      "id": "35130c27c71e629a",
-      "name": "유형자산"
-    },
-    {
-      "id": "5063bee5536f6e16",
-      "name": "잉크테크"
-    },
-    {
       "id": "88fe5f9df66f755f",
       "name": "자사주신탁(MMT)"
-    },
-    {
-      "id": "f475b82ce162b8da",
-      "name": "재고자산"
-    },
-    {
-      "id": "ded19c60f6e65337",
-      "name": "저장품"
-    },
-    {
-      "id": "c178ab2f5103e177",
-      "name": "컴퓨터소프트웨어"
-    },
-    {
-      "id": "d9b60f2bd4904b09",
-      "name": "코리아써키트"
-    },
-    {
-      "id": "6cea5be59b21de1a",
-      "name": "투자부동산"
     }
   ],
   "technology": [
@@ -31653,10 +31485,6 @@
     {
       "id": "c12316ed0f646ebf",
       "name": "IoT"
-    },
-    {
-      "id": "899a691ee381135c",
-      "name": "HBM(광대역폭메모리)"
     },
     {
       "id": "1e3646677c95a0f6",
@@ -32305,10 +32133,6 @@
     {
       "id": "f05e480f2f1dc4a7",
       "name": "GPUaaS"
-    },
-    {
-      "id": "14cbcba24c4526f0",
-      "name": "HBM"
     },
     {
       "id": "82ac90727b88f5fc",
@@ -33259,10 +33083,6 @@
       "name": "Core Die"
     },
     {
-      "id": "b16abd38cf8ca233",
-      "name": "Core HBM"
-    },
-    {
       "id": "83b13fd37cd4b029",
       "name": "Cryogenic Chiller"
     },
@@ -33561,14 +33381,6 @@
     {
       "id": "c330369835cdd67c",
       "name": "HBM5"
-    },
-    {
-      "id": "8b5219e7bf9d3931",
-      "name": "HBM: High Bandwidth Memory"
-    },
-    {
-      "id": "f0c9b3900aa9da39",
-      "name": "HBM칩생산"
     },
     {
       "id": "7e26c6595766b0e4",
@@ -35959,28 +35771,12 @@
       "name": "히트펌프"
     },
     {
-      "id": "d5340d3f350e6e0c",
-      "name": "2000년대 중반"
-    },
-    {
       "id": "e2eda214109c04d1",
       "name": "AI 반도체 2.5D 패키징"
     },
     {
-      "id": "129d1a809c5f6456",
-      "name": "AI 반도체 구현을 위한 HBM 칩 생산"
-    },
-    {
-      "id": "c84e10b9d85436cd",
-      "name": "AI 반도체 구현을 위한 HBM칩 생산"
-    },
-    {
       "id": "423a93fd74d9a577",
       "name": "COB(Chip On Board)"
-    },
-    {
-      "id": "4def203c98fff263",
-      "name": "Chat GPT"
     },
     {
       "id": "957b46338c6c8972",
@@ -35999,10 +35795,6 @@
       "name": "Laser 응용기술제품"
     },
     {
-      "id": "0f9892297a93bf29",
-      "name": "Life-Cycle"
-    },
-    {
       "id": "6f4869a44f375554",
       "name": "Narrow Pitch 고전류 대응 Pin"
     },
@@ -36015,10 +35807,6 @@
       "name": "RF(Radio Frequency) 반도체 Isolation 특성 측정 소켓 개발"
     },
     {
-      "id": "7bfdf4a545141870",
-      "name": "기계제작"
-    },
-    {
       "id": "c1a84c9495983de0",
       "name": "반도체 임가공"
     },
@@ -36027,24 +35815,8 @@
       "name": "비전으로 검사"
     },
     {
-      "id": "fae0ed3b83be204d",
-      "name": "산업재산권"
-    },
-    {
-      "id": "3440962662966fe2",
-      "name": "생산시스템"
-    },
-    {
-      "id": "baad6b46db2e04e1",
-      "name": "소프트웨어"
-    },
-    {
       "id": "cdf5f8eede0a13aa",
       "name": "수직 통합(Vertical Integration)"
-    },
-    {
-      "id": "a2a6e6bdcca2bfce",
-      "name": "연구개발시설"
     },
     {
       "id": "9adfbc79def15a6e",

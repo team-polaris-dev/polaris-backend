@@ -52,6 +52,33 @@ BLOCK_ENTITY_NAMES = {
     "공정용 화학재료",
     "신제품",
     "이차전지용 전자재료",
+    # 2026-06-16 재누적분 — corp_master 등록 회사명이 접미사 없이 Product 로 유입
+    # (기존 COMPANY_HINTS 가 법인접미사만 봐서 맨이름을 놓침). corp_master 대조로 확정.
+    "삼성전자",
+    "SK하이닉스",
+    "LG이노텍",
+    "삼성전기",
+    "삼성SDI",
+    "삼성물산",
+    "삼성바이오로직스",
+    "삼성에스디에스",
+    "삼성에피스홀딩스",
+    "제일기획",
+    "코리아써키트",
+    "SFA반도체",
+    "시그네틱스",
+    "잉크테크",
+    "디엔에프",
+    "레인보우로보틱스",
+    "광전자",
+    "ISC",
+    "APS",
+    # 2026-06-16 고아(0엣지) 회계계정·일반어가 Product/Tech 로 유입
+    "재고자산", "저장품", "유형자산", "투자부동산", "부재료", "반도체구성",
+    "공장", "컴퓨터소프트웨어", "소프트웨어", "산업재산권", "생산시스템",
+    "기계제작", "연구개발시설", "Chat GPT", "2000년대 중반", "Life-Cycle",
+    # 2026-06-16 고아 한국 회사명 Product 유입 ((주) 접두 — _ORG_SUFFIX 미포착)
+    "(주)솔레오", "(주)이엠테크", "(주)이오엘", "(주)잉크테크", "(주)한울반도체",
 }
 
 HYBRID_BONDER_EVIDENCE_RE = re.compile(
@@ -123,6 +150,28 @@ ENTITY_MERGES = [
     ("Product", "FPD 펠리클(TFT-LCD/OLED용)", "Product", "FPD Pellicle", "fpd_pellicle_paren"),
     ("Product", "펠리클용 프레임", "Product", "펠리클 프레임", "pellicle_frame_spacing"),
     ("Product", "반도체 펠리클용 프레임", "Product", "펠리클 프레임", "pellicle_frame_semi"),
+    # ── 2026-06-16 HBM 표기분산 캐논 ──
+    # 원칙: 제네릭 "HBM"을 뜻하는 한영·괄호·칩/제품 접미·생산문구 변형만 Product "HBM"으로 병합.
+    # 세대(HBM3/HBM3E/HBM4/HBM5)·별개 제품(TC 본더·6-SIDE 검사·소재기술·적층방식)은 의미가
+    # 달라 보존 — 03_neo4j.md §7-3 "세대구분은 병합 안 함".
+    ("Technology", "HBM", "Product", "HBM", "hbm_cross_label"),
+    ("Technology", "HBM(광대역폭메모리)", "Product", "HBM", "hbm_ko_paren"),
+    ("Technology", "HBM: High Bandwidth Memory", "Product", "HBM", "hbm_en_expansion"),
+    ("Product", "HBM: High Bandwidth Memory", "Product", "HBM", "hbm_en_expansion2"),
+    ("Product", "광대역폭메모리반도체 (HBM: High Bandwidth Memory)", "Product", "HBM", "hbm_ko_en_paren"),
+    ("Product", "광대역폭메모리반도체", "Product", "HBM", "hbm_ko_broadband"),
+    ("Product", "고대역폭메모리", "Product", "HBM", "hbm_ko_high_bw"),
+    ("Product", "HBM제품", "Product", "HBM", "hbm_product_suffix"),
+    ("Product", "HBM칩", "Product", "HBM", "hbm_chip"),
+    ("Product", "HBM 칩", "Product", "HBM", "hbm_chip_spacing"),
+    ("Product", "HBM 칩(Die)", "Product", "HBM", "hbm_chip_die"),
+    ("Technology", "HBM칩생산", "Product", "HBM", "hbm_chip_production"),
+    ("Technology", "AI 반도체 구현을 위한 HBM 칩 생산", "Product", "HBM", "hbm_chip_production_phrase"),
+    ("Technology", "AI 반도체 구현을 위한 HBM칩 생산", "Product", "HBM", "hbm_chip_production_phrase2"),
+    ("Product", "HBM 제조용", "Product", "HBM", "hbm_manufacturing_fragment"),
+    ("Technology", "Core HBM", "Product", "HBM", "core_hbm_cross_label"),
+    ("Product", "Core HBM", "Product", "HBM", "core_hbm"),
+    ("Product", "HBM3E DRAM", "Product", "HBM3E", "hbm3e_dram_generation"),
 ]
 
 WUXI_FST_TARGET = {"name": "WUXI FST", "er_name": "wuxifst"}

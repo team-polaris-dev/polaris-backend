@@ -1,10 +1,46 @@
 {
   "self_loops": [],
-  "supplies_bidirectional_total": 48,
-  "supplies_bidir_both_domestic": 0,
-  "orphan_product": 0,
-  "orphan_tech": 0,
-  "company_in_producttech": [],
+  "supplies_bidirectional_total": 50,
+  "supplies_bidir_both_domestic": 2,
+  "orphan_product": 51,
+  "orphan_tech": 27,
+  "company_in_producttech": [
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)잉크테크",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)한울반도체",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)이오엘",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)이엠테크",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)솔레오",
+      "rels": 0
+    }
+  ],
   "generic_nodes": [],
   "short_nodes": [],
   "newline_nodes": 0,
@@ -17,43 +53,43 @@
     },
     {
       "rel": "hasObject",
-      "n": 3313
-    },
-    {
-      "rel": "IS_SUBSIDIARY_OF",
-      "n": 2142
+      "n": 3310
     },
     {
       "rel": "RELATED_PARTY",
-      "n": 2125
+      "n": 2201
+    },
+    {
+      "rel": "IS_SUBSIDIARY_OF",
+      "n": 2146
     },
     {
       "rel": "PRODUCES",
-      "n": 1825
-    },
-    {
-      "rel": "EXECUTIVE_OF",
-      "n": 1328
+      "n": 1922
     },
     {
       "rel": "USES_TECH",
-      "n": 1314
+      "n": 1407
+    },
+    {
+      "rel": "EXECUTIVE_OF",
+      "n": 1334
     },
     {
       "rel": "INVESTS_IN",
-      "n": 1222
+      "n": 1252
     },
     {
       "rel": "SUPPLIES_TO",
-      "n": 415
+      "n": 434
     },
     {
       "rel": "IS_MAJOR_SHAREHOLDER_OF",
-      "n": 337
+      "n": 352
     },
     {
       "rel": "INTERLOCKING_DIRECTORATE",
-      "n": 58
+      "n": 51
     }
   ],
   "node_counts": [
@@ -63,7 +99,7 @@
     },
     {
       "label": "Organization",
-      "n": 3539
+      "n": 3623
     },
     {
       "label": "Chunk",
@@ -71,19 +107,20 @@
     },
     {
       "label": "Product",
-      "n": 1603
+      "n": 1726
     },
     {
       "label": "Person",
-      "n": 1574
+      "n": 1589
     },
     {
       "label": "Technology",
-      "n": 996
+      "n": 1113
     }
   ],
   "provenance_ledger": {
-    "claude": 29230,
+    "claude": 29001,
+    "ollama": 2672,
     "q3.5:9b": 1880
   }
 }
