@@ -86,10 +86,16 @@ def get_schema_prompt() -> str:
     SSOT(docs/DBdocs/디비설계.md)는 8개 테이블·run_id 컬럼을 포함한
     설계를 문서화하지만, 현재 적재된 덤프(dump/maria.sql)의 실제 테이블은
     이와 다르다 — chunk_summary/document_unified/news_raw/active_run_manifest
-    4개 테이블 자체가 없고, 남은 3개 테이블에도 run_id/key_facts 컬럼이 없다
+    4개 테이블 자체가 없고, 검색 대상 테이블에도 run_id/key_facts 컬럼이 없다
     (DESCRIBE로 직접 확인함). SSOT를 그대로 옮기면 LLM이 존재하지 않는
     테이블·컬럼을 조회해 매번 실패하므로, 실제 적재된 컬럼만 기술한다.
     덤프가 SSOT 스키마로 갱신되면 이 함수도 함께 갱신한다.
+
+    노출 테이블은 chunk_index/document_index/dart_raw_index 에 더해
+    fin_metric(재무지표) 4개다. fin_metric 은 재무 수치 질의의 핵심이라 추가했다
+    (이전엔 누락돼 재무 질문이 chunk 본문만 뒤졌다 — RDB_KNOWN_ISSUES A1-b).
+    extraction_provenance(그래프 추출 출처/confidence)는 KG 빌드 내부 계보라
+    자연어 질의 표면이 없고 graph 에이전트 영역과 겹쳐 Text-to-SQL 엔 노출하지 않는다.
     """
     return """\
 MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래 테이블만 사용한다.
@@ -104,6 +110,11 @@ MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래
   - corp_code, corp_name, doc_type, date(공시일), title, summary_short
 [dart_raw_index] DART 원본 JSON. PK(corp_code, endpoint, hash8)
   - rcept_no, body_json(LONGTEXT), status, collected_at
+[fin_metric] 재무지표(매출·영업이익·순이익·자산 등 숫자값). PK(metric_id)
+  - corp_code, rcept_no, bsns_year(회계연도 SMALLINT, 예: 2024)
+  - reprt_code(보고서 구분: '11011'=사업/연간, '11012'=반기, '11013'=1분기, '11014'=3분기)
+  - account_id(IFRS/DART 택소노미 코드 — 한국어 계정명이 아니라 아래 매핑 사용)
+  - value(DECIMAL 금액), unit('KRW'), fs_div('CFS'=연결, 'OFS'=별도)
 
 회사 corp_code: 삼성전자=00126380, SK하이닉스=00164779, 한미반도체=00161383.
 
@@ -144,6 +155,27 @@ MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래
 7) 날짜 표현은 경계 포함 여부를 엄격히 지킨다.
    - 'YYYY-MM-DD 이후/부터'는 해당 날짜를 포함하므로 date >= 'YYYY-MM-DD' 로 쓴다.
    - 'YYYY-MM-DD 초과/뒤'처럼 명시적으로 제외하는 표현일 때만 date > 'YYYY-MM-DD' 를 쓴다.
+8) 재무 수치(매출·영업이익·순이익·자산·부채·자본 등 "금액·숫자")를 물으면
+   document_index/chunk_index 가 아니라 [fin_metric] 을 조회한다.
+   account_id 는 한국어가 아니라 IFRS/DART 코드이므로 아래 매핑으로 변환해 매칭한다:
+     매출/매출액/수익        → account_id='ifrs-full_Revenue'
+     영업이익               → account_id='dart_OperatingIncomeLoss'
+     당기순이익/순이익       → account_id='ifrs-full_ProfitLoss'
+     법인세차감전순이익      → account_id='ifrs-full_ProfitLossBeforeTax'
+     매출총이익             → account_id='ifrs-full_GrossProfit'
+     자산총계/총자산        → account_id='ifrs-full_Assets'
+     부채총계/총부채        → account_id='ifrs-full_Liabilities'
+     자본총계/자기자본       → account_id='ifrs-full_Equity'
+   매핑에 없는 계정을 물으면 account_id 를 지어내지 말고 corp_code+bsns_year 로만
+   조회하거나 사용자에게 어떤 계정인지 되묻는다(틀린 코드는 0건이 된다).
+   ※ 같은 계정도 fs_div(연결 CFS/별도 OFS)·reprt_code(연간/분기)·bsns_year 별로
+     여러 행이 있다. 사용자가 따로 말하지 않으면 연결·연간 기준
+     (fs_div='CFS' AND reprt_code='11011')으로 한정하고 bsns_year 도 명시한다.
+   예) '삼성전자 2024년 매출' → SELECT d.corp_name, f.value FROM fin_metric f
+       LEFT JOIN document_index d ON d.rcept_no=f.rcept_no
+       WHERE f.corp_code='00126380' AND f.account_id='ifrs-full_Revenue'
+         AND f.bsns_year=2024 AND f.fs_div='CFS' AND f.reprt_code='11011'
+   (fin_metric 엔 corp_name 이 없으니 회사명이 필요하면 document_index 와 LEFT JOIN 한다)
 """
 
 
