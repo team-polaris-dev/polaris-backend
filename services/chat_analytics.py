@@ -31,13 +31,19 @@ def overview() -> dict[str, Any]:
         user_msgs = int(m["user_msgs"] or 0)
         asst_msgs = int(m["asst_msgs"] or 0)
 
-        # 최근 7일 활성 사용자
-        since7 = datetime.now() - timedelta(days=7)
-        cur.execute(
-            "SELECT COUNT(DISTINCT user_id) AS c FROM chat_messages WHERE created_at >= %s",
-            (since7,),
-        )
-        active_7d = int(cur.fetchone()["c"])
+        # 활성 사용자 — DAU(1일)/WAU(7일)/MAU(30일). 같은 커서로 윈도우만 바꿔 집계.
+        now = datetime.now()
+
+        def _active_since(days: int) -> int:
+            cur.execute(
+                "SELECT COUNT(DISTINCT user_id) AS c FROM chat_messages WHERE created_at >= %s",
+                (now - timedelta(days=days),),
+            )
+            return int(cur.fetchone()["c"])
+
+        dau = _active_since(1)
+        active_7d = _active_since(7)
+        mau = _active_since(30)
 
         # RAG 충분율 + 평균 지연 (assistant 턴 기준)
         cur.execute(
@@ -60,6 +66,9 @@ def overview() -> dict[str, Any]:
         "user_messages": user_msgs,
         "assistant_messages": asst_msgs,
         "active_users_7d": active_7d,
+        "dau": dau,
+        "wau": active_7d,
+        "mau": mau,
         "avg_messages_per_session": round(total_messages / total_sessions, 2) if total_sessions else 0,
         "avg_sessions_per_user": round(total_sessions / total_users, 2) if total_users else 0,
         "sufficient_rate": round(float(a["suff_rate"]), 4) if a["suff_rate"] is not None else None,
@@ -112,14 +121,19 @@ def intent_distribution(limit: int = 12) -> list[dict[str, Any]]:
 
 
 def tool_usage() -> list[dict[str, Any]]:
-    """search_plan 에 등장한 도구(rdb/vec/graph)별 사용 횟수."""
+    """search_plan 에 등장한 도구(rdb/vec/graph)별 사용 횟수.
+
+    search_plan 컬럼은 패널 JSON({graph, documents, panel, tools})이고, 도구 목록은
+    그 안의 $.tools 배열에 있다(main.py 가 save_message 에 함께 보관). JSON_EXTRACT 로
+    $.tools 를 꺼내 JSON_CONTAINS 한다. tools 키가 없는 과거 행은 NULL → 미집계.
+    """
     with mariadb_conn() as conn, conn.cursor(pymysql.cursors.DictCursor) as cur:
-        # search_plan 은 JSON 배열. JSON_CONTAINS 로 각 도구 카운트.
         out = []
         for tool in ["rdb", "vec", "graph"]:
             cur.execute(
                 "SELECT COUNT(*) AS c FROM chat_messages "
-                "WHERE role='assistant' AND JSON_CONTAINS(search_plan, %s)",
+                "WHERE role='assistant' "
+                "AND JSON_CONTAINS(JSON_EXTRACT(search_plan, '$.tools'), %s)",
                 (f'"{tool}"',),
             )
             out.append({"tool": tool, "count": int(cur.fetchone()["c"])})
@@ -169,3 +183,51 @@ def recent_sessions(limit: int = 15) -> list[dict[str, Any]]:
             }
             for r in cur.fetchall()
         ]
+
+
+# 응답 지연 히스토그램 버킷 경계(ms). 평균만 보면 꼬리(tail)가 가려져 분위수로 본다.
+_LATENCY_BUCKETS: list[tuple[str, int, int | None]] = [
+    ("<0.5s", 0, 500),
+    ("0.5–1s", 500, 1000),
+    ("1–2s", 1000, 2000),
+    ("2–4s", 2000, 4000),
+    ("4–8s", 4000, 8000),
+    ("8s+", 8000, None),
+]
+
+
+def _percentile(sorted_vals: list[int], p: float) -> int | None:
+    """정렬된 값에서 nearest-rank 분위수. 빈 리스트면 None."""
+    if not sorted_vals:
+        return None
+    idx = int(round((p / 100.0) * (len(sorted_vals) - 1)))
+    return sorted_vals[max(0, min(idx, len(sorted_vals) - 1))]
+
+
+def latency_stats() -> dict[str, Any]:
+    """assistant 응답 지연 분포 — p50/p90/p95/p99 + 히스토그램 버킷.
+
+    기존 chat_messages.latency_ms 만 사용(수집 추가 없음).
+    """
+    with mariadb_conn() as conn, conn.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(
+            "SELECT latency_ms FROM chat_messages "
+            "WHERE role='assistant' AND latency_ms IS NOT NULL ORDER BY latency_ms"
+        )
+        vals = [int(r["latency_ms"]) for r in cur.fetchall()]
+
+    buckets = [
+        {
+            "label": label,
+            "count": sum(1 for v in vals if v >= lo and (hi is None or v < hi)),
+        }
+        for label, lo, hi in _LATENCY_BUCKETS
+    ]
+    return {
+        "count": len(vals),
+        "p50": _percentile(vals, 50),
+        "p90": _percentile(vals, 90),
+        "p95": _percentile(vals, 95),
+        "p99": _percentile(vals, 99),
+        "buckets": buckets,
+    }
