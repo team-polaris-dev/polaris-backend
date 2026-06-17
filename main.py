@@ -108,6 +108,19 @@ class DocumentItem(BaseModel):
     source_kind: str = ""
 
 
+class FinancialMetric(BaseModel):
+    label: str = ""
+    value: float = 0.0
+    unit: str = ""
+
+
+class FinancialGroup(BaseModel):
+    corp_name: str = ""
+    year: Any = None
+    unit: str = ""
+    metrics: List[FinancialMetric] = []
+
+
 class ChatResponse(BaseModel):
     response: str
     intent: str
@@ -115,10 +128,10 @@ class ChatResponse(BaseModel):
     panel: str = "none"
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
+    financials: List[FinancialGroup] = []
 
 
 # 세션 복원용 메시지 항목 — 우측 패널(관계도/원본문서)까지 함께 복원한다.
-# GraphData/DocumentItem 을 기본값으로 쓰므로 두 클래스 정의 이후에 둔다.
 class HistoryMessage(BaseModel):
     message_id: int
     role: str
@@ -128,6 +141,7 @@ class HistoryMessage(BaseModel):
     panel: str = "none"
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
+    financials: List[FinancialGroup] = []
 
 # 3-0. 로그인 / 회원가입 — 사용자이름만 입력. 처음이면 자동 가입.
 @api.post("/api/login", response_model=LoginResponse)
@@ -196,7 +210,7 @@ def chat_endpoint(request: ChatRequest):
         # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
         # 않도록. 판정은 result_check 와 동일하게 empty_sources(필수 소스) 로 한다.
         if empty_sources(result):
-            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "panel": "none"}
+            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "financials": [], "panel": "none"}
         else:
             panel_data = serialize_state(result)
 
@@ -226,6 +240,7 @@ def chat_endpoint(request: ChatRequest):
             panel=panel_data["panel"],
             graph=panel_data["graph"],
             documents=panel_data["documents"],
+            financials=panel_data.get("financials", []),
         )
 
     except Exception as e:
