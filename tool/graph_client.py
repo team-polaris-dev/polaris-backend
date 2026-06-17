@@ -12,7 +12,14 @@ NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "polaris_dev_only")
 
 # Neo4j 드라이버 초기화
-neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+# qc_disabled_at 처럼 아직 DB 스키마에 등록 안 된 속성 키를 참조할 때 서버가 보내는
+# 'UNRECOGNIZED'(01N52, WARNING) notification 을 끈다. 동작엔 문제없는 경고지만
+# 매 쿼리마다 로그를 도배해 가독성을 해쳐서 차단. (다른 분류 경고는 그대로 둠)
+neo4j_driver = GraphDatabase.driver(
+    NEO4J_URI,
+    auth=(NEO4J_USER, NEO4J_PASSWORD),
+    notifications_disabled_classifications=["UNRECOGNIZED"],
+)
 
 def execute_cypher_query(query: str) -> List[Dict[str, Any]]:
     """실제 Neo4j 데이터베이스에 Cypher 쿼리를 실행합니다."""
