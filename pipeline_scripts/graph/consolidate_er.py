@@ -10,7 +10,7 @@ needs_er 노드에 붙었다(비정형 엣지가 실제 corp_code 노드와 분�
 import sys
 sys.path.insert(0, "graph")
 import extract_helpers as H  # noqa: E402  (_CORP_BY_ERNAME, neo4j_driver)
-from db import neo4j_driver  # noqa: E402
+from db import neo4j_driver, normalize_corp_name  # noqa: E402
 
 IDX = H._CORP_BY_ERNAME  # {normalize(name): corp_code}  (3사+28사+graph names)
 
@@ -29,7 +29,10 @@ def main():
             "AND o.er_name IS NOT NULL RETURN o.er_name AS er, o.name AS nm")]
         print(f"needs_er 노드 {len(ers)}개, corp_code 노드 {len(corp_codes)}개")
         for er, nm in ers:
-            cc = IDX.get(er)
+            # 저장된 er_name 은 옛 정규화라 새(별칭) 인덱스와 안 맞을 수 있다.
+            # 노드 raw name 을 현재 normalize_corp_name 으로 재키화, 실패 시 er 폴백.
+            key = normalize_corp_name(nm) or er
+            cc = IDX.get(key)
             if not cc or cc not in corp_codes:
                 skipped += 1
                 continue

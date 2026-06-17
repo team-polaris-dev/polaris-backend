@@ -13,22 +13,21 @@ from collections import defaultdict
 from typing import Any
 
 from tool.rdb_client import execute_sql_query
-
-# 그래프 관계 타입 → 한글 라벨
-REL_LABELS: dict[str, str] = {
-    "IS_SUBSIDIARY_OF": "자회사",
-    "EXECUTIVE_OF": "임원",
-    "IS_MAJOR_SHAREHOLDER_OF": "대주주",
-    "SUPPLIES_TO": "공급",
-    "ACQUIRES": "인수",
-    "INVESTS": "투자",
-}
+# 관계 한글라벨·회사명 정규화는 SSOT(config)에서. _norm_co 는 답변↔노드명 매칭용 별칭.
+from config.relations import REL_LABELS
+from config.entities import normalize_corp_name as _norm_co
+from config.graphrag import (
+    PANEL_CURATION_MIN_EDGES,
+    PANEL_CURATION_KEEP_MIN,
+    PANEL_MENTION_MIN_LEN,
+)
 
 _RCEPT_RE = re.compile(r"[^0-9A-Za-z]")
 
 
 def _humanize_rel(rel: str) -> str:
     return REL_LABELS.get(rel, rel.replace("_", " ").strip() or "관계")
+
 
 
 # IFRS/DART account_id → 한글 라벨
@@ -221,7 +220,7 @@ def build_graph(state: dict, answer: str = "") -> dict:
     # 다른 회사로 뻗는 가지)을 잘라 답의 핵심 구조만 남긴다.
     seeds = {s.get("name") for s in (state.get("graph_seeds") or []) if s.get("name")}
     seed_nodes = {n for n in nodes if n in seeds}
-    if seed_nodes and len(edges) > 6:
+    if seed_nodes and len(edges) > PANEL_CURATION_MIN_EDGES:
         core = set(seed_nodes)
         for e in edges:
             if e["source"] in seed_nodes:
@@ -229,19 +228,19 @@ def build_graph(state: dict, answer: str = "") -> dict:
             if e["target"] in seed_nodes:
                 core.add(e["source"])
         cur = [e for e in edges if e["source"] in core and e["target"] in core]
-        if len(cur) >= 3:
+        if len(cur) >= PANEL_CURATION_KEEP_MIN:
             keep = {e["source"] for e in cur} | {e["target"] for e in cur}
             return {"nodes": [nodes[n] for n in nodes if n in keep], "edges": cur}
 
     # 큐레이션 2순위(시드 매칭 실패 시) — 답변이 언급한 회사들 사이 엣지만
     na = _norm_co(answer)
-    if na and len(edges) > 6:
+    if na and len(edges) > PANEL_CURATION_MIN_EDGES:
         mentioned = {
             nid for nid in nodes
-            if len(_norm_co(nid)) >= 2 and _norm_co(nid) in na
+            if len(_norm_co(nid)) >= PANEL_MENTION_MIN_LEN and _norm_co(nid) in na
         }
         cur = [e for e in edges if e["source"] in mentioned and e["target"] in mentioned]
-        if len(cur) >= 3:
+        if len(cur) >= PANEL_CURATION_KEEP_MIN:
             keep = {e["source"] for e in cur} | {e["target"] for e in cur}
             return {"nodes": [nodes[n] for n in nodes if n in keep], "edges": cur}
 

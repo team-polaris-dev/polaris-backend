@@ -72,6 +72,7 @@ RETURN
 CALL (o) {
   OPTIONAL MATCH downpath = (o)-[:SUPPLIES_TO*1..3]->(buyer:Organization)
   WHERE ALL(rr IN relationships(downpath) WHERE rr.qc_disabled_at IS NULL)
+    AND buyer <> o   // *1..3 사이클이 시드를 자기 납품처로 잡는 self-loop 제거
   RETURN collect(DISTINCT {
     id: coalesce(buyer.corp_code, 'org:' + coalesce(buyer.er_name, buyer.name)),
     name: buyer.name,
@@ -82,6 +83,7 @@ CALL (o) {
 CALL (o) {
   OPTIONAL MATCH uppath = (supplier:Organization)-[:SUPPLIES_TO*1..3]->(o)
   WHERE ALL(rr IN relationships(uppath) WHERE rr.qc_disabled_at IS NULL)
+    AND supplier <> o   // self-loop 제거
   RETURN collect(DISTINCT {
     id: coalesce(supplier.corp_code, 'org:' + coalesce(supplier.er_name, supplier.name)),
     name: supplier.name,
