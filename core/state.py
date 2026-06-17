@@ -8,6 +8,12 @@ except ImportError:
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
+
+def merge_timings(a: dict, b: dict) -> dict:
+    """node_timings 리듀서. rdb/vec/graph 가 병렬로 써도 충돌 없이 합치도록 dict 병합."""
+    return {**(a or {}), **(b or {})}
+
+
 class UnifiedResult(TypedDict):
     type: str       # subsidiary / executive / fin_metric / rdb_row / vec_chunk ...
     code: str       # corp_code
@@ -42,3 +48,7 @@ class AgentState(TypedDict):
 
     # 앞단(Gemini)이 단어집 보고 동봉한 엔티티 식별자 (corp_code/org:er_name/...)
     reconstructed_seeds: NotRequired[List[str]]
+
+    # 계측용 — 파이프라인 시작 시각(perf_counter)과 노드별 소요시간(초). ResultCheck 덤프에서 사용.
+    pipeline_started_at: NotRequired[float]
+    node_timings: NotRequired[Annotated[dict, merge_timings]]

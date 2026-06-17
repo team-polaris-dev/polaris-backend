@@ -1,3 +1,6 @@
+import os
+import time
+
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.store.base import BaseStore
 from core.state import AgentState
@@ -24,8 +27,8 @@ def load_memory_node(state: AgentState, config: RunnableConfig, store: BaseStore
             "level": "초보자"
         }
 
-    # 4. 조회한 데이터를 State에 업데이트
-    return {"user_preferences": user_prefs}
+    # 4. 조회한 데이터를 State에 업데이트 (+ 파이프라인 시작 시각 기록 — 총 소요시간 계산용)
+    return {"user_preferences": user_prefs, "pipeline_started_at": time.perf_counter()}
 
 
 def save_memory_node(state: AgentState, config: RunnableConfig, store: BaseStore):
@@ -41,6 +44,22 @@ def save_memory_node(state: AgentState, config: RunnableConfig, store: BaseStore
 
     # 2. Store에 저장 (이후 다른 세션/thread_id로 접속해도 유지됨)
     store.put(namespace, "preferences", current_prefs)
+
+    # 3. 파이프라인 종착점 — 검색 결과·노드별 소요시간·질문·총시간을 HTML 로 덤프.
+    #    (덤프 실패가 응답 흐름을 막지 않게 방어)
+    try:
+        started = state.get("pipeline_started_at")
+        total = (time.perf_counter() - started) if started else None
+        from nodes.router import _dump_resultcheck_html
+        path = _dump_resultcheck_html(state, total_elapsed=total)
+        # file:// URI 는 VSCode/Windows Terminal 등에서 Ctrl+클릭으로 바로 열린다.
+        print(f"   📄 ResultCheck 상세 덤프 (Ctrl+클릭): {path.resolve().as_uri()}")
+        # POLARIS_RESULTCHECK_OPEN=1 이면 매 실행마다 기본 브라우저로 자동 오픈.
+        if os.environ.get("POLARIS_RESULTCHECK_OPEN") in ("1", "true", "True"):
+            import webbrowser
+            webbrowser.open(path.resolve().as_uri())
+    except Exception as exc:
+        print(f"   ⚠️ ResultCheck HTML 덤프 실패: {exc}")
 
     # 이 노드에서는 상태를 더 이상 변형하지 않으므로 빈 딕셔너리 반환
     return {}

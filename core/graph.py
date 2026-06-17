@@ -1,4 +1,7 @@
 # core/graph.py
+import time
+import functools
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
@@ -12,6 +15,22 @@ from nodes.rag import rdb_search_node, vector_search_node, graph_search_node
 from nodes.render import generate_report_node
 
 # 2. 라우팅 조건 함수들 정의
+def _timed(name: str, fn):
+    """state-only 노드를 감싸 소요시간(초)을 node_timings[name] 에 기록한다.
+
+    config/store 를 주입받는 memory 노드에는 쓰지 않는다(시그니처 단순 노드 전용).
+    """
+    @functools.wraps(fn)
+    def wrapper(state: AgentState):
+        t0 = time.perf_counter()
+        out = fn(state)
+        elapsed = time.perf_counter() - t0
+        out = dict(out) if isinstance(out, dict) else {}
+        out["node_timings"] = {name: elapsed}
+        return out
+    return wrapper
+
+
 def route_after_intent(state: AgentState):
     return state["intent"]
 
@@ -25,15 +44,15 @@ workflow = StateGraph(AgentState)
 # 모든 노드(Node)
 # ==========================================
 workflow.add_node("mem", load_memory_node)
-workflow.add_node("route", router_node)
-workflow.add_node("direct", direct_response_node)
-workflow.add_node("ctx", context_reconstruct_node)
+workflow.add_node("route", _timed("route", router_node))
+workflow.add_node("direct", _timed("direct", direct_response_node))
+workflow.add_node("ctx", _timed("ctx", context_reconstruct_node))
 
-workflow.add_node("rdb", rdb_search_node)
-workflow.add_node("vec", vector_search_node)
-workflow.add_node("graph", graph_search_node)
-workflow.add_node("result_check", result_check_node)
-workflow.add_node("gen", generate_report_node)
+workflow.add_node("rdb", _timed("rdb", rdb_search_node))
+workflow.add_node("vec", _timed("vec", vector_search_node))
+workflow.add_node("graph", _timed("graph", graph_search_node))
+workflow.add_node("result_check", _timed("result_check", result_check_node))
+workflow.add_node("gen", _timed("gen", generate_report_node))
 
 workflow.add_node("save", save_memory_node)
 

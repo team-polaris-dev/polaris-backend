@@ -183,6 +183,236 @@ def empty_sources(state: AgentState) -> list[str]:
     ]
 
 
+def _fmt_cell(value, width: int) -> str:
+    """셀 값을 한 줄 문자열로 만들고 width 에 맞춰 자르거나 채운다."""
+    if isinstance(value, float):  # relevance 등 소수는 보기 좋게 반올림.
+        value = round(value, 4)
+    text = "" if value is None else str(value).replace("\n", " ").replace("\r", " ")
+    if len(text) > width:
+        text = text[: width - 1] + "…"
+    return text.ljust(width)
+
+
+def _flatten_row(row: dict) -> dict:
+    """중첩 dict 를 한 단계 펼친다. {'extra': {'relevance': 1.0}} → {'extra.relevance': 1.0}.
+
+    extra/메타 같은 dict 컬럼이 표에 통짜 문자열로 박히는 걸 막아 한눈에 보이게 한다.
+    """
+    flat: dict = {}
+    for k, v in row.items():
+        if isinstance(v, dict):
+            if not v:
+                continue  # 빈 dict 는 컬럼 만들 게 없으니 스킵.
+            for sub_k, sub_v in v.items():
+                flat[f"{k}.{sub_k}"] = sub_v
+        else:
+            flat[k] = v
+    return flat
+
+
+def _prepare_table(rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """row 들을 평탄화하고, 표시할 컬럼 목록(등장순 키 합집합 - 중복컬럼 제거)을 만든다.
+
+    터미널 표와 HTML 덤프가 같은 컬럼/순서를 쓰도록 공유한다.
+    """
+    rows = [_flatten_row(r) if isinstance(r, dict) else r for r in rows]
+
+    cols: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for k in row:
+            if k not in cols:
+                cols.append(k)
+
+    # 내용이 모든 row 에서 앞 컬럼과 똑같은(중복) 컬럼은 제거 — 예: graph 의 value==name.
+    deduped: list[str] = []
+    for c in cols:
+        if not any(all(r.get(d) == r.get(c) for r in rows) for d in deduped):
+            deduped.append(c)
+    return rows, deduped
+
+
+def _print_rows_table(rows: list[dict], indent: str = "        ", max_col: int = 28) -> None:
+    """row(dict) 리스트를 정렬된 표로 출력한다. 컬럼은 키 합집합, 폭은 내용에 맞춰 자동."""
+    rows, cols = _prepare_table(rows)
+    if not cols:  # dict 가 아닌 row 면 그냥 줄줄이 출력.
+        for i, row in enumerate(rows):
+            print(f"{indent}[{i:>3}] {json.dumps(row, ensure_ascii=False, default=str)}")
+        return
+
+    # 각 컬럼 폭 = min(헤더/내용 최대 길이, max_col). '#' 는 인덱스 컬럼.
+    widths = {c: min(max(len(c), *(len(str(r.get(c, ""))) for r in rows)), max_col) for c in cols}
+    idx_w = max(1, len(str(len(rows) - 1)))
+
+    header = f"{indent}{'#'.rjust(idx_w)} │ " + " │ ".join(_fmt_cell(c, widths[c]) for c in cols)
+    print(header)
+    print(f"{indent}{'─' * idx_w}─┼─" + "─┼─".join("─" * widths[c] for c in cols))
+    for i, row in enumerate(rows):
+        line = f"{indent}{str(i).rjust(idx_w)} │ " + " │ ".join(_fmt_cell(row.get(c), widths[c]) for c in cols)
+        print(line)
+
+
+# ResultCheck 상세 덤프 저장 위치. POLARIS_RESULTCHECK_DIR 로 override.
+_RESULTCHECK_DUMP_DIR = Path(
+    os.environ.get("POLARIS_RESULTCHECK_DIR")
+    or Path(__file__).resolve().parent.parent / "logs" / "resultcheck"
+)
+# 보관할 최신 덤프 개수. 이보다 오래된 건 매 실행마다 정리. (POLARIS_RESULTCHECK_KEEP 로 override)
+_RESULTCHECK_KEEP = int(os.environ.get("POLARIS_RESULTCHECK_KEEP") or 5)
+
+
+def _prune_resultcheck_dumps(keep: int = _RESULTCHECK_KEEP) -> None:
+    """덤프 폴더에서 최신 keep 개만 남기고 오래된 resultcheck_*.html 을 삭제한다."""
+    files = sorted(
+        _RESULTCHECK_DUMP_DIR.glob("resultcheck_*.html"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for old in files[keep:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass  # 잠긴 파일 등은 다음 실행에서 다시 시도.
+
+
+def _html_table(rows: list[dict]) -> str:
+    """row 리스트를 정렬·검색 가능한 HTML <table> 문자열로 만든다."""
+    from html import escape
+
+    rows, cols = _prepare_table(rows)
+    if not rows:
+        return '<p class="empty">결과 없음</p>'
+    if not cols:  # dict 가 아닌 row — JSON 으로.
+        items = "".join(
+            f"<tr><td>{i}</td><td>{escape(json.dumps(r, ensure_ascii=False, default=str))}</td></tr>"
+            for i, r in enumerate(rows)
+        )
+        return f"<table><thead><tr><th>#</th><th>value</th></tr></thead><tbody>{items}</tbody></table>"
+
+    def cell(v):
+        if isinstance(v, float):
+            v = round(v, 4)
+        return escape("" if v is None else str(v))
+
+    head = "<th>#</th>" + "".join(f"<th>{escape(c)}</th>" for c in cols)
+    body = "".join(
+        "<tr><td>" + str(i) + "</td>"
+        + "".join(f"<td>{cell(r.get(c))}</td>" for c in cols)
+        + "</tr>"
+        for i, r in enumerate(rows)
+    )
+    return f"<table class='sortable'><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
+def _resultcheck_question(state: AgentState) -> str:
+    """덤프 제목용 질문 텍스트 — 원본 사용자 질문(마지막 HumanMessage)을 우선."""
+    for msg in reversed(state.get("messages", []) or []):
+        if getattr(msg, "type", "") == "human" or msg.__class__.__name__ == "HumanMessage":
+            content = getattr(msg, "content", None)
+            if content:
+                return str(content)
+    return state.get("reconstructed_query") or "(질문 미상)"
+
+
+def _timing_table_html(state: AgentState, total_elapsed: float | None) -> str:
+    """노드별 소요시간 + 총 응답시간을 표로. 느린 순 정렬."""
+    from html import escape
+
+    timings: dict = state.get("node_timings") or {}
+    if not timings and total_elapsed is None:
+        return ""
+    label = {
+        "route": "의도 분류(route)", "ctx": "질의 재구성(ctx)",
+        "rdb": "RDB 검색(rdb)", "vec": "벡터 검색(vec)", "graph": "그래프 검색(graph)",
+        "result_check": "결과 점검(result_check)", "gen": "보고서 생성(gen)",
+        "direct": "단순 응답(direct)",
+    }
+    rows = sorted(timings.items(), key=lambda kv: kv[1], reverse=True)
+    body = "".join(
+        f"<tr><td>{escape(label.get(k, k))}</td><td>{v:.3f}s</td></tr>" for k, v in rows
+    )
+    total_row = (
+        f"<tr class='total'><td>⏱ 총 응답시간</td><td>{total_elapsed:.3f}s</td></tr>"
+        if total_elapsed is not None else ""
+    )
+    note = "<span class='note'>※ rdb·vec·graph 는 병렬 실행이라 합≠총시간</span>"
+    return (
+        "<h2>⏱ 소요시간</h2>"
+        f"<table class='timing'><thead><tr><th>노드</th><th>소요</th></tr></thead>"
+        f"<tbody>{total_row}{body}</tbody></table>{note}"
+    )
+
+
+def _dump_resultcheck_html(state: AgentState, total_elapsed: float | None = None) -> Path:
+    """세 소스의 전체 결과 + 질문 + 노드별/총 소요시간을 단일 HTML 로 떨군다. 경로 반환."""
+    from datetime import datetime
+    from html import escape
+
+    counts = {label: len(state.get(key) or []) for key, label in _SOURCE_LABELS.items()}
+    question = _resultcheck_question(state)
+    q_short = question if len(question) <= 40 else question[:40] + "…"
+    reconstructed = state.get("reconstructed_query") or ""
+
+    _RESULTCHECK_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    # 밀리초까지 붙여 같은 초에 여러 번 실행돼도 파일이 서로 덮어쓰지 않게.
+    ts = now.strftime("%Y%m%d_%H%M%S") + f"_{now.microsecond // 1000:03d}"
+    path = _RESULTCHECK_DUMP_DIR / f"resultcheck_{ts}.html"
+
+    sections = []
+    for key, label in _SOURCE_LABELS.items():
+        rows = state.get(key) or []
+        sections.append(
+            f"<h2>{label} <span class='cnt'>{len(rows)}건</span></h2>{_html_table(rows)}"
+        )
+
+    summary = " · ".join(f"{label} {n}건" for label, n in counts.items())
+    total_txt = f" · 총 {total_elapsed:.3f}s" if total_elapsed is not None else ""
+    html = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>[{q_short}] ResultCheck {ts}</title>
+<style>
+ body{{font-family:'Segoe UI',sans-serif;margin:24px;color:#222;background:#fafafa}}
+ h1{{font-size:18px}} h2{{font-size:15px;margin-top:28px;border-bottom:2px solid #ddd;padding-bottom:4px}}
+ .cnt{{color:#888;font-weight:normal;font-size:13px}}
+ .summary{{background:#eef;padding:10px 14px;border-radius:8px;font-size:14px}}
+ .q{{background:#fff8e1;padding:10px 14px;border-radius:8px;font-size:14px;margin:8px 0;border-left:4px solid #fbc02d}}
+ .rq{{background:#e8f0fe;padding:10px 14px;border-radius:8px;font-size:14px;margin:8px 0;border-left:4px solid #4285f4}}
+ .note{{color:#999;font-size:12px}}
+ input{{margin:10px 0;padding:6px 10px;width:320px;font-size:14px}}
+ table{{border-collapse:collapse;font-size:13px;background:#fff;width:100%}}
+ table.timing{{width:auto;min-width:320px}}
+ th,td{{border:1px solid #ddd;padding:4px 8px;text-align:left;max-width:420px;
+   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+ th{{background:#f0f0f0;position:sticky;top:0;cursor:pointer;user-select:none}}
+ tr:nth-child(even){{background:#f8f8f8}}
+ tr.total td{{font-weight:bold;background:#e8f5e9}}
+ td:hover{{white-space:normal;overflow:visible}}
+ .empty{{color:#999}}
+</style></head><body>
+<h1>🔎 ResultCheck — {ts}</h1>
+<div class="q"><b>원본 질문</b> &nbsp;{escape(question)}</div>
+{f'<div class="rq"><b>재구성된 질문</b> &nbsp;{escape(reconstructed)}</div>' if reconstructed else ''}
+<div class="summary">{summary} · 합계 {sum(counts.values())}건{total_txt}</div>
+{_timing_table_html(state, total_elapsed)}
+<input id="q" placeholder="전체 검색 (행 필터)…" oninput="filt(this.value)">
+{''.join(sections)}
+<script>
+ function filt(v){{v=v.toLowerCase();document.querySelectorAll('table.sortable tbody tr').forEach(function(r){{
+   r.style.display=r.innerText.toLowerCase().includes(v)?'':'none';}});}}
+ document.querySelectorAll('table.sortable th').forEach(function(th){{th.onclick=function(){{
+   var t=th.closest('table'),i=[].indexOf.call(th.parentNode.children,th),
+   rs=[].slice.call(t.tBodies[0].rows),asc=th.dataset.asc=th.dataset.asc==='1'?'':'1';
+   rs.sort(function(a,b){{var x=a.cells[i].innerText,y=b.cells[i].innerText,
+     n=parseFloat(x)-parseFloat(y);var c=isNaN(n)?x.localeCompare(y):n;return asc?c:-c;}});
+   rs.forEach(function(r){{t.tBodies[0].appendChild(r);}});}};}});
+</script>
+</body></html>"""
+    path.write_text(html, encoding="utf-8")
+    _prune_resultcheck_dumps()  # 최신 _RESULTCHECK_KEEP 개만 남기고 정리.
+    return path
+
+
 def route_result_check(state: AgentState) -> str:
     """result_check 분기: 필수 소스가 모두 있으면 'gen', 하나라도 비면 'end'."""
     return "end" if empty_sources(state) else "gen"
@@ -197,15 +427,14 @@ def result_check_node(state: AgentState):
     """
     print("🔎 [ResultCheck Node] 검색 결과 충분성 점검 중...")
 
-    # 디버깅: 각 DB에서 무엇이 조회됐는지 건수 + 첫 항목 샘플로 한눈에 확인.
-    # (필수 여부와 무관하게 세 소스 모두 표시 — vec 가 0건인지 바로 보이게)
-    for key, label in _SOURCE_LABELS.items():
-        rows = state.get(key) or []
-        sample = ""
-        if rows:
-            first = rows[0]
-            sample = f" | 예: {first.get('name')} / {first.get('value')}"
-        print(f"   - {label}: {len(rows)}건{sample}")
+    # 디버깅: 터미널엔 소스별 건수 요약만 찍는다. 전체 row 상세 + 질문 + 노드별/총
+    # 소요시간은 파이프라인 종착점(save 노드)에서 정렬·검색 가능한 HTML 로 떨군다.
+    counts = {label: len(state.get(key) or []) for key, label in _SOURCE_LABELS.items()}
+    total = sum(counts.values())
+    print("   ┌─ 검색 결과 요약 " + "─" * 40)
+    for label, n in counts.items():
+        print(f"   │  {label}: {n}건")
+    print(f"   └─ 합계: {total}건 " + "─" * 40)
 
     empties = empty_sources(state)
 
