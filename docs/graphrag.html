@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POLARIS GraphRAG — 질문에서 답까지, 그래프를 읽는 법</title>
+<style>
+  :root{
+    --bg:#f7f8fb; --panel:#ffffff; --panel2:#eef1f7;
+    --ink:#1a1d27; --ink-dim:#454b5a; --ink-faint:#868d9d;
+    --line:#e4e7ef; --accent:#4f46e5; --accent2:#0a9268;
+    --warn:#c2710c; --bad:#d83a3a;
+    --code-bg:#f6f8fa;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono","Cascadia Code",Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Pretendard","Apple SD Gothic Neo",
+           "Malgun Gothic",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+       line-height:1.78;font-size:17px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:0 22px}
+
+  /* hero */
+  .hero{padding:88px 0 56px;text-align:center;
+        background:radial-gradient(1200px 420px at 50% -120px,rgba(79,70,229,.10),transparent 70%);
+        border-bottom:1px solid var(--line)}
+  .hero .kicker{font-family:var(--mono);font-size:13px;letter-spacing:.12em;
+        color:var(--accent);text-transform:uppercase;margin-bottom:18px}
+  .hero h1{font-size:40px;line-height:1.25;margin:0 0 18px;letter-spacing:-.02em;font-weight:800}
+  .hero p{color:var(--ink-dim);font-size:18px;max-width:560px;margin:0 auto}
+  .hero .meta{margin-top:28px;font-family:var(--mono);font-size:12.5px;color:var(--ink-faint)}
+  .hero .meta span{margin:0 8px}
+
+  /* article */
+  article{padding:56px 0 90px}
+  h2{font-size:26px;font-weight:780;letter-spacing:-.01em;margin:64px 0 18px;
+     padding-top:8px;position:relative}
+  h2::before{content:"";position:absolute;top:-28px;left:0;width:34px;height:3px;
+     background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px}
+  h2 .step{font-family:var(--mono);font-size:14px;color:var(--accent);margin-right:10px}
+  p{margin:0 0 20px;color:#2d323e}
+  p.lead{font-size:18.5px;color:var(--ink)}
+  strong{color:#0b0e16;font-weight:700}
+  .qt{color:var(--accent2)}
+  section:first-of-type h2{margin-top:8px}
+  section:first-of-type h2::before{top:-8px;display:none}
+
+  /* callout */
+  .callout{background:var(--panel);border:1px solid var(--line);
+     border-left:3px solid var(--accent);border-radius:10px;padding:18px 20px;margin:26px 0;
+     font-size:15.5px;color:var(--ink-dim)}
+  .callout b{color:var(--accent);font-weight:680}
+  .callout.key{border-left-color:var(--accent2)} .callout.key b{color:var(--accent2)}
+  .callout.warn{border-left-color:var(--warn)} .callout.warn b{color:var(--warn)}
+
+  /* code */
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:12px;
+      padding:18px 20px;overflow-x:auto;margin:24px 0;font-size:13.5px;line-height:1.6}
+  code{font-family:var(--mono)}
+  pre code{color:#24292f}
+  .c-key{color:#cf222e} .c-str{color:#0a7d33} .c-com{color:#6e7781;font-style:italic}
+  .c-fn{color:#8250df} .c-num{color:#0550ae}
+  p code,li code,td code{font-family:var(--mono);font-size:.86em;background:var(--panel2);
+      padding:2px 6px;border-radius:5px;color:#33405c}
+
+  /* figure wide */
+  .fig{margin:34px 0;background:var(--panel);border:1px solid var(--line);
+       border-radius:14px;padding:28px 24px}
+  .fig .cap{font-family:var(--mono);font-size:12px;color:var(--ink-faint);
+       text-align:center;margin-top:16px;letter-spacing:.04em}
+  @media(min-width:900px){.bleed{margin-left:calc((760px - 100vw)/2 + 22px);
+       margin-right:calc((760px - 100vw)/2 + 22px);max-width:none}}
+
+  /* pipeline */
+  .pipe{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;justify-content:center}
+  .pnode{flex:1;min-width:150px;background:var(--panel2);border:1px solid var(--line);
+     border-radius:12px;padding:18px 16px;text-align:center;position:relative}
+  .pnode .n{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:8px}
+  .pnode h4{margin:0 0 6px;font-size:16px}
+  .pnode p{margin:0;font-size:13px;color:var(--ink-faint);line-height:1.5}
+  .parrow{display:flex;align-items:center;color:var(--accent);font-size:22px;padding:0 4px}
+  @media(max-width:680px){.parrow{transform:rotate(90deg);width:100%;justify-content:center;padding:6px 0}}
+
+  /* depth matrix */
+  .depth{display:grid;gap:10px;margin:6px 0}
+  .drow{display:grid;grid-template-columns:170px 1fr 44px;align-items:center;gap:14px}
+  .drow .rel{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim)}
+  .dbar{display:flex;gap:5px}
+  .dcell{height:22px;flex:0 0 26px;border-radius:5px;background:var(--panel2);border:1px solid var(--line)}
+  .dcell.on{background:linear-gradient(180deg,var(--accent),#5a68d6);border-color:transparent}
+  .dcell.sup{background:linear-gradient(180deg,var(--accent2),#2fae7d);border-color:transparent}
+  .drow .hop{font-family:var(--mono);font-size:12px;color:var(--accent);text-align:right}
+
+  /* dict cards */
+  .cards{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:8px 0}
+  @media(max-width:560px){.cards{grid-template-columns:1fr}}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card .t{font-size:15px;font-weight:680;margin-bottom:4px}
+  .card .s{font-family:var(--mono);font-size:11.5px;color:var(--accent);margin-bottom:10px}
+  .card .ex{font-size:13.5px;color:var(--ink-dim)}
+  .card .ex b{color:#0b0e16}
+  .card .src{margin-top:10px;font-size:12px;color:var(--ink-faint)}
+  .card.auto{border-top:2px solid var(--accent)} .card.manual{border-top:2px solid var(--warn)}
+
+  /* table */
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:14.5px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
+  th{color:var(--ink-faint);font-weight:600;font-size:12.5px;letter-spacing:.04em;
+     text-transform:uppercase;background:var(--panel2)}
+  td .ok{color:var(--accent2)} td .no{color:var(--bad)} td .mid{color:var(--warn)}
+  td.num{font-family:var(--mono);text-align:right;color:#0b0e16;font-weight:600}
+  tr:last-child td{border-bottom:none}
+
+  /* shim flow */
+  .shim{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:14px}
+  .schip{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+     padding:12px 16px;font-family:var(--mono);font-size:12.5px}
+  .schip .lab{color:var(--ink-faint);display:block;font-size:10.5px;margin-bottom:3px}
+  .schip.new{border-color:var(--accent);color:#3730a3;background:#eef0ff}
+  .schip.old{border-color:var(--accent2);color:#065f46;background:#e7f6ef}
+
+  footer{border-top:1px solid var(--line);padding:34px 0 60px;text-align:center;
+     color:var(--ink-faint);font-size:13px;font-family:var(--mono)}
+  .tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);
+     border-radius:20px;padding:4px 12px;font-family:var(--mono);font-size:11.5px;
+     color:var(--ink-dim);margin:3px}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <div class="kicker">POLARIS · Engineering Note</div>
+    <h1>질문에서 답까지,<br>그래프를 읽는 법</h1>
+    <p>여덟 단계짜리 GraphRAG를 두 가지 일만 하는 검색기로 다시 짠 이야기 — 그리고 그 검색이 기대는 단어집을 만든 과정.</p>
+    <div class="meta">
+      <span>Neo4j FULLTEXT</span>·<span>Cypher 다중-hop</span>·<span>APOC</span>·<span>단어집 4종</span>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+<article>
+
+  <section>
+  <h2>들어가며</h2>
+  <p class="lead">POLARIS는 기업 공시 데이터를 분석하는 시스템이다. 사용자가 <span class="qt">"삼성전자 대표이사가 누구야?"</span>, <span class="qt">"SK하이닉스 공급망 알려줘"</span> 같은 질문을 던지면, 시스템은 세 갈래 검색(정형 데이터, 문서 본문, 관계망)을 동시에 돌려 답을 만든다. 이 글은 그중 관계망 검색, 즉 GraphRAG를 어떻게 다시 짰는지에 대한 기록이다.</p>
+  <p>기존 구현은 손이 많이 갔다. 질문이 들어오면 먼저 의도를 분류하고, 분류 결과에 맞는 Cypher 템플릿을 고르고, 안 맞으면 LLM에게 Cypher를 새로 짜게 시키고, 그 Cypher가 위험하지 않은지 검사한다. 단계가 <strong>여덟 개</strong>나 됐다. 단계가 많다는 건 고장 날 지점도 많다는 뜻이다.</p>
+  <p>그래서 방향을 바꿨다. 앞단에서 단어집을 보고 질문을 다듬어 넘겨주기로 했으니, 그래프 검색은 두 가지만 잘하면 된다. 질문에서 회사를 정확히 찾아내는 것, 그리고 그 회사를 중심으로 관계망을 펼치는 것.</p>
+
+  <div class="fig bleed">
+    <div class="pipe">
+      <div class="pnode" style="opacity:.5">
+        <div class="n">BEFORE</div><h4>8단계</h4>
+        <p>의도분류 → 템플릿 → LLM Cypher → 가드 → 스코어 → self-check …</p>
+      </div>
+      <div class="parrow">→</div>
+      <div class="pnode" style="border-color:var(--accent)">
+        <div class="n">AFTER</div><h4>2가지</h4>
+        <p>① 질문에서 회사 찾기<br>② 회사 중심으로 관계망 펼치기</p>
+      </div>
+    </div>
+    <div class="cap">FIG 0 — 비대했던 8단계 파이프라인을 두 가지 책임으로 압축했다</div>
+  </div>
+  </section>
+
+  <section>
+  <h2>전체 그림</h2>
+  <p>검색은 세 걸음으로 끝난다. 첫째, 질문에 등장한 회사·인물·제품을 그래프의 실제 노드와 연결한다. 둘째, 연결된 노드에서 관계를 따라 바깥으로 펼친다. 셋째, 펼친 결과를 한 줄짜리 사실들의 목록으로 정리해 넘긴다.</p>
+
+  <div class="fig bleed">
+    <div class="pipe">
+      <div class="pnode"><div class="n">STEP 1</div><h4>앵커링</h4><p>FULLTEXT로<br>질문 → 그래프 노드</p></div>
+      <div class="parrow">→</div>
+      <div class="pnode"><div class="n">STEP 2</div><h4>관계 확장</h4><p>Cypher로<br>관계별 다중-hop</p></div>
+      <div class="parrow">→</div>
+      <div class="pnode"><div class="n">STEP 3</div><h4>정리</h4><p>단일 사실 목록<br>graph_hits</p></div>
+    </div>
+    <div class="cap">FIG 1 — 앵커링 → 확장 → 정리. 추론은 하지 않는다</div>
+  </div>
+
+  <div class="callout key"><b>설계 원칙.</b> 복잡한 추론은 하지 않는다. <span class="qt">"누가 가장 수혜를 보는가"</span> 같은 판단은 답변을 쓰는 LLM의 몫으로 남겨두고, 그래프는 판단의 재료가 될 사실만 빠짐없이 모아준다.</div>
+  </section>
+
+  <section>
+  <h2><span class="step">STEP 1</span>질문에서 회사 찾기</h2>
+  <p>가장 먼저 할 일은 질문 속 단어를 그래프의 노드와 잇는 것이다. 사용자는 <span class="qt">"삼성전자"</span>라고 쓰지만 데이터베이스에는 <span class="qt">"삼성전자(주)"</span>로 적혀 있다. 이 간극을 메우는 게 첫 관문이다.</p>
+  <p>여기서 Neo4j가 기본으로 제공하는 전문 검색(FULLTEXT INDEX)을 썼다. 회사명·인물명·제품명을 미리 색인해두면, 사용자가 정확한 표기를 모르고 일부만 쳐도 가장 비슷한 노드를 찾아준다. 한국어는 두 글자씩 잘라 색인하는 방식(<code>cjk</code>)을 골랐다. <span class="qt">"삼성전자"</span>라고만 쳐도 <span class="qt">"삼성전자(주)"</span>가 맨 위로 올라온다.</p>
+
+<pre><code><span class="c-com">-- 한국어 회사·인물·제품·기술을 cjk 분석기로 색인</span>
+<span class="c-key">CREATE FULLTEXT INDEX</span> entity_fulltext <span class="c-key">IF NOT EXISTS</span>
+<span class="c-key">FOR</span> (n:Organization|Person|Product|Technology)
+<span class="c-key">ON EACH</span> [n.name, n.er_name]
+<span class="c-key">OPTIONS</span> {indexConfig:{ `fulltext.analyzer`: <span class="c-str">'cjk'</span> }};
+
+<span class="c-com">-- 질의 시: 부분 표기로도 가장 가까운 노드를 회수</span>
+<span class="c-key">CALL</span> db.index.fulltext.<span class="c-fn">queryNodes</span>(<span class="c-str">'entity_fulltext'</span>, <span class="c-str">'삼성전자'</span>)
+  <span class="c-key">YIELD</span> node, score <span class="c-key">RETURN</span> node.name, score <span class="c-key">ORDER BY</span> score <span class="c-key">DESC</span>;
+<span class="c-com">-- → 삼성전자(주)  score 13.4   (맨 위)</span></code></pre>
+
+  <div class="callout"><b>벡터는 왜 안 썼나.</b> 별도의 임베딩이나 벡터 검색은 여기 쓰지 않았다. 의미 기반 검색은 이미 시스템의 다른 갈래(Qdrant)가 맡고 있어서, 그래프 쪽까지 벡터를 또 얹으면 데이터를 두 군데서 맞춰야 하는 부담만 생긴다.</div>
+  </section>
+
+  <section>
+  <h2><span class="step">STEP 2</span>관계망 펼치기</h2>
+  <p>회사를 찾았으면 그 회사를 기점으로 관계를 따라간다. 임원이 누구인지, 주주는 누구인지, 어떤 자회사를 거느리는지, 누구에게 납품하는지.</p>
+  <p>여기서 한 가지 고민이 있었다. 관계마다 따라가야 할 깊이가 다르다는 점이다. 임원 관계는 한 칸이면 충분하다. 사람과 회사가 바로 이어지니까. 하지만 지배구조는 다르다. 자회사의 자회사의 자회사까지 거슬러 올라가야 그림이 완성된다. 공급망도 마찬가지로 1차, 2차, 3차 협력사까지 이어진다.</p>
+  <p>그래서 관계 종류마다 펼치는 깊이를 다르게 줬다. 임원은 한 칸, 지배구조는 다섯 칸, 공급망은 세 칸. 한 가지 깊이로 모든 관계를 훑으면, 얕으면 놓치고 깊으면 엉뚱한 노드까지 끌려와 답이 지저분해진다.</p>
+
+  <div class="fig">
+    <div class="depth">
+      <div class="drow"><span class="rel">EXECUTIVE_OF</span><div class="dbar"><span class="dcell on"></span><span class="dcell"></span><span class="dcell"></span><span class="dcell"></span><span class="dcell"></span></div><span class="hop">1-hop</span></div>
+      <div class="drow"><span class="rel">IS_MAJOR_SHAREHOLDER</span><div class="dbar"><span class="dcell on"></span><span class="dcell on"></span><span class="dcell"></span><span class="dcell"></span><span class="dcell"></span></div><span class="hop">2-hop</span></div>
+      <div class="drow"><span class="rel">SUPPLIES_TO</span><div class="dbar"><span class="dcell sup"></span><span class="dcell sup"></span><span class="dcell sup"></span><span class="dcell"></span><span class="dcell"></span></div><span class="hop">3-hop</span></div>
+      <div class="drow"><span class="rel">IS_SUBSIDIARY_OF</span><div class="dbar"><span class="dcell on"></span><span class="dcell on"></span><span class="dcell on"></span><span class="dcell on"></span><span class="dcell on"></span></div><span class="hop">5-hop</span></div>
+    </div>
+    <div class="cap">FIG 2 — 관계 종류마다 펼치는 깊이가 다르다 (초록 = 공급망, 방향 구분)</div>
+  </div>
+
+  <p>공급망에서는 방향도 살렸다. A가 B에게 납품하는 것과 B가 A에게 납품받는 것은 분석에서 의미가 정반대다. 그래서 <span class="qt">"이 회사가 공급하는 곳"</span>과 <span class="qt">"이 회사에 공급하는 곳"</span>을 나눠서 가져온다.</p>
+
+<pre><code><span class="c-com">// 공급망 — 방향을 나눠 buyer / supplier 따로 회수</span>
+<span class="c-key">MATCH</span> (o:Organization {corp_code:$code})
+<span class="c-key">CALL</span> (o) {
+  <span class="c-key">OPTIONAL MATCH</span> p=(o)-[:SUPPLIES_TO*<span class="c-num">1..3</span>]->(buyer:Organization)
+  <span class="c-key">RETURN</span> <span class="c-fn">collect</span>({name:buyer.name, tier:<span class="c-fn">length</span>(p), role:<span class="c-str">'buyer'</span>}) <span class="c-key">AS</span> buyers }
+<span class="c-key">CALL</span> (o) {
+  <span class="c-key">OPTIONAL MATCH</span> p=(supplier:Organization)-[:SUPPLIES_TO*<span class="c-num">1..3</span>]->(o)
+  <span class="c-key">RETURN</span> <span class="c-fn">collect</span>({name:supplier.name, tier:<span class="c-fn">length</span>(p), role:<span class="c-str">'supplier'</span>}) <span class="c-key">AS</span> suppliers }
+<span class="c-key">RETURN</span> buyers, suppliers;</code></pre>
+  <div class="callout"><b>왜 <code>CALL</code> 서브쿼리인가.</b> 임원·주주·투자·공급을 한 <code>MATCH</code>에 이어 붙이면 결과가 카르테시안 곱으로 폭발한다. 각 관계를 서브쿼리로 격리해 곱셈을 끊었다.</div>
+  </section>
+
+  <section>
+  <h2><span class="step">STEP 3</span>빈손으로 돌아오지 않기</h2>
+  <p>정해진 관계 패턴만 따라가면, 미처 생각 못 한 질문에서는 빈손이 될 수 있다. 이때를 대비해 안전망을 뒀다. 정해진 패턴이 아무것도 못 건지면, 찾은 회사 주변의 그래프를 통째로 한 번 떠 온다(<code>APOC subgraphAll</code>). 관계 종류를 따지지 않고 일단 근처를 다 끌어오는 방식이라, 예상 밖의 질문에도 무언가는 건네줄 수 있다.</p>
+  <div class="callout key"><b>안전망의 조건.</b> fallback은 <b>회사는 찾았는데 정해진 패턴이 0건일 때만</b> 작동한다. 애초에 회사 자체를 못 찾았으면 시작 노드가 없으니 fallback도 돌지 않는다.</div>
+  </section>
+
+  <section>
+  <h2>단어집 — 왜 필요했나</h2>
+  <p>검색이 첫 관문에서 막히는 경우가 있었다. <span class="qt">"SK하이닉스"</span>라고 치면, 데이터베이스의 정식 이름은 <span class="qt">"에스케이하이닉스(주)"</span>라서 글자가 안 맞아 엉뚱한 노드가 잡혔다. 회사를 못 찾으면 그 뒤 관계망도 통째로 빈다.</p>
+
+  <div class="fig">
+    <table>
+      <tr><th>질의</th><th>매칭된 노드</th><th>회수된 사실</th></tr>
+      <tr><td><span class="qt">SK하이닉스</span> 공급망</td><td><span class="no">엉뚱한 노드</span></td><td class="num">5</td></tr>
+      <tr><td><span class="qt">에스케이하이닉스</span> 공급망</td><td><span class="ok">에스케이하이닉스(주)</span></td><td class="num">720</td></tr>
+    </table>
+    <div class="cap">FIG 3 — 같은 회사인데 표기 하나로 5건 vs 720건. 첫 관문이 전부를 좌우한다</div>
+  </div>
+
+  <p>이걸 메우는 게 단어집이다. 단어집은 검색을 직접 하지 않는다. 앞단의 LLM이 사용자의 구어를 데이터베이스 용어로 다듬을 때 참고하는 사전이다. <span class="qt">"돈 얼마 벌었어?"</span>를 <span class="qt">"매출액"</span>으로, <span class="qt">"사장"</span>을 <span class="qt">"대표이사"</span>로, <span class="qt">"연간 실적"</span>을 <span class="qt">"사업보고서"</span>로 바꿔주는 길잡이다.</p>
+  </section>
+
+  <section>
+  <h2>단어집 — 어떻게 만들었나</h2>
+  <p>단어집에 담을 건 네 종류다. 회사·인물·제품 같은 이름, 매출·영업이익 같은 재무 용어, 자회사·주주 같은 관계어, 그리고 연결·별도 같은 코드값.</p>
+
+  <div class="cards">
+    <div class="card auto"><div class="t">① 엔티티 이름</div><div class="s">organization · person · product</div><div class="ex"><b>삼성전자(주)</b>, 이재용, HBM …</div><div class="src">▲ 그래프에서 자동 추출 · degree 내림차순</div></div>
+    <div class="card manual"><div class="t">② 재무 계정</div><div class="s">fin_accounts</div><div class="ex">매출 → <b>ifrs-full_Revenue</b></div><div class="src">▲ 손으로 매핑 (DB에 한글 0개)</div></div>
+    <div class="card manual"><div class="t">③ 관계 술어</div><div class="s">relation_predicates</div><div class="ex">자회사 → <b>IS_SUBSIDIARY_OF</b></div><div class="src">▲ 손으로 매핑 · 고정 어휘</div></div>
+    <div class="card manual"><div class="t">④ 코드값</div><div class="s">reprt_codes · fs_div</div><div class="ex">연결 → <b>CFS</b>, 사업보고서 → <b>11011</b></div><div class="src">▲ 손으로 매핑 · 고정 어휘</div></div>
+  </div>
+
+  <p>이름은 그래프에서 자동으로 뽑았다. 많이 등장하는 순서로 정렬했는데, LLM이 긴 목록의 중간보다 앞쪽을 더 잘 본다는 점을 노린 배치다.</p>
+  <p>나머지 세 종류는 데이터베이스에 한글이 아예 없었다. 재무 계정은 전부 영문 IFRS 코드뿐이라, <span class="qt">"매출"</span>이라는 단어를 이을 한글이 한 글자도 없었다. 그래서 자주 쓰는 계정 <strong>서른 개</strong>의 한글 매핑을 직접 만들었다. 관계어와 코드값도 같은 방식으로 손으로 채웠다. 이쪽은 거의 변하지 않는 고정된 어휘라, 한 번 만들어두면 끝이다.</p>
+  <p>처음에는 이름은 데이터 파일에, 고정 어휘는 코드에 나눠 적었다. 그런데 단어집이 두 군데로 쪼개지는 게 어색했다. 그래서 전부 하나의 JSON 파일로 합치고, 코드는 그 파일을 읽기만 하게 정리했다. 팀원은 이제 파일 하나만 받으면 된다.</p>
+
+<pre><code><span class="c-com">// vocab.json — 정적(사람 관리) + 동적(DB 추출)을 한 파일에</span>
+{
+  <span class="c-str">"schema_summary"</span>: <span class="c-str">"..."</span>,           <span class="c-com">// 스키마 설명</span>
+  <span class="c-str">"fin_accounts"</span>: { <span class="c-str">"ifrs-full_Revenue"</span>: [<span class="c-str">"매출액"</span>,<span class="c-str">"매출"</span>,<span class="c-str">"수익"</span>] },
+  <span class="c-str">"relation_predicates"</span>: { <span class="c-str">"IS_SUBSIDIARY_OF"</span>: [<span class="c-str">"자회사"</span>,<span class="c-str">"종속회사"</span>] },
+  <span class="c-str">"reprt_codes"</span>: { <span class="c-str">"11011"</span>: [<span class="c-str">"사업보고서"</span>,<span class="c-str">"연간"</span>] },
+  <span class="c-str">"organization"</span>: [ {<span class="c-str">"id"</span>:<span class="c-str">"00126380"</span>, <span class="c-str">"name"</span>:<span class="c-str">"삼성전자(주)"</span>} ]  <span class="c-com">// 자동</span>
+}</code></pre>
+  </section>
+
+  <section>
+  <h2>출력 — 기존 코드를 건드리지 않기</h2>
+  <p>검색 결과는 하나의 목록으로 낸다. 회사든 인물이든 관계든, 전부 같은 형식의 <span class="qt">"사실"</span> 한 줄로 표현한다. 다만 기존 시스템이 옛 형식을 읽고 있어서, 새 형식과 옛 형식을 동시에 내보낸다. 덕분에 다른 사람이 짠 코드를 고치지 않고도 새 검색이 그대로 맞물린다.</p>
+
+  <div class="fig bleed">
+    <div class="shim">
+      <div class="schip"><span class="lab">검색 본체</span>graph_hits[]</div>
+      <div class="parrow">→</div>
+      <div class="schip new"><span class="lab">신규 키</span>graph_hits · seeds · meta</div>
+      <div class="schip old"><span class="lab">셰임(레거시)</span>graph_facts · paths · provenance</div>
+    </div>
+    <div class="cap">FIG 4 — 단일 graph_hits를 만든 뒤, 레거시 3키를 함께 emit해 기존 노드와 무수정 호환</div>
+  </div>
+
+<pre><code><span class="c-com"># 노드·관계·재무를 모두 같은 형태의 hit 하나로</span>
+{ <span class="c-str">"id"</span>: <span class="c-str">"rel:IS_MAJOR_SHAREHOLDER_OF:00126256:00126380"</span>,
+  <span class="c-str">"label"</span>: <span class="c-str">"relationship"</span>,
+  <span class="c-str">"name"</span>: <span class="c-str">"삼성생명 → 삼성전자(주)"</span>,
+  <span class="c-str">"attrs"</span>: { <span class="c-str">"rel_type"</span>:<span class="c-str">"IS_MAJOR_SHAREHOLDER_OF"</span>, <span class="c-str">"qota_rt"</span>:<span class="c-num">8.51</span> },
+  <span class="c-str">"source"</span>: <span class="c-str">"20260310002820"</span> }</code></pre>
+  </section>
+
+  <section>
+  <h2>지금 어디까지 왔나</h2>
+  <p>정식 이름으로 물으면 검색은 잘 된다. 삼성전자를 물으면 <strong>천삼백여 건</strong>, 에스케이하이닉스를 물으면 <strong>칠백여 건</strong>의 사실이 딸려 온다. 매출을 물어도 회사만 잡히면 재무까지 통째로 따라온다.</p>
+
+  <div class="fig">
+    <table>
+      <tr><th>질의</th><th>매칭</th><th>hits</th><th>판정</th></tr>
+      <tr><td>삼성전자 대표이사</td><td>삼성전자(주)</td><td class="num">1,335</td><td><span class="ok">●</span></td></tr>
+      <tr><td>삼성전자 작년 매출</td><td>삼성전자(주)</td><td class="num">1,315</td><td><span class="ok">●</span></td></tr>
+      <tr><td>한미반도체 종속회사</td><td>한미반도체(주)</td><td class="num">612</td><td><span class="ok">●</span></td></tr>
+      <tr><td>HBM 제조사</td><td>HBM (역방향)</td><td class="num">14</td><td><span class="ok">●</span></td></tr>
+      <tr><td>에스케이하이닉스 공급망</td><td>에스케이하이닉스(주)</td><td class="num">720</td><td><span class="ok">●</span></td></tr>
+      <tr><td>SK하이닉스 공급망</td><td><span class="no">영문약자 실패</span></td><td class="num">5</td><td><span class="no">●</span></td></tr>
+    </table>
+    <div class="cap">FIG 5 — 정식·한글명은 풍부, 영문약자만 약하다</div>
+  </div>
+
+  <p>남은 약점은 하나다. 영문 약자. <span class="qt">"SK하이닉스"</span> 같은 표기는 아직 약하다. 다음 단계는 금융감독원 공시 데이터에서 종목명과 영문명을 가져와 별칭으로 채우는 것이다. 그러면 사람들이 부르는 거의 모든 이름으로 회사를 찾을 수 있게 된다.</p>
+
+  <div style="text-align:center;margin-top:30px">
+    <span class="tag">FULLTEXT · cjk</span><span class="tag">Cypher 다중-hop</span><span class="tag">APOC fallback</span>
+    <span class="tag">단어집 4종</span><span class="tag">graph_hits + 셰임</span><span class="tag">next: DART 별칭</span>
+  </div>
+  </section>
+
+</article>
+</div>
+
+<footer>
+  POLARIS · GraphRAG Engineering Note · 2026
+</footer>
+
+</body>
+</html>

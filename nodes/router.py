@@ -15,18 +15,35 @@ _GLOSSARY_PATH = Path(
     or Path(__file__).resolve().parent.parent / "config" / "glossary.json"
 )
 
+# 동적 엔티티 리스트(organization/person/product/technology)는 수천 개라 통째 주입하면
+# 재구성 프롬프트가 75만 자가 되어 LLM 호출이 타임아웃한다(provider 180s 초과).
+# 정적 용어 사전(fin_accounts·관계술어·보고서코드 등 — 프롬프트 규칙이 실제로 쓰는 것)은
+# 유지하고, 엔티티 리스트는 degree 내림차순(이미 정렬됨) 상위 N개만 남긴다.
+# 주요 기업·인물 위주라 대명사 치환·별칭 매핑에 충분하다.
+_GLOSSARY_ENTITY_CAP = int(os.environ.get("POLARIS_GLOSSARY_ENTITY_CAP", "150"))
+_GLOSSARY_ENTITY_KEYS = ("organization", "person", "product", "technology")
+
 
 @lru_cache(maxsize=1)
 def _load_glossary_text() -> str:
-    """glossary.json 원문을 그대로 반환(프로세스 1회 캐시).
+    """glossary.json 을 읽되 동적 엔티티 리스트는 상위 N개로 잘라 반환(프로세스 1회 캐시).
 
     파일이 없거나 읽기 실패하면 빈 문자열 — 프롬프트에서 단어집만 빠지고
-    파이프라인은 정상 동작한다. JSON 갱신 시 반영하려면 프로세스 재시작.
+    파이프라인은 정상 동작한다. JSON·CAP 갱신 시 반영하려면 프로세스 재시작.
     """
     try:
-        return _GLOSSARY_PATH.read_text(encoding="utf-8")
+        raw = _GLOSSARY_PATH.read_text(encoding="utf-8")
     except Exception:
         return ""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw  # 파싱 실패 시 원문(차선) — 최소한 정적 용어는 들어간다
+    for key in _GLOSSARY_ENTITY_KEYS:
+        v = data.get(key)
+        if isinstance(v, list) and len(v) > _GLOSSARY_ENTITY_CAP:
+            data[key] = v[:_GLOSSARY_ENTITY_CAP]
+    return json.dumps(data, ensure_ascii=False, indent=2)
 
 
 # 2-2. JSON 자동 파서 생성
