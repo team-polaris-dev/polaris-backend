@@ -58,3 +58,14 @@ FIN_KEY_ACCOUNTS = [
     "ifrs-full_Equity",                  # 자본총계
     "ifrs-full_CashAndCashEquivalents",  # 현금및현금성자산
 ]
+
+# ── 패널 그래프 큐레이션 (core/serialize.py build_graph) ────────────
+# 답이 언급한 회사들의 부분그래프만 남겨 헤어볼을 막는다. 엣지가 적으면(빈 패널 방지)
+# 큐레이션을 건너뛴다.
+PANEL_CURATION_MIN_EDGES = int(os.environ.get("GRAPHRAG_PANEL_MIN_EDGES", "6"))   # 이 수 초과면 큐레이션 시도
+PANEL_CURATION_KEEP_MIN = int(os.environ.get("GRAPHRAG_PANEL_KEEP_MIN", "3"))     # 큐레이션 후 최소 엣지(미만이면 큐레이션 포기)
+PANEL_MENTION_MIN_LEN = int(os.environ.get("GRAPHRAG_PANEL_MENTION_MIN_LEN", "2"))  # 답변 언급 매칭 최소 정규화 회사명 길이
+
+# ── traverse hit 기본 점수 (graphrag/traverse.py) ──────────────────
+REL_HIT_SCORE = float(os.environ.get("GRAPHRAG_REL_HIT_SCORE", "0.8"))   # 관계 hit 기본 score
+NODE_HIT_SCORE = float(os.environ.get("GRAPHRAG_NODE_HIT_SCORE", "1.0"))  # 노드 hit 기본 score

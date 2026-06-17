@@ -10,8 +10,13 @@ import os
 import re
 from pathlib import Path
 
+import sys
 import pymysql
 from neo4j import GraphDatabase
+
+# repo 루트를 path 에 넣어 적재 컨텍스트(cd pipeline_scripts)에서도 config 임포트 보장
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from config.entities import normalize_corp_name  # noqa: E402  (ER 정규화 SSOT)
 
 # ── 접속 정보 (실제 가동 컨테이너) ──────────────────────────
 MARIADB = dict(
@@ -119,16 +124,4 @@ def parse_qota_rt(raw) -> float | None:
     return parse_number(raw)
 
 
-_SUFFIX = re.compile(r"(주식회사|㈜|\(주\)|주\)|\(유\)|유한회사|Co\.,?\s*Ltd\.?|Inc\.?|Corp\.?|Ltd\.?|LLC|GmbH)", re.IGNORECASE)
-
-
-def normalize_corp_name(name: str) -> str:
-    """ER 키용 정규화: 법인 접미사·공백·괄호주석 제거 후 소문자."""
-    if not name:
-        return ""
-    s = name.strip()
-    # 괄호 약어 (SEA) 등 제거
-    s = re.sub(r"\([^)]*\)", "", s)
-    s = _SUFFIX.sub("", s)
-    s = re.sub(r"\s+", "", s)
-    return s.strip().lower()
+# normalize_corp_name 은 config/entities.py 로 이관(상단 import). db 에서 re-export 유지.

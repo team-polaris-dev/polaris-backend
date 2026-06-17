@@ -17,6 +17,8 @@ from config.graphrag import (
     INDUCED_MAX_NODES,
     MAX_EDGES,
     MAX_INDUCED_EDGES,
+    NODE_HIT_SCORE,
+    REL_HIT_SCORE,
     SEED_SPOKE_CAP,
 )
 from tool.graph_client import neo4j_driver
@@ -68,7 +70,7 @@ def _org_match(var: str, key_type: str, key_value_param: str = "key_value") -> s
 
 def _rel_hit(rel_type: str, from_id: str, from_name: str,
              to_id: str, to_name: str, attrs: dict[str, Any],
-             source: str | None = None, score: float = 0.8) -> GraphHit:
+             source: str | None = None, score: float = REL_HIT_SCORE) -> GraphHit:
     full_attrs: dict[str, Any] = {
         "rel_type": rel_type,
         "from_id": from_id,
@@ -91,7 +93,7 @@ def _rel_hit(rel_type: str, from_id: str, from_name: str,
 
 
 def _node_hit(label: str, id_: str, name: str, attrs: dict[str, Any] | None = None,
-              source: str | None = None, score: float = 1.0) -> GraphHit:
+              source: str | None = None, score: float = NODE_HIT_SCORE) -> GraphHit:
     hit: GraphHit = {
         "id": id_,
         "label": label,  # type: ignore[typeddict-item]

@@ -14,6 +14,11 @@ try:
 except ImportError:  # Python 3.10
     from typing_extensions import NotRequired  # type: ignore[no-redef]
 
+from config.relations import (
+    REL_TO_LEGACY_TYPE as _REL_TO_LEGACY_TYPE,
+    NETWORK_REL_TYPES as _NETWORK_REL_TYPES,
+)
+
 
 HitLabel = Literal[
     "organization", "person", "product", "technology",
@@ -65,28 +70,8 @@ _HIT_TO_LEGACY_TYPE = {
     # relationship은 attrs.rel_type 따라 분기 (아래 _rel_legacy_type)
 }
 
-_REL_TO_LEGACY_TYPE = {
-    "EXECUTIVE_OF": "executive",
-    "IS_MAJOR_SHAREHOLDER_OF": "shareholder",
-    "IS_SUBSIDIARY_OF": "subsidiary",
-    "INVESTS_IN": "investment",
-    "SUPPLIES_TO": "supply",
-    "PRODUCES": "produces",
-    "USES_TECH": "uses_tech",
-    "RELATED_PARTY": "related_party",
-    "INTERLOCKING_DIRECTORATE": "interlocking_directorate",
-}
-
-# 그래프 망(패널)에 그릴 엣지 = 회사↔회사 사업관계만 (Bloomberg SPLC / MS GraphRAG 방식).
-# 제품·기술·임원·재무는 노드가 아니라 회사의 '속성' → facts/텍스트에만 남기고 망에선 제외.
-_NETWORK_REL_TYPES = {
-    "IS_MAJOR_SHAREHOLDER_OF",
-    "IS_SUBSIDIARY_OF",
-    "SUPPLIES_TO",
-    "INVESTS_IN",
-    "RELATED_PARTY",
-    "INTERLOCKING_DIRECTORATE",
-}
+# _REL_TO_LEGACY_TYPE, _NETWORK_REL_TYPES 는 config.relations 에서 import(상단).
+# 망(패널) 엣지 = 회사↔회사 사업관계만(is_network). 임원·제품·기술은 속성 → 망 제외.
 
 
 def _fact_from_hit(hit: GraphHit) -> dict:

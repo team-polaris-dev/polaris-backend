@@ -1,7 +1,7 @@
 {
-  "version": "2026-06-16T07:03:57Z",
+  "version": "2026-06-17T07:33:52Z",
   "stats": {
-    "organization": 3621,
+    "organization": 3616,
     "person": 1587,
     "product": 1684,
     "technology": 1098,
@@ -480,11 +480,6 @@
       "id": "org:sk이노베이션",
       "name": "SK이노베이션㈜",
       "canonical": "sk이노베이션"
-    },
-    {
-      "id": "org:특수관계자",
-      "name": "특수관계자",
-      "canonical": "특수관계자"
     },
     {
       "id": "org:sk에코플랜트",
@@ -1257,11 +1252,6 @@
       "canonical": "dongjinasiaholdingspte."
     },
     {
-      "id": "org:eotechnicstianjin",
-      "name": "EO Technics Tianjin",
-      "canonical": "eotechnicstianjin"
-    },
-    {
       "id": "org:fskl&s",
       "name": "FSK L&S (Jiangsu) Co., Ltd.",
       "canonical": "fskl&s"
@@ -1927,16 +1917,6 @@
       "canonical": "윈텍"
     },
     {
-      "id": "org:이엠테크",
-      "name": "(주)이엠테크",
-      "canonical": "이엠테크"
-    },
-    {
-      "id": "org:이오엘",
-      "name": "(주)이오엘",
-      "canonical": "이오엘"
-    },
-    {
       "id": "org:제닉",
       "name": "(주)제닉",
       "canonical": "제닉"
@@ -2007,24 +1987,14 @@
       "canonical": "ecovancevietnamcompanylimited"
     },
     {
-      "id": "org:eotechnicsshanghai",
-      "name": "EO Technics Shanghai",
-      "canonical": "eotechnicsshanghai"
-    },
-    {
       "id": "org:eotechnicssuzhou",
       "name": "EO Technics Suzhou",
       "canonical": "eotechnicssuzhou"
     },
     {
-      "id": "org:eotechnicstaiwan",
-      "name": "EO Technics Taiwan",
-      "canonical": "eotechnicstaiwan"
-    },
-    {
-      "id": "org:eotechnicsvietnam",
-      "name": "EO Technics Vietnam",
-      "canonical": "eotechnicsvietnam"
+      "id": "org:eotechnicstianjin",
+      "name": "EO Technics Tianjin",
+      "canonical": "eotechnicstianjin"
     },
     {
       "id": "org:essencorelimited",
@@ -2100,11 +2070,6 @@
       "id": "org:infineon",
       "name": "Infineon",
       "canonical": "infineon"
-    },
-    {
-      "id": "org:innovavent",
-      "name": "Innovavent",
-      "canonical": "innovavent"
     },
     {
       "id": "org:joyent,",
@@ -3152,11 +3117,6 @@
       "canonical": "비에이치에스티"
     },
     {
-      "id": "org:솔레오등",
-      "name": "(주)솔레오 등",
-      "canonical": "솔레오등"
-    },
-    {
       "id": "org:솔머티리얼즈",
       "name": "(주)솔머티리얼즈",
       "canonical": "솔머티리얼즈"
@@ -3200,6 +3160,16 @@
       "id": "org:이브이에스텍",
       "name": "(주)이브이에스텍",
       "canonical": "이브이에스텍"
+    },
+    {
+      "id": "org:이엠테크",
+      "name": "(주)이엠테크",
+      "canonical": "이엠테크"
+    },
+    {
+      "id": "org:이오엘",
+      "name": "(주)이오엘",
+      "canonical": "이오엘"
     },
     {
       "id": "org:진켐",
@@ -3682,19 +3652,19 @@
       "canonical": "eotechnicsinternational"
     },
     {
-      "id": "org:eo-technicsindiapvt.,",
-      "name": "EO-Technics India Pvt., Ltd.",
-      "canonical": "eo-technicsindiapvt.,"
+      "id": "org:eotechnicsshanghai",
+      "name": "EO Technics Shanghai",
+      "canonical": "eotechnicsshanghai"
     },
     {
-      "id": "org:eo-technicsinternational",
-      "name": "EO-Technics International Inc.",
-      "canonical": "eo-technicsinternational"
+      "id": "org:eotechnicstaiwan",
+      "name": "EO Technics Taiwan",
+      "canonical": "eotechnicstaiwan"
     },
     {
-      "id": "org:eo-technicssingaporepte.",
-      "name": "EO-Technics Singapore Pte.",
-      "canonical": "eo-technicssingaporepte."
+      "id": "org:eotechnicsvietnam",
+      "name": "EO Technics Vietnam",
+      "canonical": "eotechnicsvietnam"
     },
     {
       "id": "org:einsteincaymanlimited",
@@ -3952,6 +3922,11 @@
       "canonical": "ignistherapeutics"
     },
     {
+      "id": "org:innovavent",
+      "name": "Innovavent",
+      "canonical": "innovavent"
+    },
+    {
       "id": "org:inteloration",
       "name": "Intel Corporation",
       "canonical": "inteloration"
@@ -4095,11 +4070,6 @@
       "id": "org:laserinternational",
       "name": "Laser International",
       "canonical": "laserinternational"
-    },
-    {
-      "id": "org:laserinternational.",
-      "name": "Laser International.Co., Ltd.",
-      "canonical": "laserinternational."
     },
     {
       "id": "org:luxshare",
@@ -6932,6 +6902,11 @@
       "canonical": "세미파이브"
     },
     {
+      "id": "org:솔레오등",
+      "name": "(주)솔레오 등",
+      "canonical": "솔레오등"
+    },
+    {
       "id": "org:스마트레이더시스템",
       "name": "(주)스마트레이더시스템",
       "canonical": "스마트레이더시스템"
@@ -8037,9 +8012,24 @@
       "canonical": "eotechnicssingaporepte."
     },
     {
+      "id": "org:eo-technicsindiapvt.,",
+      "name": "EO-Technics India Pvt., Ltd.",
+      "canonical": "eo-technicsindiapvt.,"
+    },
+    {
+      "id": "org:eo-technicsinternational",
+      "name": "EO-Technics International Inc.",
+      "canonical": "eo-technicsinternational"
+    },
+    {
       "id": "org:eo-technicsshanghai",
       "name": "EO-Technics Shanghai",
       "canonical": "eo-technicsshanghai"
+    },
+    {
+      "id": "org:eo-technicssingaporepte.",
+      "name": "EO-Technics Singapore Pte.",
+      "canonical": "eo-technicssingaporepte."
     },
     {
       "id": "org:eo-technicssuzhou",
@@ -10067,6 +10057,11 @@
       "canonical": "largan"
     },
     {
+      "id": "org:laserinternational.",
+      "name": "Laser International.Co., Ltd.",
+      "canonical": "laserinternational."
+    },
+    {
       "id": "org:lemanmicrodevicessa",
       "name": "Leman Micro Devices SA",
       "canonical": "lemanmicrodevicessa"
@@ -11875,16 +11870,6 @@
       "id": "org:sk텔레시스",
       "name": "SK텔레시스(주)(*2)",
       "canonical": "sk텔레시스"
-    },
-    {
-      "id": "org:sk하이닉스사",
-      "name": "SK하이닉스 사",
-      "canonical": "sk하이닉스사"
-    },
-    {
-      "id": "org:sk하이닉스시스템아이씨",
-      "name": "SK하이닉스시스템아이씨",
-      "canonical": "sk하이닉스시스템아이씨"
     },
     {
       "id": "org:sk하이엔지",
@@ -14245,11 +14230,6 @@
       "id": "org:곽동신",
       "name": "곽동신",
       "canonical": "곽동신"
-    },
-    {
-      "id": "org:관계기업",
-      "name": "관계기업",
-      "canonical": "관계기업"
     },
     {
       "id": "org:광주우정학사",
@@ -17415,11 +17395,6 @@
       "id": "org:존림",
       "name": "존림 (Rim John Chongbo)",
       "canonical": "존림"
-    },
-    {
-      "id": "org:종속기업",
-      "name": "종속기업",
-      "canonical": "종속기업"
     },
     {
       "id": "org:종속기업명sk텔레시스",

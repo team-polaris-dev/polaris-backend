@@ -172,5 +172,8 @@ def graph_search_node(state: AgentState):
             graph_provenance: List[str]   # rcept_no
     Neo4j/Anthropic 키 등 외부 의존이 끊기면 graphrag 가 빈 결과로 degrade.
     """
+    print("*"*50)
+    print("김구현의 귀여운 데이터가 주입됩니다.")
+    print("*"*50)
     return _graphrag_search_node(state)
 

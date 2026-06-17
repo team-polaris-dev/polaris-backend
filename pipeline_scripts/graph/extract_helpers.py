@@ -22,11 +22,11 @@ from db import (
     neo4j_driver,
     normalize_corp_name,
 )
+# db import 가 repo 루트를 sys.path 에 넣으므로 이후 config 임포트 가능 (SSOT).
+from config.relations import INGEST_EDGE_TYPES as EDGE_TYPES
+from config.entities import GENERIC_ORG_BLOCKLIST
 
 LEDGER_PATH = Path(__file__).resolve().parent / "extract_ledger.jsonl"
-
-# 허용 엣지 타입 (03_neo4j.md §2-2)
-EDGE_TYPES = {"PRODUCES", "USES_TECH", "SUPPLIES_TO", "RELATED_PARTY", "hasObject"}
 
 # corp_code ← 정규화 이름 역인덱스 (Organization 매칭용)
 # 3사 + extra28(corps.tsv) + Neo4j 의 모든 corp_code 노드 이름(㈜ 변형 포함)을 모아
@@ -99,6 +99,8 @@ def resolve_org(name: str) -> dict:
     er = normalize_corp_name(name)
     if not er:
         return None
+    if er in GENERIC_ORG_BLOCKLIST:
+        return None  # 추상·일반어 placeholder — 노드화 차단 (SSOT: config.entities)
     cc = _CORP_BY_ERNAME.get(er)
     if cc:
         return {"mode": "corp", "corp_code": cc, "er_name": er, "id": cc, "name": name}
