@@ -76,7 +76,10 @@ workflow.add_node("ctx", _timed("ctx", context_reconstruct_node))
 workflow.add_node("rdb", _timed("rdb", rdb_search_node))
 workflow.add_node("vec", _timed("vec", vector_search_node))
 workflow.add_node("graph", _timed("graph", graph_search_node))
-workflow.add_node("result_check", _timed("result_check", result_check_node))
+# defer=True: vec(1홉)·rdb(2홉)가 서로 다른 super-step 에 도착해 result_check 가
+# 두 번 실행되던 문제를 막는다. 두 갈래가 모두 끝난 뒤 1회만 실행 → 중복 로그 제거 +
+# rdb 미반영 상태의 '미성숙 불충분' 판정 방지. (global 경로는 graph 단독→그대로 1회)
+workflow.add_node("result_check", _timed("result_check", result_check_node), defer=True)
 workflow.add_node("gen", _timed("gen", generate_report_node))
 
 workflow.add_node("save", save_memory_node)
