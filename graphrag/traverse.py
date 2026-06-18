@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from config.graphrag import (
+    CROSS_EDGE_MIN_RELEVANCE,
     FIN_KEY_ACCOUNTS,
     INDUCED_EDGES,
     INDUCED_MAX_NODES,
@@ -575,13 +576,22 @@ def _cap_relations(rel_hits: list[GraphHit], max_edges: int) -> list[GraphHit]:
 
 
 def _cap_relations_web(
-    rel_hits: list[GraphHit], max_edges: int, seed_ids: set[str], seed_spoke_cap: int
+    rel_hits: list[GraphHit],
+    max_edges: int,
+    seed_ids: set[str],
+    seed_spoke_cap: int,
+    cross_min_relevance: float = 0.0,
 ) -> list[GraphHit]:
     """별→웹 cap. 시드 직접 엣지(스포크)를 seed_spoke_cap 으로 제한하고 남는 예산을
     이웃끼리 관계(교차엣지=관계망)에 우선 배정한다. 각 파티션은 종류별 라운드로빈.
 
     시드 ego는 본질적으로 별이라(시드 차수 수백), 스포크를 그대로 두면 관계망(교차엣지)이
     cap 에 밀려 안 보인다. 스포크를 줄여 '속성 나열'을 '관계망'으로 전환.
+
+    cross_min_relevance>0 이면 교차엣지(비시드↔비시드) 중 PPR 관련성(score)이 바닥값
+    미만인 것을 버린다. cap 예산이 엣지 수보다 커서 cap 이 안 무는 경우에도, 시드가 아닌
+    허브 하나를 공유한다는 이유만으로 끌려온 저관련 스포크를 떨군다. 시드 직결 엣지는
+    직접 사실이라 floor 면제.
     """
     seed_inc: list[GraphHit] = []
     cross: list[GraphHit] = []
@@ -591,6 +601,8 @@ def _cap_relations_web(
             seed_inc.append(h)
         else:
             cross.append(h)
+    if cross_min_relevance > 0.0:
+        cross = [h for h in cross if float(h.get("score") or 0.0) >= cross_min_relevance]
     seed_kept = _cap_relations(seed_inc, min(seed_spoke_cap, max_edges))
     cross_kept = _cap_relations(cross, max_edges - len(seed_kept))
     return seed_kept + cross_kept
@@ -934,12 +946,16 @@ def expand_ppr(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
         node_hits.append(h)
 
     def _edge_relevance(attrs: dict[str, Any]) -> float:
-        """엣지 score = 상대(비-시드) 노드의 PPR 관련성. 시드(1.0)는 제외해 스포크끼리도
-        상대 노드 관련성으로 변별 → cap 이 관련성 높은 관계를 남긴다."""
+        """엣지 score = 양 끝(비-시드) 노드 PPR 관련성의 *최솟값*(병목/약한고리).
+        엣지는 가장 먼(시드에서 약한) 끝만큼만 관련 있다 — 한쪽 끝이 허브(예: 비시드
+        대기업)라 점수가 높아도, 반대쪽 끝이 시드와 무관하면 그 엣지는 무관하다.
+        max 를 쓰면 허브에 닿은 모든 엣지가 허브 점수를 물려받아 허브 ego 가 답을
+        점령한다(hub bias). min 으로 시드 직결 엣지와 허브 스포크를 변별한다.
+        시드(1.0)는 제외해 스포크끼리도 상대 노드 관련성으로 변별."""
         a, b = attrs.get("from_id"), attrs.get("to_id")
         vals = [relevance.get(nid, 0.0) for nid in (a, b) if nid not in seed_our_ids]
         if vals:
-            return max(vals)
+            return min(vals)
         return max(relevance.get(a, 0.0), relevance.get(b, 0.0))
 
     # 멀티 기업 숨은 연결(공통 공급사·공통 주주 등) — cap 에 묻히지 않게 항상 보존
@@ -971,7 +987,7 @@ def expand_ppr(seeds: list[Seed]) -> tuple[list[GraphHit], list[str]]:
     # 공통연결은 항상 보존, 나머지는 별→웹 cap(시드 스포크 제한 + 교차엣지 우선)
     budget = max(0, (MAX_EDGES + MAX_INDUCED_EDGES) - len(shared_kept))
     rel_capped = shared_kept + _cap_relations_web(
-        other_rel, budget, seed_our_ids, SEED_SPOKE_CAP
+        other_rel, budget, seed_our_ids, SEED_SPOKE_CAP, CROSS_EDGE_MIN_RELEVANCE
     )
 
     return node_hits + rel_capped, patterns_run
