@@ -160,15 +160,19 @@ def _doc_meta_by_rcept(rcept_nos: list[str]) -> dict[str, dict[str, Any]]:
 def build_graph(state: dict, answer: str = "") -> dict:
     """graph_facts/graph_paths → {nodes:[{id,label,category}], edges:[{...}]}.
 
-    graph_paths[i] 는 [노드, 관계, 노드, 관계, …] 로 교차 구성되고(rag._row_to_unified),
-    graph_facts[i].source 가 그 경로의 근거 rcept_no 다(둘은 행 단위로 정렬됨).
+    graph_paths[i] 는 [노드, 관계, 노드, 관계, …] 로 교차 구성되고, 엣지별 근거는
+    graph_path_sources[i](문서 rcept_no)·graph_path_chunks[i](추출 엣지의 chunk_id)에
+    행 단위로 정렬돼 들어온다(adapt_to_legacy 가 paths 와 같은 루프에서 채움).
+    예전엔 graph_facts[i].source 로 읽었는데 facts(전체 hit)와 paths(망 엣지만)의 길이가
+    달라 엣지·출처가 어긋났다 — 그 버그를 정렬 배열로 교정.
 
     answer 가 주어지면, 답변이 실제로 언급한 회사들의 부분그래프만 남긴다(멀티홉 뼈대).
     이웃 전체를 덤프하지 않고 '답의 근거 구조'만 보여주기 위함. 큐레이션 결과가 너무
     적으면(엣지<3) 전체를 유지한다(빈 패널 방지).
     """
-    facts = state.get("graph_facts") or []
     paths = state.get("graph_paths") or []
+    path_sources = state.get("graph_path_sources") or []
+    path_chunks = state.get("graph_path_chunks") or []
     if not paths:
         return {"nodes": [], "edges": []}
 
@@ -185,9 +189,8 @@ def build_graph(state: dict, answer: str = "") -> dict:
     for i, path in enumerate(paths):
         if not path:
             continue
-        rcept_no = ""
-        if i < len(facts):
-            rcept_no = str(facts[i].get("source") or "")
+        rcept_no = str(path_sources[i]) if i < len(path_sources) else ""
+        chunk_id = str(path_chunks[i]) if i < len(path_chunks) else ""
 
         names = [p for idx, p in enumerate(path) if idx % 2 == 0 and p]
         rels = [p for idx, p in enumerate(path) if idx % 2 == 1]
@@ -212,7 +215,8 @@ def build_graph(state: dict, answer: str = "") -> dict:
                     "target": tgt,
                     "type": rel,
                     "label": _humanize_rel(rel),
-                    "rcept_no": rcept_no,
+                    "rcept_no": rcept_no,   # 문서 출처(모든 엣지)
+                    "chunk_id": chunk_id,   # 청크 출처(추출 엣지만, 없으면 '')
                 }
             )
 

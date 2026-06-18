@@ -70,7 +70,8 @@ def _org_match(var: str, key_type: str, key_value_param: str = "key_value") -> s
 
 def _rel_hit(rel_type: str, from_id: str, from_name: str,
              to_id: str, to_name: str, attrs: dict[str, Any],
-             source: str | None = None, score: float = REL_HIT_SCORE) -> GraphHit:
+             source: str | None = None, chunk: str | None = None,
+             score: float = REL_HIT_SCORE) -> GraphHit:
     full_attrs: dict[str, Any] = {
         "rel_type": rel_type,
         "from_id": from_id,
@@ -79,6 +80,9 @@ def _rel_hit(rel_type: str, from_id: str, from_name: str,
         "to_name": to_name,
         **attrs,
     }
+    # 청크 출처(chunk_id)는 추출 엣지에만 존재. attrs 에 실어 adapt_to_legacy 가 읽는다.
+    if chunk:
+        full_attrs["chunk_id"] = chunk
     hit: GraphHit = {
         "id": f"rel:{rel_type}:{from_id}:{to_id}",
         "label": "relationship",
@@ -191,6 +195,7 @@ def _run_company_immediate(seed: Seed) -> list[GraphHit]:
             to_id=rp["counterpart_id"], to_name=rp.get("name") or "",
             attrs={},
             source=rp.get("source"),
+            chunk=rp.get("chunk"),
         ))
 
     # Interlocking
@@ -202,6 +207,8 @@ def _run_company_immediate(seed: Seed) -> list[GraphHit]:
             from_id=root_id, from_name=root_name,
             to_id=idn["counterpart_id"], to_name=idn.get("name") or "",
             attrs={},
+            source=idn.get("source"),
+            chunk=idn.get("chunk"),
         ))
 
     return hits
@@ -227,6 +234,7 @@ def _run_subsidiary_tree(seed: Seed) -> list[GraphHit]:
             from_id=sub["id"], from_name=sub.get("name") or "",
             to_id=root_id, to_name=root_name,
             attrs={"depth": sub.get("depth")},
+            source=sub.get("source"),
         ))
     return hits
 
@@ -252,6 +260,8 @@ def _run_supply_chain(seed: Seed) -> list[GraphHit]:
             from_id=sp["id"], from_name=sp.get("name") or "",
             to_id=root_id, to_name=root_name,
             attrs={"role": "supplier", "tier": sp.get("tier")},
+            source=sp.get("source"),
+            chunk=sp.get("chunk"),
         ))
     buyer_hits: list[GraphHit] = []
     for b in row.get("buyers") or []:
@@ -262,6 +272,8 @@ def _run_supply_chain(seed: Seed) -> list[GraphHit]:
             from_id=root_id, from_name=root_name,
             to_id=b["id"], to_name=b.get("name") or "",
             attrs={"role": "buyer", "tier": b.get("tier")},
+            source=b.get("source"),
+            chunk=b.get("chunk"),
         ))
 
     # 인바운드(공급사)·아웃바운드(납품처)를 교차 배치 — 엣지 cap 라운드로빈이 한쪽으로
@@ -697,7 +709,8 @@ def _induced_edges(assembled: list[GraphHit]) -> list[GraphHit]:
             rel_type,
             from_id=from_id, from_name=from_name,
             to_id=to_id, to_name=to_name,
-            attrs=attrs, score=0.55,
+            attrs=attrs, source=r.get("source"), chunk=r.get("chunk"),
+            score=0.55,
         )
         hit["seed_origin"] = "induced"
         induced.append(hit)
@@ -829,6 +842,7 @@ def _run_shared_connections(seeds: list[Seed]) -> list[GraphHit]:
             hit = _rel_hit(
                 rel, from_id=from_id, from_name=from_name,
                 to_id=to_id, to_name=to_name, attrs=attrs,
+                source=link.get("source"), chunk=link.get("chunk"),
             )
             hit["seed_origin"] = "shared"
             hit["score"] = 0.97  # 공통연결은 최우선 — cap 에서 항상 생존
@@ -871,7 +885,7 @@ def _ppr_typed_edges(eids: list[str], seed_our_ids: set[str]) -> list[GraphHit]:
             rel_type,
             from_id=from_id, from_name=from_name,
             to_id=to_id, to_name=to_name,
-            attrs=attrs, source=r.get("source"),
+            attrs=attrs, source=r.get("source"), chunk=r.get("chunk"),
         )
         hit["seed_origin"] = "ppr"
         out.append(hit)

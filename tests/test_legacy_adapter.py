@@ -87,7 +87,10 @@ def test_supplier_role_preserved_in_path_direction() -> None:
 def test_empty_hits_yield_empty_keys_without_error() -> None:
     """빈 hits — KeyError 없이 빈 키 반환."""
     legacy = adapt_to_legacy([])
-    assert legacy == {"facts": [], "paths": [], "provenance": []}
+    assert legacy == {
+        "facts": [], "paths": [], "provenance": [],
+        "path_sources": [], "path_chunks": [],
+    }
 
 
 def test_fin_metric_node_hit() -> None:

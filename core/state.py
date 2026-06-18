@@ -42,6 +42,12 @@ class AgentState(TypedDict):
     graph_paths: List[List[str]]
     graph_provenance: List[str]  # 근거 rcept_no
 
+    # 패널 엣지별 출처 — graph_paths 와 행 단위로 정렬됨(같은 i = 같은 엣지).
+    # path_sources: 문서 단위 출처(rcept_no, 모든 엣지). path_chunks: 청크 단위 출처
+    # (chunk_id, 추출 엣지만 — 구조화 엣지는 빈 문자열). serialize.build_graph 가 i 로 읽음.
+    graph_path_sources: NotRequired[List[str]]
+    graph_path_chunks: NotRequired[List[str]]
+
     final_draft: str
 
     # GraphRAG rewrite (graphrag/) — Sync Node로 넘기는 신규 키. 옵셔널.

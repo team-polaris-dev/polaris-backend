@@ -149,9 +149,16 @@ def _path_from_hit(hit: GraphHit) -> list[str] | None:
 
 
 def adapt_to_legacy(hits: list[GraphHit]) -> dict:
-    """신규 graph_hits → 기존 graph_facts/paths/provenance."""
+    """신규 graph_hits → 기존 graph_facts/paths/provenance.
+
+    path_sources/path_chunks 는 paths 와 행 단위로 정렬된다(같은 i = 같은 망 엣지).
+    serialize.build_graph 가 엣지별 근거를 i 로 읽으므로 paths 와 길이가 반드시 같아야
+    한다 — facts(전체 hit) 로 인덱싱하면 어긋난다(예전 버그). 그래서 같은 루프에서 동시 append.
+    """
     facts: list[dict] = []
     paths: list[list[str]] = []
+    path_sources: list[str] = []   # 문서 출처(rcept_no) — 모든 망 엣지
+    path_chunks: list[str] = []    # 청크 출처(chunk_id) — 추출 엣지만(없으면 '')
     sources: list[str] = []
     seen_sources: set[str] = set()
 
@@ -161,6 +168,8 @@ def adapt_to_legacy(hits: list[GraphHit]) -> dict:
         path = _path_from_hit(hit)
         if path:
             paths.append(path)
+            path_sources.append(hit.get("source") or "")
+            path_chunks.append((hit.get("attrs") or {}).get("chunk_id") or "")
 
         src = hit.get("source")
         if src and src not in seen_sources:
@@ -171,4 +180,6 @@ def adapt_to_legacy(hits: list[GraphHit]) -> dict:
         "facts": facts,
         "paths": paths,
         "provenance": sources,
+        "path_sources": path_sources,
+        "path_chunks": path_chunks,
     }

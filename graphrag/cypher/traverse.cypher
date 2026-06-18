@@ -39,14 +39,17 @@ CALL (o) {
   RETURN collect(DISTINCT {
     counterpart_id: coalesce(rp.corp_code, 'org:' + coalesce(rp.er_name, rp.name)),
     name: rp.name,
-    source: r.rcept_no
+    source: r.rcept_no,
+    chunk: r.chunk_id
   })[..30] AS related
 }
 CALL (o) {
   OPTIONAL MATCH (o)-[r:INTERLOCKING_DIRECTORATE]-(idn)
   RETURN collect(DISTINCT {
     counterpart_id: coalesce(idn.corp_code, 'org:' + coalesce(idn.er_name, idn.name)),
-    name: idn.name
+    name: idn.name,
+    source: r.rcept_no,
+    chunk: r.chunk_id
   })[..30] AS interlocking
 }
 RETURN
@@ -57,14 +60,15 @@ RETURN
 -- @name pattern_subsidiary_tree
 {{ORG_MATCH_root}}
 OPTIONAL MATCH path = (sub:Organization)-[:IS_SUBSIDIARY_OF*1..5]->(root)
-WITH root, sub, length(path) AS depth
+WITH root, sub, length(path) AS depth, relationships(path)[0] AS r0
 RETURN
   coalesce(root.corp_code, 'org:' + coalesce(root.er_name, root.name)) AS root_id,
   root.name AS root_name,
   collect(DISTINCT {
     id: coalesce(sub.corp_code, 'org:' + coalesce(sub.er_name, sub.name)),
     name: sub.name,
-    depth: depth
+    depth: depth,
+    source: r0.rcept_no
   })[..100] AS subs;
 
 -- @name pattern_supply_chain
@@ -73,22 +77,28 @@ CALL (o) {
   OPTIONAL MATCH downpath = (o)-[:SUPPLIES_TO*1..3]->(buyer:Organization)
   WHERE ALL(rr IN relationships(downpath) WHERE rr.qc_disabled_at IS NULL)
     AND buyer <> o   // *1..3 사이클이 시드를 자기 납품처로 잡는 self-loop 제거
+  WITH buyer, downpath, relationships(downpath)[0] AS r0
   RETURN collect(DISTINCT {
     id: coalesce(buyer.corp_code, 'org:' + coalesce(buyer.er_name, buyer.name)),
     name: buyer.name,
     tier: length(downpath),
-    role: 'buyer'
+    role: 'buyer',
+    source: r0.rcept_no,
+    chunk: r0.chunk_id
   })[..100] AS buyers
 }
 CALL (o) {
   OPTIONAL MATCH uppath = (supplier:Organization)-[:SUPPLIES_TO*1..3]->(o)
   WHERE ALL(rr IN relationships(uppath) WHERE rr.qc_disabled_at IS NULL)
     AND supplier <> o   // self-loop 제거
+  WITH supplier, uppath, relationships(uppath)[0] AS r0
   RETURN collect(DISTINCT {
     id: coalesce(supplier.corp_code, 'org:' + coalesce(supplier.er_name, supplier.name)),
     name: supplier.name,
     tier: length(uppath),
-    role: 'supplier'
+    role: 'supplier',
+    source: r0.rcept_no,
+    chunk: r0.chunk_id
   })[..100] AS suppliers
 }
 RETURN
@@ -176,7 +186,9 @@ WITH m,
        seed_name: seed.name,
        rel: type(r),
        seed_is_start: startNode(r) = seed,
-       qota_rt: r.qota_rt
+       qota_rt: r.qota_rt,
+       source: r.rcept_no,
+       chunk: r.chunk_id
      }) AS links,
      count(DISTINCT seed) AS nseeds
 WHERE nseeds >= 2
@@ -210,7 +222,7 @@ RETURN
        WHEN b:Product THEN b.product_id
        WHEN b:Technology THEN b.tech_id END AS b_id,
   b.name AS b_name,
-  r.qota_rt AS qota_rt, r.ofcps AS ofcps, r.rcept_no AS source
+  r.qota_rt AS qota_rt, r.ofcps AS ofcps, r.rcept_no AS source, r.chunk_id AS chunk
 LIMIT $cap;
 
 -- @name pattern_seed_financial
@@ -252,7 +264,9 @@ RETURN
        WHEN b:Product THEN b.product_id
        WHEN b:Technology THEN b.tech_id END AS b_id,
   b.name AS b_name,
-  r.qota_rt AS qota_rt
+  r.qota_rt AS qota_rt,
+  r.rcept_no AS source,
+  r.chunk_id AS chunk
 LIMIT $cap;
 
 -- @name pattern_fallback_subgraph_apoc

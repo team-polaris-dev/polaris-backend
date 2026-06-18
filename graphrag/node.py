@@ -79,4 +79,7 @@ def graph_search_node(state: dict) -> dict:
         "graph_facts": legacy["facts"],
         "graph_paths": legacy["paths"],
         "graph_provenance": legacy["provenance"],
+        # 패널 엣지별 출처 — graph_paths 와 행 정렬(serialize.build_graph 가 i 로 읽음).
+        "graph_path_sources": legacy["path_sources"],
+        "graph_path_chunks": legacy["path_chunks"],
     }
