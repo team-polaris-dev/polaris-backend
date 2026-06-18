@@ -128,6 +128,231 @@ def _build_rdb_documents(rdb_results: list[dict]) -> list[dict]:
     return documents
 
 
+# embedding_text 첫 줄 헤더: [회사 · 문서 (YYYY.MM) · 섹션 …]
+_RDB_HEADER_RE = re.compile(r"^\s*\[(?P<body>.+?)\]\s*(?:\n|$)", re.DOTALL)
+# "사업보고서 (2025.12)" → doc_type + 연도 추출용
+_DOC_DATE_RE = re.compile(r"\((?P<date>\d{4})[.\-/]?(?P<month>\d{1,2})?\)")
+
+# 본문 정리용 — PDF 추출 과정에서 깨진 공백/줄바꿈을 읽기 좋게 다듬는다.
+_LEAD_HEADER_RE = re.compile(r"^\s*\[[^\]]*\]\s*")          # 맨 앞 [회사 · 문서 · 섹션] 헤더 줄
+# 한 줄 전체가 '연 결 재 무 제 표'처럼 한 글자씩 벌어진 경우(뒤 구두점 허용)
+_SPACED_LINE_RE = re.compile(r"^(?:[가-힣] ){2,}[가-힣][.,)\]]?$")
+_WS_RE = re.compile(r"\s+")                                   # 깨진 줄바꿈·연속 공백
+# 표 인코딩: '헤더: 열1 | 열2 | 열3' 줄 + '맨앞값 | 키=값; 키=값' 데이터 줄
+_TABLE_HEADER_RE = re.compile(r"헤더:\s*(?P<cols>.+)$")
+# 넓은 단일행 표(예: 종속기업(1)…(26))는 항목/값 2열로 전치할 때의 열 수 임계
+_TABLE_TRANSPOSE_MIN_COLS = 6
+
+
+def _md_cell(v: Any) -> str:
+    """마크다운 표 셀로 안전화 — 구분자 '|' 와 줄바꿈 제거."""
+    return str(v or "").replace("|", "/").replace("\n", " ").strip()
+
+
+def _parse_table_row(line: str, cols: list[str]) -> list[str]:
+    """데이터 줄 → 헤더 열 순서에 맞춘 값 리스트.
+
+    형식: '맨앞값 | 키=값; 키=값; …'  또는  '키=값; 키=값; …'(맨앞값 없음).
+    맨앞값은 첫 열, 나머지는 '키=값'을 헤더명으로 매칭한다.
+    """
+    bare: str | None = None
+    rest = line
+    if " | " in line:
+        bare, rest = line.split(" | ", 1)
+    pairs: dict[str, str] = {}
+    for kv in rest.split(";"):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            pairs[k.strip()] = v.strip()
+    values: list[str] = []
+    for idx, h in enumerate(cols):
+        if idx == 0 and bare is not None:
+            values.append(bare.strip())
+        else:
+            values.append(pairs.get(h, ""))
+    return values
+
+
+def _rows_to_markdown(cols: list[str], rows: list[list[str]], caption: str = "") -> str:
+    """헤더·데이터 → GFM 마크다운 표 문자열.
+
+    넓은 단일행(열 많고 행 1개)은 '항목 | 값' 2열로 전치해 읽기 쉽게 한다.
+    """
+    if len(rows) == 1 and len(cols) > _TABLE_TRANSPOSE_MIN_COLS:
+        hdr = ["항목", "값"]
+        body = [
+            [_md_cell(cols[k]), _md_cell(rows[0][k])]
+            for k in range(min(len(cols), len(rows[0])))
+            if _md_cell(rows[0][k])
+        ]
+    else:
+        hdr = [_md_cell(c) for c in cols]
+        body = [
+            [_md_cell(v) for v in (row + [""] * len(hdr))[: len(hdr)]]
+            for row in rows
+        ]
+    out: list[str] = []
+    if caption:
+        out.append(caption)
+    out.append("| " + " | ".join(hdr) + " |")
+    out.append("| " + " | ".join(["---"] * len(hdr)) + " |")
+    for row in body:
+        out.append("| " + " | ".join(row) + " |")
+    return "\n".join(out)
+
+
+def _parse_table_block(lines: list[str], start: int) -> tuple[str | None, int]:
+    """lines[start] 가 '헤더:' 표 머리줄이면 표 블록을 파싱해 (마크다운, 다음인덱스) 반환.
+
+    표가 아니면 (None, start+1).
+    """
+    header_line = lines[start].strip()
+    m = _TABLE_HEADER_RE.search(header_line)
+    if not m:
+        return None, start + 1
+    caption = header_line[: m.start()].strip()  # '(단위 : 백만원)' 같은 머리말
+    cols = [c.strip() for c in m.group("cols").split("|") if c.strip()]
+    if len(cols) < 2:
+        return None, start + 1
+    rows: list[list[str]] = []
+    j = start + 1
+    while j < len(lines):
+        l = lines[j].strip()
+        # 데이터 줄은 키=값(=) 또는 셀 구분(|) 을 포함한다. 그 외/빈 줄이면 표 종료.
+        if not l or ("=" not in l and "|" not in l) or "헤더:" in l:
+            break
+        rows.append(_parse_table_row(l, cols))
+        j += 1
+    if not rows:
+        return None, start + 1
+    return _rows_to_markdown(cols, rows, caption), j
+
+
+def _clean_excerpt_text(text: Any, drop_header: bool = True) -> str:
+    """공시 원문 발췌를 읽기 좋게 정리(마크다운 반환).
+
+    1) 카드 제목과 중복되는 맨 앞 '[…]' 헤더 줄 제거
+    2) '헤더: a | b' 표 블록은 GFM 마크다운 표로 변환(프론트가 <table> 로 렌더)
+    3) PDF에서 한 줄 전체가 글자 단위로 벌어진 줄('연 결 재 무')은 공백 제거
+    4) 표가 아닌 깨진 줄바꿈은 단일 공백으로 합쳐 흐르는 문장으로
+    """
+    s = str(text or "")
+    if not s.strip():
+        return ""
+    if drop_header:
+        s = _LEAD_HEADER_RE.sub("", s, count=1)
+    lines = s.split("\n")
+    blocks: list[str] = []
+    prose: list[str] = []
+
+    def flush_prose() -> None:
+        if prose:
+            joined = _WS_RE.sub(" ", " ".join(prose)).strip()
+            if joined:
+                blocks.append(joined)
+            prose.clear()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+        if "헤더:" in line and "|" in line:
+            md, nxt = _parse_table_block(lines, i)
+            if md:
+                flush_prose()
+                blocks.append(md)
+                i = nxt
+                continue
+        if _SPACED_LINE_RE.match(line):
+            line = line.replace(" ", "")
+        prose.append(line)
+        i += 1
+    flush_prose()
+    # 표 블록은 앞뒤로 빈 줄이 있어야 마크다운 표로 인식된다.
+    return "\n\n".join(blocks)
+
+
+def _dedup_key(text: Any) -> str:
+    """내용 기준 중복 판정용 키 — 공백 접고 앞 200자. rdb 원문↔vec 청크 교차 중복 제거."""
+    return _WS_RE.sub(" ", str(text or "")).strip()[:200]
+
+
+def _parse_rdb_text_header(text: str) -> dict[str, Any]:
+    """embedding_text 첫 줄 '[회사 · 문서(YYYY.MM) · 섹션]' → 메타 dict.
+
+    형식이 어긋나면 빈 메타를 돌려준다(방어). 본문 text 는 호출부에서 통째로 쓴다.
+    """
+    meta: dict[str, Any] = {
+        "corp_name": "", "doc_type": "", "title": "",
+        "section_path": "", "year": None, "date": "",
+    }
+    m = _RDB_HEADER_RE.match(text or "")
+    if not m:
+        return meta
+    parts = [p.strip() for p in m.group("body").split("·") if p.strip()]
+    if not parts:
+        return meta
+    meta["corp_name"] = parts[0]
+    if len(parts) >= 2:
+        doc = parts[1]
+        dm = _DOC_DATE_RE.search(doc)
+        if dm:
+            meta["year"] = int(dm.group("date"))
+            mon = dm.group("month")
+            meta["date"] = f"{dm.group('date')}.{mon}" if mon else dm.group("date")
+        meta["doc_type"] = _DOC_DATE_RE.sub("", doc).strip()
+        meta["title"] = doc
+    if len(parts) >= 3:
+        meta["section_path"] = " · ".join(parts[2:])
+    return meta
+
+
+def _build_rdb_text_documents(rdb_results: list[dict]) -> list[dict]:
+    """rdb_row 중 '공시 원문 발췌'(value.embedding_text) 행 → 원본 문서 카드 리스트.
+
+    embedding_text 를 가진 행이면 모두 대상. 재무지표와 청크를 JOIN 한 SQL 은
+    account_id 와 embedding_text 를 한 행에 함께 담으므로(예: 매출액 × 청크),
+    account_id 유무로 거르지 않는다. 대신 같은 청크가 여러 지표 행에 중복으로
+    딸려 오므로 embedding_text 기준으로 중복을 제거한다.
+    재무수치(account_id/value)는 _build_rdb_documents 가 별도로 카드를 만든다.
+    """
+    documents: list[dict] = []
+    seen_text: set[str] = set()
+    for i, r in enumerate(rdb_results):
+        if r.get("type") != "rdb_row":
+            continue
+        val = r.get("value")
+        if not isinstance(val, dict):
+            continue
+        body = val.get("embedding_text")
+        if not body:
+            continue
+        key = str(body)
+        if key in seen_text:
+            continue
+        seen_text.add(key)
+        meta = _parse_rdb_text_header(key)
+        documents.append(
+            {
+                "rcept_no": str(r.get("source") or ""),
+                "chunk_id": f"rdbtext_{i}",
+                "corp_name": meta["corp_name"] or r.get("name") or "",
+                "title": meta["title"] or "공시 원문",
+                "doc_type": meta["doc_type"] or "공시원문",
+                "date": meta["date"],
+                "summary": "",
+                "section_path": meta["section_path"],
+                "year": meta["year"],
+                "score": None,
+                "text": _clean_excerpt_text(body),
+                "source_kind": "rdb_text",
+            }
+        )
+    return documents
+
+
 _CO_STRIP_RE = re.compile(r"주식회사|\(주\)|㈜|\s+")
 
 
@@ -165,6 +390,41 @@ def _doc_meta_by_rcept(rcept_nos: list[str]) -> dict[str, dict[str, Any]]:
             "summary": row.get("summary_short") or "",
         }
     return meta
+
+
+# 작은따옴표만 이스케이프(execute_sql_query 가 파라미터 바인딩을 안 하므로)
+def _sql_str(s: str) -> str:
+    return str(s or "").replace("'", "''")
+
+
+def _rcept_by_corp_title(pairs: set[tuple[str, str]]) -> dict[tuple[str, str], str]:
+    """(회사명, 보고서 라벨) → rcept_no 역조회.
+
+    rdb 원문은 JOIN SQL 이 rcept_no 를 SELECT 하지 않아 DART 링크를 만들 수 없다.
+    document_index.title 은 DART report_nm('사업보고서 (2025.12)' 등)이고, 원문 헤더
+    가운데 라벨이 바로 그 값이라 (corp_name, title) 로 정확히 되짚을 수 있다.
+    """
+    conds = [
+        f"(corp_name = '{_sql_str(c)}' AND title = '{_sql_str(t)}')"
+        for c, t in pairs
+        if c and t
+    ]
+    if not conds:
+        return {}
+    sql = (
+        "SELECT corp_name, title, rcept_no FROM document_index "
+        f"WHERE {' OR '.join(conds)} ORDER BY date"
+    )
+    result = execute_sql_query(sql, max_rows=len(conds) * 5)
+    if not result.get("ok"):
+        return {}
+    out: dict[tuple[str, str], str] = {}
+    for row in result["rows"]:
+        # ORDER BY date 오름차순 → 같은 보고서명이 여러 건이면 최신(마지막)으로 덮인다
+        out[(str(row.get("corp_name") or ""), str(row.get("title") or ""))] = str(
+            row.get("rcept_no") or ""
+        )
+    return out
 
 
 def build_graph(state: dict, answer: str = "") -> dict:
@@ -279,11 +539,37 @@ def build_documents(state: dict) -> list[dict]:
 
     documents: list[dict] = []
     seen: set[str] = set()
+    # 같은 본문이 rdb 원문·vec 청크로 두 번 나오지 않게 내용 기준으로도 거른다
+    seen_text: set[str] = set()
 
     # 0) RDB 정형 데이터(재무수치) — 벡터 문서보다 앞에 배치
-    rdb_docs = _build_rdb_documents(state.get("rdb_results") or [])
+    rdb_results = state.get("rdb_results") or []
+    rdb_docs = _build_rdb_documents(rdb_results)
     documents.extend(rdb_docs)
     seen.update(d["chunk_id"] for d in rdb_docs if d["chunk_id"])
+
+    # 0-1) RDB 공시 원문 발췌(embedding_text) — 그동안 버려지던 원문을 문서로 살린다
+    rdb_text_docs = _build_rdb_text_documents(rdb_results)
+    # JOIN SQL 이 rcept_no 를 빠뜨려 링크가 없는 원문은 (회사명, 보고서명)으로 역조회해 채운다
+    need = {
+        (d["corp_name"], d["title"])
+        for d in rdb_text_docs
+        if not d["rcept_no"] and d["corp_name"] and d["title"]
+    }
+    if need:
+        rcept_map = _rcept_by_corp_title(need)
+        for d in rdb_text_docs:
+            if not d["rcept_no"]:
+                d["rcept_no"] = rcept_map.get((d["corp_name"], d["title"]), "")
+    for d in rdb_text_docs:
+        tkey = _dedup_key(d["text"])
+        if tkey and tkey in seen_text:
+            continue
+        if tkey:
+            seen_text.add(tkey)
+        documents.append(d)
+        if d["chunk_id"]:
+            seen.add(d["chunk_id"])
 
     # 1) Vector 청크 = 본문이 있는 원본 발췌
     for v in vec_results:
@@ -293,8 +579,14 @@ def build_documents(state: dict) -> list[dict]:
         dedup_key = chunk_id or rcept_no
         if dedup_key and dedup_key in seen:
             continue
+        text = _clean_excerpt_text(v.get("value"))
+        tkey = _dedup_key(text)
+        if tkey and tkey in seen_text:  # rdb 원문으로 이미 나온 본문이면 건너뛴다
+            continue
         if dedup_key:
             seen.add(dedup_key)
+        if tkey:
+            seen_text.add(tkey)
         m = meta.get(rcept_no, {})
         documents.append(
             {
@@ -308,7 +600,7 @@ def build_documents(state: dict) -> list[dict]:
                 "section_path": extra.get("section_path") or "",
                 "year": extra.get("year"),
                 "score": extra.get("score"),
-                "text": v.get("value") or "",
+                "text": text,
                 "source_kind": "vector",
             }
         )

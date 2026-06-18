@@ -18,6 +18,7 @@ from routers.admin import router as admin_router
 from services.pipeline_jobs import init_pipeline_tables, sweep_stale_jobs
 from services.chat_logging import init_chat_tables
 from core.serialize import serialize_state
+from core.digest import build_evidence_digest
 from nodes.router import empty_sources
 from tool import chat_store
 from tool.vector_store import warmup as _vector_warmup
@@ -135,6 +136,8 @@ class ChatResponse(BaseModel):
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
     financials: List[FinancialGroup] = []
+    # 우측 패널 '원본 문서' 탭 상단의 LLM 통합 근거 정리본(마크다운). 없으면 빈 문자열.
+    digest: str = ""
 
 
 # 세션 복원용 메시지 항목 — 우측 패널(관계도/원본문서)까지 함께 복원한다.
@@ -148,6 +151,7 @@ class HistoryMessage(BaseModel):
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
     financials: List[FinancialGroup] = []
+    digest: str = ""
 
 # 3-0. 로그인 / 회원가입 — 사용자이름만 입력. 처음이면 자동 가입.
 @api.post("/api/login", response_model=LoginResponse)
@@ -223,6 +227,14 @@ def chat_endpoint(request: ChatRequest):
         else:
             panel_data = serialize_state(result)
 
+        # 우측 '원본 문서' 탭 상단 — 흩어진 근거를 LLM 으로 한 편으로 통합 정리(동기).
+        # 문서가 있을 때만 호출하므로 그래프/매크로 턴엔 비용이 들지 않는다.
+        digest = ""
+        if panel_data.get("documents"):
+            reconstructed_q = result.get("reconstructed_query") or request.message
+            digest = build_evidence_digest(reconstructed_q, panel_data["documents"])
+        panel_data["digest"] = digest
+
         # 어시스턴트 응답 기록 — 우측 패널 데이터(관계도/원본문서)도 함께 저장한다.
         # 스키마 변경 없이, 비어 있던 search_plan(longtext) 컬럼에 JSON 으로 보관해
         # 세션 재진입 시 패널 버튼을 그대로 복원할 수 있게 한다.
@@ -250,6 +262,7 @@ def chat_endpoint(request: ChatRequest):
             graph=panel_data["graph"],
             documents=panel_data["documents"],
             financials=panel_data.get("financials", []),
+            digest=panel_data.get("digest", ""),
         )
 
     except Exception as e:
