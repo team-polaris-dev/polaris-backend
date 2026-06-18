@@ -10,8 +10,11 @@ from typing import Iterable
 
 from config.graphrag import PPR_ENABLED
 from config.relations import FOCUS_KEYWORD_GROUPS as _FOCUS_KEYWORDS
+from graphrag.llm_planner import plan as plan_structured_llm
 from graphrag.matcher import match
+from graphrag.planner import plan as plan_structured
 from graphrag.schema import GraphHit, GraphSearchOutput, Seed
+from graphrag.structured_executor import execute as execute_structured
 from graphrag.traverse import expand, expand_ppr, fallback_for
 
 
@@ -59,6 +62,33 @@ def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSear
     fallback_used = False
 
     if seeds:
+        deterministic_plan = plan_structured(query)
+        structured_plan = deterministic_plan
+        if not deterministic_plan or deterministic_plan.kind != "multi_anchor_branch_rank":
+            try:
+                structured_plan = plan_structured_llm(query)
+            except Exception as e:
+                errors.append(f"llm_planner: {e}")
+            if structured_plan is None:
+                structured_plan = deterministic_plan
+        if structured_plan:
+            try:
+                structured = execute_structured(structured_plan, seeds, query)
+            except Exception as e:
+                errors.append(f"structured: {e}")
+                structured = None
+            if structured:
+                hits, structured_meta = structured
+                elapsed = (time.perf_counter() - started) * 1000.0
+                structured_meta["latency_ms"] = round(elapsed, 1)
+                structured_meta["n_seeds"] = len(seeds)
+                structured_meta["errors"] = errors
+                return {
+                    "graph_hits": hits,
+                    "graph_seeds": [dict(s) for s in seeds],
+                    "graph_meta": structured_meta,
+                }
+
         # PPR 우선(시드 관련성 멀티홉). 실패·빈 결과면 패턴 확장으로 폴백.
         if PPR_ENABLED:
             try:

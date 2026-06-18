@@ -25,6 +25,13 @@ from graphrag.schema import Seed
 
 # Lucene 특수문자 — 그대로 던지면 파싱 에러
 _LUCENE_SPECIAL = re.compile(r'([+\-!(){}\[\]^"~*?:\\/]|&&|\|\|)')
+_EXACT_CORP_ALIASES = {
+    "sk하이닉스": "00164779",
+    "에스케이하이닉스": "00164779",
+    "하이닉스": "00164779",
+    "삼성전자": "00126380",
+    "samsungelectronics": "00126380",
+}
 
 
 def escape_lucene(q: str) -> str:
@@ -260,10 +267,59 @@ def match_upstream(upstream_ids: Iterable[str]) -> list[Seed]:
     return deduped
 
 
+def _merge_seeds(*groups: list[Seed], max_seeds: int = MAX_SEEDS) -> list[Seed]:
+    seen: set[str] = set()
+    merged: list[Seed] = []
+    for group in groups:
+        for seed in group:
+            if not seed.get("id") or seed["id"] in seen:
+                continue
+            seen.add(seed["id"])
+            merged.append(seed)
+            if len(merged) >= max_seeds:
+                return merged
+    return merged
+
+
+def _exact_alias_codes(query: str) -> list[str]:
+    qn = _norm(query)
+    found: list[str] = []
+    for alias, code in sorted(_EXACT_CORP_ALIASES.items(), key=lambda kv: -len(kv[0])):
+        if _norm(alias) in qn and code not in found:
+            found.append(code)
+    return found
+
+
+def match_exact_corp_mentions(query: str, *, cap: int = MAX_SEEDS) -> list[Seed]:
+    """RDB 회사명 해소로 명시적 회사 seed를 보강한다.
+
+    FULLTEXT CJK가 'SK하이닉스'를 'SK(주)'로 과매칭하는 케이스를 막기 위한
+    보조 경로다. RDB/Neo4j 중 하나라도 실패하면 빈 리스트로 degrade한다.
+    """
+    if not query:
+        return []
+    alias_codes = _exact_alias_codes(query)
+    try:
+        from tool.rdb_client import resolve_corp_codes_from_text  # noqa: PLC0415
+
+        codes = [*alias_codes, *resolve_corp_codes_from_text(query, cap=cap)]
+    except Exception as exc:
+        print(f"⚠️ [GraphRAG matcher] exact corp resolve failed: {exc!r}")
+        codes = alias_codes
+    codes = [c for c in dict.fromkeys(codes) if c][:cap]
+    try:
+        return match_upstream(codes)
+    except Exception as exc:
+        print(f"⚠️ [GraphRAG matcher] exact corp seed fetch failed: {exc!r}")
+        return []
+
+
 def match(query: str, upstream_seeds: Iterable[str] | None = None,
           *, threshold: float = FULLTEXT_THRESHOLD, limit: int = FULLTEXT_POOL) -> list[Seed]:
     """Public entry — upstream 우선, 없으면 FULLTEXT."""
     seeds = match_upstream(upstream_seeds or [])
     if seeds:
         return seeds
-    return match_fulltext(query, threshold=threshold, limit=limit)
+    exact = match_exact_corp_mentions(query, cap=MAX_SEEDS)
+    fulltext = match_fulltext(query, threshold=threshold, limit=limit)
+    return _merge_seeds(exact, fulltext, max_seeds=MAX_SEEDS)
