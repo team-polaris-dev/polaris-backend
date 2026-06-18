@@ -138,6 +138,9 @@ def _chunk_to_unified(row: dict) -> UnifiedResult:
             "year": row.get("year"),
             "doc_type": row.get("doc_type"),
             "section_path": row.get("section_path"),
+            "rcept_no": row.get("rcept_no"),
+            "corp_name": row.get("corp_name"),
+            "title": row.get("title"),
         },
         "source": str(row.get("chunk_id", "")),
     }

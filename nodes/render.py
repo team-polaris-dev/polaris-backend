@@ -1,109 +1,198 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any
+
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from core.state import AgentState
 from config.llm import llm
-from core.serialize import _humanize_rel
+from core.serialize import _humanize_rel, _ACCOUNT_KR, _fmt_krw
 
 
 def _truncate(text: str, limit: int = 1000) -> str:
-    """청크 본문이 너무 길 때 컨텍스트 폭주 방지."""
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-# 사람이 읽을 도메인 사실이 아닌(랭킹·쿼리·내부 식별) 필드는 프롬프트에서 제외.
-# - score: 넣으면 LLM 이 "연관성 0.87" 같은 의미를 창작함
-# - sql: 답변에 쿼리문이 새거나 LLM 이 SQL 을 지어냄
-# - chunk_id/rcept_no: 출처는 별도(source/graph_provenance)로 이미 넘김
-_EXTRA_SKIP = {"score", "sql", "chunk_id", "rcept_no", "stage", "hops"}
+# ──────────────────────────────────────────────────
+# 섹션별 포매터
+# ──────────────────────────────────────────────────
 
+def _fmt_rdb(rdb_results: list[dict]) -> str:
+    """rdb_row → (기업·연도) 단위로 묶어 한글 라벨 + 조/억 단위 변환.
 
-def _format_kv(data: dict) -> str:
-    """dict → '키=값, 키=값' 요약 문자열. 내부/랭킹 키와 빈 값은 제외."""
-    if not isinstance(data, dict):
-        return ""
-    pairs = []
-    for k, v in data.items():
-        if k in _EXTRA_SKIP or v in (None, ""):
+    SQL이 동일 결과를 두 번 반환하는 경우도 dedup 처리한다.
+    """
+    # (corp_name, year) → {account_id: amount}
+    groups: dict[tuple[str, Any], dict[str, Any]] = defaultdict(dict)
+    for r in rdb_results:
+        if r.get("type") != "rdb_row":
             continue
-        text = " ".join(str(v).split())
-        if text:
-            pairs.append(f"{k}={_truncate(text, 120)}")
-    return ", ".join(pairs)
+        val = r.get("value") or {}
+        if not isinstance(val, dict):
+            continue
+        aid   = str(val.get("account_id") or "")
+        amt   = val.get("value")
+        year  = val.get("bsns_year")
+        corp  = r.get("name") or "(회사 미상)"
+        if aid:
+            groups[(corp, year)][aid] = amt
+
+    if not groups:
+        return ""
+
+    lines = ["### [정형 데이터 — 재무수치]"]
+    for (corp, year), metrics in sorted(groups.items(), key=lambda x: -(x[0][1] or 0)):
+        lines.append(f"\n**{corp} ({year}년 기준)**")
+        for aid, amt in metrics.items():
+            label = _ACCOUNT_KR.get(aid, aid)
+            lines.append(f"  - {label}: {_fmt_krw(amt)}")
+    return "\n".join(lines)
 
 
-def generate_report_node(state: AgentState):
+def _fmt_graph(
+    graph_facts: list[dict],
+    graph_paths: list,
+    graph_provenance: list[str],
+) -> str:
+    """graph_facts를 타입별로 분리해 의미 있는 텍스트로 변환.
+
+    fin_metric  → 재무수치 (한글 라벨 + 단위)
+    shareholder / subsidiary / investment → 방향 관계 (from → to, 지분율)
+    person      → 임원 목록 (이름 + 직책)
+    organization→ 생략 (단순 노드, 관계 없이 나오면 정보가 없음)
     """
-    Gen (Generate & Render):
-    AgentState 의 검색 결과(rdb_results/vec_results/graph_facts)를 직접 참조해
-    포매팅하고, 사용자 선호도(user_preferences)에 맞춰 최종 분석 보고서를 생성합니다.
-    """
-    # 1. State의 검색 결과(rdb/vec/graph)만을 분석 기초 자료 텍스트로 직접 포매팅한다.
-    #    gen 은 오직 AgentState 의 검색 결과만 근거로 설명한다. 이전 대화 내용이나
-    #    LLM 사전 지식으로 보강하지 않는다(result_check 가 세 소스 모두 결과가 있을
-    #    때만 gen 으로 보내므로 draft_info 는 비어 있지 않다).
-    rdb_results = state.get("rdb_results", []) or []
-    vec_results = state.get("vec_results", []) or []
-    graph_facts = state.get("graph_facts", []) or []
-    graph_paths = state.get("graph_paths", []) or []
-    graph_provenance = state.get("graph_provenance", []) or []
+    fin: dict[tuple[Any, str], Any] = {}   # (year, account_id) → amount
+    rels: list[str] = []
+    seen_rels: set[tuple] = set()
+    execs: list[str] = []
+    seen_execs: set[str] = set()
+
+    for r in graph_facts:
+        t = r.get("type") or ""
+        extra = r.get("extra") or {}
+
+        # ── 재무지표 노드 ──────────────────────────────
+        if t == "fin_metric":
+            aid  = str(extra.get("account_id") or r.get("name") or "")
+            amt  = extra.get("value") if "value" in extra else r.get("value")
+            year = extra.get("bsns_year")
+            if aid and amt is not None:
+                fin[(year, aid)] = amt
+
+        # ── 관계 엣지 (주주/자회사/투자) ────────────────
+        elif t in ("shareholder", "subsidiary", "investment"):
+            rel_type  = str(extra.get("rel_type") or t)
+            from_name = str(extra.get("from_name") or "")
+            to_name   = str(extra.get("to_name") or "")
+            pct       = extra.get("qota_rt") or r.get("value")
+            if not from_name or not to_name:
+                continue
+            key = (from_name, to_name, rel_type)
+            if key in seen_rels:
+                continue
+            seen_rels.add(key)
+            lbl = _humanize_rel(rel_type)
+            line = f"  - {from_name} →({lbl})→ {to_name}"
+            try:
+                fv = float(pct)
+                if fv > 0:
+                    line += f" [지분 {fv:.2f}%]"
+            except (TypeError, ValueError):
+                pass
+            rels.append(line)
+
+        # ── 임원 ────────────────────────────────────────
+        elif t == "person":
+            name = r.get("name") or ""
+            pos  = extra.get("pos") or ""
+            if name and name not in seen_execs:
+                seen_execs.add(name)
+                execs.append(f"  - {name}{f' ({pos})' if pos else ''}")
+
+        # organization 은 단순 노드 — 관계 없이 나오면 정보가 없으므로 생략
 
     parts: list[str] = []
 
-    if rdb_results:
-        parts.append("### [정형 데이터 (RDB)]")
-        for res in rdb_results:
-            # value 가 컬럼 dict 면 '컬럼=값'으로 평탄화, 스칼라면 그대로 둔다.
-            value = res.get("value")
-            value_text = _format_kv(value) if isinstance(value, dict) else str(value)
-            name = res.get("name") or "(회사 미상)"
-            parts.append(f"- {name}: {value_text} (출처: {res.get('source')})")
+    if fin:
+        parts.append("### [관계망 — 재무지표 (Neo4j)]")
+        # 연도별로 묶어 정렬
+        by_year: dict[Any, dict[str, Any]] = defaultdict(dict)
+        for (year, aid), amt in fin.items():
+            by_year[year][aid] = amt
+        for year in sorted(by_year.keys(), key=lambda y: -(y or 0)):
+            parts.append(f"\n**{year}년 주요 재무지표:**")
+            for aid, amt in by_year[year].items():
+                label = _ACCOUNT_KR.get(aid, aid)
+                parts.append(f"  - {label}: {_fmt_krw(amt)}")
 
-    if vec_results:
-        parts.append("\n### [비정형 문서 (Vector)]")
-        for res in vec_results:
-            # 본문 앞에 출처 맥락(회사·연도·문서종류·절 위치)을 헤더로 붙인다.
-            extra = res.get("extra") or {}
-            ctx = [str(x) for x in (
-                res.get("name"),
-                extra.get("year"),
-                extra.get("doc_type"),
-                extra.get("section_path"),
-            ) if x not in (None, "")]
-            header = f"[{' · '.join(ctx)}] " if ctx else ""
-            parts.append(
-                f"- {header}{_truncate(str(res.get('value')))} (출처: {res.get('source')})"
-            )
+    if rels:
+        if parts:
+            parts.append("")
+        parts.append("### [관계망 — 기업 관계]")
+        parts.extend(rels)
 
-    if graph_facts:
-        parts.append("\n### [관계망 데이터 (Graph)]")
-        for res in graph_facts:
-            # 관계 종류(type)·대상(name)·값(value)에 더해, extra 의 상세
-            # (지분율 qota_rt·직책 pos·연도 year 등)까지 함께 넘긴다.
-            rel = _humanize_rel(str(res.get("type") or ""))
-            line = f"- 관계({rel}): {res.get('name')} - {res.get('value')}"
-            detail = _format_kv(res.get("extra") or {})
-            if detail:
-                line += f" [{detail}]"
-            line += f" (출처: {res.get('source')})"
-            parts.append(line)
+    if execs:
+        if parts:
+            parts.append("")
+        parts.append(f"### [관계망 — 임원] (상위 {min(len(execs), 10)}명)")
+        parts.extend(execs[:10])
 
-        # 방향성 있는 경로(graph_paths): [시작노드, 관계, 끝노드] → "A →(관계)→ B"
-        directed = [p for p in graph_paths if isinstance(p, (list, tuple)) and len(p) == 3]
-        if directed:
-            parts.append("\n#### [관계 방향 (A → B)]")
-            for src, rel, dst in directed:
-                parts.append(f"- {src} →({_humanize_rel(str(rel))})→ {dst}")
+    if graph_provenance:
+        parts.append(f"\n(관계망 근거 공시: {', '.join(map(str, graph_provenance[:5]))})")
 
-        # 근거 공시 접수번호(rcept_no)
-        if graph_provenance:
-            parts.append(f"\n(관계망 근거 공시: {', '.join(map(str, graph_provenance))})")
+    return "\n".join(parts)
 
-    draft_info = "\n".join(parts).strip()
-    prefs = state.get("user_preferences", {})
 
-    # 기본 선호도 설정 (Store에 값이 없을 경우를 대비)
-    tone = prefs.get("tone", "전문적이고 신뢰감 있는")
+def _fmt_vec(vec_results: list[dict]) -> str:
+    """Vector 청크 → 출처 헤더 + 본문 요약."""
+    if not vec_results:
+        return ""
+    lines = ["### [비정형 문서 — 공시 원문]"]
+    for res in vec_results:
+        extra = res.get("extra") or {}
+        ctx = [str(x) for x in (
+            res.get("name"),
+            extra.get("year"),
+            extra.get("doc_type"),
+            extra.get("section_path"),
+        ) if x not in (None, "")]
+        header = f"[{' · '.join(ctx)}] " if ctx else ""
+        lines.append(f"- {header}{_truncate(str(res.get('value') or ''), 800)}")
+    return "\n".join(lines)
 
-    # 사용자 질문 — 이게 빠지면 LLM 이 질문과 무관한 일반 기업소개 보고서를 짓는다.
+
+# ──────────────────────────────────────────────────
+# GEN 노드
+# ──────────────────────────────────────────────────
+
+def generate_report_node(state: AgentState):
+    """Gen (Generate & Render):
+    rdb_results / vec_results / graph_facts 를 각 타입에 맞게 포매팅해
+    LLM 에 넘기고 최종 분석 보고서를 생성한다.
+    """
+    rdb_results    = state.get("rdb_results", []) or []
+    vec_results    = state.get("vec_results", []) or []
+    graph_facts    = state.get("graph_facts", []) or []
+    graph_paths    = state.get("graph_paths", []) or []
+    graph_provenance = state.get("graph_provenance", []) or []
+
+    sections: list[str] = []
+
+    rdb_text   = _fmt_rdb(rdb_results)
+    vec_text   = _fmt_vec(vec_results)
+    graph_text = _fmt_graph(graph_facts, graph_paths, graph_provenance)
+
+    if rdb_text:
+        sections.append(rdb_text)
+    if graph_text:
+        sections.append(graph_text)
+    if vec_text:
+        sections.append(vec_text)
+
+    draft_info = "\n\n".join(sections).strip()
+
+    prefs    = state.get("user_preferences", {})
+    tone     = prefs.get("tone", "전문적이고 신뢰감 있는")
     question = state.get("reconstructed_query") or ""
     if not question:
         for msg in reversed(state.get("messages", []) or []):
@@ -111,41 +200,43 @@ def generate_report_node(state: AgentState):
                 question = str(msg.content)
                 break
 
-    # 2. 분석 기초 자료 기반 최종 답변 생성을 위한 시스템 프롬프트
-    system_prompt = f"""당신은 기업 공시 및 재무 분석을 도와주는 전문적이고 친절한 AI 어시스턴트입니다.
-[분석 기초 자료]만을 근거로 [사용자 질문]에 직접 답하는 최종 답변을 작성하세요.
+    system_prompt = f"""당신은 기업 공시 및 재무 분석 전문 AI 어시스턴트입니다.
+[분석 기초 자료]를 바탕으로 [사용자 질문]에 대한 심층 분석 답변을 작성하세요.
 
 [사용자 맞춤 설정]
 - 말투 및 톤: {tone}
 
-[작성 규칙]
-1. 답변의 중심은 반드시 [사용자 질문]에 대한 직접적인 답이어야 합니다.
-   질문과 무관한 일반 기업 소개·연혁·홍보성 서사로 흐르지 마세요.
-2. [분석 기초 자료]에 있는 사실·수치·관계만 사용하세요. 자료에 없는 내용
-   (사전 학습 지식, 추정·재계산한 수치)을 추가하지 마세요.
-3. 자료가 질문의 일부를 못 다루면 그 부분은 "자료에 없다"고 솔직하게 밝히세요.
-4. [분석 기초 자료] 중 질문과 관련된 핵심 정보(수치, 사실관계, 기업명, 관계)는
-   누락·왜곡하지 마세요. 특히 [관계망 데이터 (Graph)]의 'A → B' 관계는
-   방향(누가 누구에게)을 정확히 유지하세요.
-5. 지정된 '말투 및 톤'에 맞춰 자연스럽게 구성하고,
-   가독성을 위해 마크다운을 적극 활용하세요.
-6. "알겠습니다", "요청하신 보고서입니다" 같은 서론 없이 곧바로 최종 결과물만 출력하세요.
+[작성 지침]
+1. **분석 중심으로 작성하세요.**
+   수치를 단순 나열하지 말고 그 의미와 시사점을 해석하세요.
+   자료 내에서 도출 가능한 지표(영업이익률·부채비율·증감 등)는 직접 계산해 언급하세요.
+
+2. **기업 관계(종속회사·주주·투자 관계)는 별자리 그래프로 시각화되어 사용자에게 제공됩니다.**
+   관계를 단순 나열하지 말고, 해당 구조의 사업적 의미·맥락을 설명하세요.
+   (예: "A가 B의 자회사" → "A를 통해 XXX 사업을 수직계열화하여 원가 경쟁력을 확보")
+
+3. **재무지표는 차트로 별도 시각화되어 제공됩니다.**
+   핵심 수치를 인용하되, 수치보다는 재무 건전성·수익 구조·특이사항 해석에 집중하세요.
+   수치는 조원/억원 단위로 자연스럽게 표현하고, 원시 IFRS 코드나 원화 단위 숫자는 사용하지 마세요.
+
+4. [분석 기초 자료]에 없는 내용(사전 학습 지식·추정 수치)은 사용하지 마세요.
+   자료로 다루지 못한 부분은 솔직하게 밝히세요.
+
+5. 마크다운(##헤더·**볼드**·표)으로 가독성을 높이세요.
+
+6. "알겠습니다" 같은 서론 없이 바로 시작하세요.
 """
 
     human_prompt = f"[사용자 질문]\n{question}\n\n[분석 기초 자료]\n{draft_info}"
 
-    # 3. LLM 호출하여 렌더링 진행
     messages_to_llm = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=human_prompt)
+        HumanMessage(content=human_prompt),
     ]
-    
+
     print(f"📝 [Gen Node] 최종 보고서 작성 중... (톤: {tone})")
-    # 커스텀 LLM(LLM 기반)은 문자열을 반환하므로 AIMessage 로 감싸 state 에 넣는다.
     response_text = llm.invoke(messages_to_llm).content
 
-    # 4. 최종 변환된 메시지를 State의 messages 배열에 추가하고,
-    # final_draft 키에도 명시적으로 저장하여 상태 업데이트
     return {
         "messages": [AIMessage(content=response_text)],
         "final_draft": response_text,
