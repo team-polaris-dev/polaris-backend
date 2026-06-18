@@ -155,6 +155,44 @@ def list_sessions(user_id: str, limit: int = 50) -> list[dict[str, Any]]:
     return sessions
 
 
+def get_message_panel(message_id: int) -> dict[str, Any] | None:
+    """단일 메시지(message_id)의 패널 JSON(search_plan)을 복원한다. 행이 없으면 None.
+
+    digest 엔드포인트가 문서·reconstructed_query·기존 digest 를 읽는 데 쓴다.
+    """
+    with mariadb_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT search_plan FROM chat_messages WHERE message_id=%s",
+                (int(message_id),),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    raw = row.get("search_plan")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+
+
+def set_message_digest(message_id: int, digest: str) -> None:
+    """메시지 패널 JSON 의 digest 필드만 갱신해 다시 저장한다(나중 계산된 정리본 영속화)."""
+    panel = get_message_panel(message_id)
+    if panel is None:
+        return
+    panel["digest"] = digest
+    with mariadb_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE chat_messages SET search_plan=%s WHERE message_id=%s",
+                (json.dumps(panel, ensure_ascii=False), int(message_id)),
+            )
+            conn.commit()
+
+
 def list_messages(session_id: str, limit: int = 500) -> list[dict[str, Any]]:
     """특정 세션의 메시지 목록(시간순). search_plan 에 보관된 패널 데이터도 복원한다."""
     with mariadb_conn() as conn:

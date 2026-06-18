@@ -131,6 +131,8 @@ class FinancialGroup(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     intent: str
+    # 저장된 어시스턴트 메시지 id — 프론트가 이 id 로 digest 를 나중에 요청한다.
+    message_id: int = 0
     # 우측 패널이 자동으로 펼칠 탭 힌트: 'graph' | 'documents' | 'none'
     panel: str = "none"
     graph: GraphData = GraphData()
@@ -227,20 +229,19 @@ def chat_endpoint(request: ChatRequest):
         else:
             panel_data = serialize_state(result)
 
-        # 우측 '원본 문서' 탭 상단 — 흩어진 근거를 LLM 으로 한 편으로 통합 정리(동기).
-        # 문서가 있을 때만 호출하므로 그래프/매크로 턴엔 비용이 들지 않는다.
-        digest = ""
-        if panel_data.get("documents"):
-            reconstructed_q = result.get("reconstructed_query") or request.message
-            digest = build_evidence_digest(reconstructed_q, panel_data["documents"])
-        panel_data["digest"] = digest
+        # 우측 '원본 문서' 탭 상단의 통합 근거 정리(digest)는 LLM 1회 추가 호출이라
+        # 동기로 만들면 답변이 그만큼 늦는다. 여기서 만들지 않고 답변을 먼저 반환한 뒤,
+        # 프론트가 message_id 로 POST /api/chat/digest 를 호출해 나중에 채운다.
+        panel_data["digest"] = ""
 
         # 어시스턴트 응답 기록 — 우측 패널 데이터(관계도/원본문서)도 함께 저장한다.
         # 스키마 변경 없이, 비어 있던 search_plan(longtext) 컬럼에 JSON 으로 보관해
         # 세션 재진입 시 패널 버튼을 그대로 복원할 수 있게 한다.
-        # 아울러 에이전트 처리 메타(응답 지연·검증 결과·재시도 횟수)도 함께 기록한다.
+        # 나중 digest 계산을 위해 reconstructed_query 도 패널 JSON 에 보관한다
+        # (digest 엔드포인트가 message_id 로 이 행을 읽어 문서·질문을 복원).
+        message_id = 0
         try:
-            chat_store.save_message(
+            message_id = chat_store.save_message(
                 request.thread_id,
                 request.user_id,
                 "assistant",
@@ -250,25 +251,68 @@ def chat_endpoint(request: ChatRequest):
                 # 패널(관계도/문서)에 도구 사용 목록(search_plan)을 같은 JSON 으로 보관한다.
                 # 통계의 tool_usage 가 이 한 행만 읽으므로 별도 log_turn 적재가 필요 없다
                 # (이전엔 log_turn 이 같은 턴을 한 번 더 INSERT 해 카운트가 2배였음).
-                panel={**panel_data, "tools": result.get("search_plan")},
-            )
+                panel={
+                    **panel_data,
+                    "tools": result.get("search_plan"),
+                    "reconstructed_query": result.get("reconstructed_query") or request.message,
+                },
+            ) or 0
         except Exception as log_err:
             print(f"⚠️ 응답 기록 실패(무시): {log_err}")
 
         return ChatResponse(
             response=final_message,
             intent=final_intent,
+            message_id=message_id,
             panel=panel_data["panel"],
             graph=panel_data["graph"],
             documents=panel_data["documents"],
             financials=panel_data.get("financials", []),
-            digest=panel_data.get("digest", ""),
+            digest="",
         )
 
     except Exception as e:
 
         raise HTTPException(status_code=500, detail=f"에이전트 처리 중 오류 발생: {str(e)}")
 
+
+# 3-4. 핵심 사실 정리(digest) — 답변 반환 후 프론트가 별도로 호출(지연 분리).
+class DigestRequest(BaseModel):
+    message_id: int
+
+
+class DigestResponse(BaseModel):
+    digest: str = ""
+
+
+@api.post("/api/chat/digest", response_model=DigestResponse)
+def chat_digest_endpoint(request: DigestRequest):
+    """저장된 어시스턴트 메시지(message_id)의 문서로 통합 근거 정리본을 만들어 영속화·반환.
+
+    /api/chat 가 digest 없이 답변을 먼저 보내고, 프론트가 답변 렌더 후 이 엔드포인트를
+    호출한다. 이미 계산돼 저장돼 있으면(세션 재방문 등) LLM 재호출 없이 캐시를 돌려준다.
+    """
+    try:
+        panel = chat_store.get_message_panel(request.message_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"메시지 조회 오류: {str(e)}")
+    if panel is None:
+        raise HTTPException(status_code=404, detail="메시지를 찾을 수 없습니다.")
+
+    documents = panel.get("documents") or []
+    if not documents:
+        return DigestResponse(digest="")
+    cached = panel.get("digest") or ""
+    if cached:
+        return DigestResponse(digest=cached)
+
+    digest = build_evidence_digest(panel.get("reconstructed_query") or "", documents)
+    if digest:
+        try:
+            chat_store.set_message_digest(request.message_id, digest)
+        except Exception as e:
+            print(f"⚠️ digest 저장 실패(무시): {e}")
+    return DigestResponse(digest=digest)
 
 
 # 직접 실행할 때를 위한 엔트리포인트
