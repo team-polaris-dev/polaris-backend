@@ -1,4 +1,5 @@
 # main.py
+import threading
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -19,6 +20,7 @@ from services.chat_logging import init_chat_tables
 from core.serialize import serialize_state
 from nodes.router import empty_sources
 from tool import chat_store
+from tool.vector_store import warmup as _vector_warmup
 
 @asynccontextmanager
 async def lifespan(_api: "FastAPI"):
@@ -26,6 +28,10 @@ async def lifespan(_api: "FastAPI"):
     init_pipeline_tables()
     sweep_stale_jobs()
     init_chat_tables()
+    # 벡터 검색 콜드스타트(chunk 인덱스 17만 행 + BM25 빌드, ~2분) 제거.
+    # 블로킹하면 기동·헬스체크가 지연되므로(§9 sync 핸들러 불변식) 백그라운드 스레드로 데운다.
+    # 데우는 중 들어온 첫 검색은 _load_chunk_index 의 락에서 대기했다가 캐시를 공유한다.
+    threading.Thread(target=_vector_warmup, daemon=True, name="vector-warmup").start()
     yield
 
 
