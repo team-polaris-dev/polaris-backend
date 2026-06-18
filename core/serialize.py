@@ -9,25 +9,123 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Any
 
 from tool.rdb_client import execute_sql_query
-
-# 그래프 관계 타입 → 한글 라벨
-REL_LABELS: dict[str, str] = {
-    "IS_SUBSIDIARY_OF": "자회사",
-    "EXECUTIVE_OF": "임원",
-    "IS_MAJOR_SHAREHOLDER_OF": "대주주",
-    "SUPPLIES_TO": "공급",
-    "ACQUIRES": "인수",
-    "INVESTS": "투자",
-}
+# 관계 한글라벨·회사명 정규화는 SSOT(config)에서. _norm_co 는 답변↔노드명 매칭용 별칭.
+from config.relations import REL_LABELS
+from config.entities import normalize_corp_name as _norm_co
+from config.graphrag import (
+    PANEL_CURATION_MIN_EDGES,
+    PANEL_CURATION_KEEP_MIN,
+    PANEL_MENTION_MIN_LEN,
+)
 
 _RCEPT_RE = re.compile(r"[^0-9A-Za-z]")
 
 
 def _humanize_rel(rel: str) -> str:
     return REL_LABELS.get(rel, rel.replace("_", " ").strip() or "관계")
+
+
+
+# IFRS/DART account_id → 한글 라벨
+_ACCOUNT_KR: dict[str, str] = {
+    "ifrs-full_Revenue": "매출액",
+    "dart_OperatingIncomeLoss": "영업이익",
+    "ifrs-full_ProfitLoss": "당기순이익",
+    "ifrs-full_GrossProfit": "매출총이익",
+    "ifrs-full_Assets": "총자산",
+    "ifrs-full_Liabilities": "총부채",
+    "ifrs-full_Equity": "자본총계",
+    "ifrs-full_CashAndCashEquivalents": "현금및현금성자산",
+    "ifrs-full_CurrentAssets": "유동자산",
+    "ifrs-full_CurrentLiabilities": "유동부채",
+    "ifrs-full_CostOfSales": "매출원가",
+    "ifrs-full_ProfitLossBeforeTax": "세전순이익",
+}
+
+_SUMMARY_ORDER = ["매출액", "영업이익", "당기순이익"]
+
+
+def _fmt_krw(v: Any) -> str:
+    """원화 금액을 조/억 단위로 사람이 읽기 쉽게 변환."""
+    try:
+        n = float(v)
+        if abs(n) >= 1e12:
+            return f"{n / 1e12:,.1f}조원"
+        if abs(n) >= 1e8:
+            return f"{n / 1e8:,.0f}억원"
+        return f"{n:,.0f}원"
+    except Exception:
+        return str(v)
+
+
+def _build_rdb_documents(rdb_results: list[dict]) -> list[dict]:
+    """rdb_row 타입 UnifiedResult를 corp/year 단위로 묶어 재무카드 문서 리스트를 반환.
+
+    rdb_results 는 SQL 한 행 = 재무 지표 하나이므로 같은 기업·연도 지표를
+    하나의 카드로 집약한다. 중복 행도 이 단계에서 제거한다.
+    """
+    # (corp_name, year) → {account_id: amount}  (중복은 마지막 값 우선)
+    groups: dict[tuple[str, Any], dict[str, Any]] = defaultdict(dict)
+    # (corp_name, year) → [rcept_no, …]  카드는 여러 공시(매출·영업이익 등 지표별)에서
+    # 집약될 수 있어 행마다의 출처(rdb_row.source = rcept_no)를 모아둔다.
+    group_rcepts: dict[tuple[str, Any], list[str]] = defaultdict(list)
+
+    for r in rdb_results:
+        if r.get("type") != "rdb_row":
+            continue
+        val = r.get("value") or {}
+        if not isinstance(val, dict):
+            continue
+        account_id = str(val.get("account_id") or "")
+        amount = val.get("value")
+        year = val.get("bsns_year")
+        corp_name = r.get("name") or ""
+        if not corp_name or not account_id:
+            continue
+        groups[(corp_name, year)][account_id] = amount
+        rcept = str(r.get("source") or "")
+        if rcept:
+            group_rcepts[(corp_name, year)].append(rcept)
+
+    documents: list[dict] = []
+    for (corp_name, year), metrics in groups.items():
+        label_map = {
+            _ACCOUNT_KR.get(aid, aid): amt for aid, amt in metrics.items()
+        }
+        lines = [f"{lbl}: {_fmt_krw(amt)}" for lbl, amt in label_map.items()]
+        summary = " · ".join(
+            f"{p} {_fmt_krw(label_map[p])}"
+            for p in _SUMMARY_ORDER
+            if p in label_map
+        )
+        # 대표 rcept_no = 최빈값(여러 공시 집약 시 가장 많이 나온 원문), 전체는 rcept_nos.
+        rcepts = group_rcepts.get((corp_name, year), [])
+        rcept_no = max(set(rcepts), key=rcepts.count) if rcepts else ""
+        documents.append(
+            {
+                "rcept_no": rcept_no,
+                "rcept_nos": sorted(set(rcepts)),
+                "chunk_id": f"rdb_{corp_name}_{year}",
+                "corp_name": corp_name,
+                "title": f"주요 재무지표 ({year}년)",
+                "doc_type": "재무수치",
+                "date": str(year) if year else "",
+                "summary": summary,
+                "section_path": "재무제표",
+                "year": year,
+                "score": None,
+                "text": "\n".join(lines),
+                "source_kind": "rdb",
+            }
+        )
+
+    # 연도 최신 순 정렬
+    documents.sort(key=lambda d: d["year"] or 0, reverse=True)
+    return documents
 
 
 _CO_STRIP_RE = re.compile(r"주식회사|\(주\)|㈜|\s+")
@@ -72,15 +170,19 @@ def _doc_meta_by_rcept(rcept_nos: list[str]) -> dict[str, dict[str, Any]]:
 def build_graph(state: dict, answer: str = "") -> dict:
     """graph_facts/graph_paths → {nodes:[{id,label,category}], edges:[{...}]}.
 
-    graph_paths[i] 는 [노드, 관계, 노드, 관계, …] 로 교차 구성되고(rag._row_to_unified),
-    graph_facts[i].source 가 그 경로의 근거 rcept_no 다(둘은 행 단위로 정렬됨).
+    graph_paths[i] 는 [노드, 관계, 노드, 관계, …] 로 교차 구성되고, 엣지별 근거는
+    graph_path_sources[i](문서 rcept_no)·graph_path_chunks[i](추출 엣지의 chunk_id)에
+    행 단위로 정렬돼 들어온다(adapt_to_legacy 가 paths 와 같은 루프에서 채움).
+    예전엔 graph_facts[i].source 로 읽었는데 facts(전체 hit)와 paths(망 엣지만)의 길이가
+    달라 엣지·출처가 어긋났다 — 그 버그를 정렬 배열로 교정.
 
     answer 가 주어지면, 답변이 실제로 언급한 회사들의 부분그래프만 남긴다(멀티홉 뼈대).
     이웃 전체를 덤프하지 않고 '답의 근거 구조'만 보여주기 위함. 큐레이션 결과가 너무
     적으면(엣지<3) 전체를 유지한다(빈 패널 방지).
     """
-    facts = state.get("graph_facts") or []
     paths = state.get("graph_paths") or []
+    path_sources = state.get("graph_path_sources") or []
+    path_chunks = state.get("graph_path_chunks") or []
     if not paths:
         return {"nodes": [], "edges": []}
 
@@ -97,9 +199,8 @@ def build_graph(state: dict, answer: str = "") -> dict:
     for i, path in enumerate(paths):
         if not path:
             continue
-        rcept_no = ""
-        if i < len(facts):
-            rcept_no = str(facts[i].get("source") or "")
+        rcept_no = str(path_sources[i]) if i < len(path_sources) else ""
+        chunk_id = str(path_chunks[i]) if i < len(path_chunks) else ""
 
         names = [p for idx, p in enumerate(path) if idx % 2 == 0 and p]
         rels = [p for idx, p in enumerate(path) if idx % 2 == 1]
@@ -124,7 +225,8 @@ def build_graph(state: dict, answer: str = "") -> dict:
                     "target": tgt,
                     "type": rel,
                     "label": _humanize_rel(rel),
-                    "rcept_no": rcept_no,
+                    "rcept_no": rcept_no,   # 문서 출처(모든 엣지)
+                    "chunk_id": chunk_id,   # 청크 출처(추출 엣지만, 없으면 '')
                 }
             )
 
@@ -132,7 +234,7 @@ def build_graph(state: dict, answer: str = "") -> dict:
     # 다른 회사로 뻗는 가지)을 잘라 답의 핵심 구조만 남긴다.
     seeds = {s.get("name") for s in (state.get("graph_seeds") or []) if s.get("name")}
     seed_nodes = {n for n in nodes if n in seeds}
-    if seed_nodes and len(edges) > 6:
+    if seed_nodes and len(edges) > PANEL_CURATION_MIN_EDGES:
         core = set(seed_nodes)
         for e in edges:
             if e["source"] in seed_nodes:
@@ -140,19 +242,19 @@ def build_graph(state: dict, answer: str = "") -> dict:
             if e["target"] in seed_nodes:
                 core.add(e["source"])
         cur = [e for e in edges if e["source"] in core and e["target"] in core]
-        if len(cur) >= 3:
+        if len(cur) >= PANEL_CURATION_KEEP_MIN:
             keep = {e["source"] for e in cur} | {e["target"] for e in cur}
             return {"nodes": [nodes[n] for n in nodes if n in keep], "edges": cur}
 
     # 큐레이션 2순위(시드 매칭 실패 시) — 답변이 언급한 회사들 사이 엣지만
     na = _norm_co(answer)
-    if na and len(edges) > 6:
+    if na and len(edges) > PANEL_CURATION_MIN_EDGES:
         mentioned = {
             nid for nid in nodes
-            if len(_norm_co(nid)) >= 2 and _norm_co(nid) in na
+            if len(_norm_co(nid)) >= PANEL_MENTION_MIN_LEN and _norm_co(nid) in na
         }
         cur = [e for e in edges if e["source"] in mentioned and e["target"] in mentioned]
-        if len(cur) >= 3:
+        if len(cur) >= PANEL_CURATION_KEEP_MIN:
             keep = {e["source"] for e in cur} | {e["target"] for e in cur}
             return {"nodes": [nodes[n] for n in nodes if n in keep], "edges": cur}
 
@@ -160,28 +262,28 @@ def build_graph(state: dict, answer: str = "") -> dict:
 
 
 def build_documents(state: dict) -> list[dict]:
-    """Vector 청크 + 그래프 근거 rcept_no → 원본 문서 리스트(메타 보강).
+    """Vector 청크 → 원본 문서 리스트(메타 보강).
 
-    각 항목은 우측 '원본 문서' 탭 카드 한 장에 대응한다. Vector 청크는 본문(text)을
-    포함하고, 그래프 근거 문서는 메타만(본문 없음) 포함한다.
+    각 항목은 우측 '원본 문서' 탭 카드 한 장에 대응한다. Vector 청크는 본문(text)을 포함한다.
+    로그에 기록된 vec_results만 표시한다.
     """
     vec_results = state.get("vec_results") or []
-    graph_prov = list(state.get("graph_provenance") or [])
-    for fact in state.get("graph_facts") or []:
-        if fact.get("source"):
-            graph_prov.append(str(fact["source"]))
 
     rcept_nos: list[str] = []
     for v in vec_results:
         rn = str((v.get("extra") or {}).get("rcept_no") or "")
         if rn:
             rcept_nos.append(rn)
-    rcept_nos.extend(graph_prov)
 
     meta = _doc_meta_by_rcept(rcept_nos)
 
     documents: list[dict] = []
     seen: set[str] = set()
+
+    # 0) RDB 정형 데이터(재무수치) — 벡터 문서보다 앞에 배치
+    rdb_docs = _build_rdb_documents(state.get("rdb_results") or [])
+    documents.extend(rdb_docs)
+    seen.update(d["chunk_id"] for d in rdb_docs if d["chunk_id"])
 
     # 1) Vector 청크 = 본문이 있는 원본 발췌
     for v in vec_results:
@@ -211,35 +313,80 @@ def build_documents(state: dict) -> list[dict]:
             }
         )
 
-    # 2) 그래프 근거 문서 = 메타만(본문 없음), 중복 제외
-    for rn in graph_prov:
-        rn = str(rn)
-        if not rn or rn in seen:
-            continue
-        seen.add(rn)
-        m = meta.get(rn, {})
-        documents.append(
-            {
-                "rcept_no": rn,
-                "chunk_id": "",
-                "corp_name": m.get("corp_name") or "",
-                "title": m.get("title") or "",
-                "doc_type": m.get("doc_type") or "",
-                "date": m.get("date") or "",
-                "summary": m.get("summary") or "",
-                "section_path": "",
-                "year": None,
-                "score": None,
-                "text": "",
-                "source_kind": "graph",
-            }
-        )
-
     return documents
 
 
+def build_financials(state: dict) -> list[dict]:
+    """rdb_results → 프론트 차트용 재무지표 그룹 리스트.
+
+    반환 형태:
+      [
+        {
+          "corp_name": "삼성전자",
+          "year": 2025,
+          "unit": "조원",          # 해당 그룹의 통일 단위
+          "metrics": [
+            {"label": "매출액", "value": 333.6, "unit": "조원"},
+            ...
+          ]
+        },
+        ...
+      ]
+    연도 내림차순 정렬, 동일 기업·연도 중복 제거.
+    """
+    rdb_results = state.get("rdb_results") or []
+    # (corp_name, year) → {account_id: float_amount}
+    groups: dict[tuple[str, Any], dict[str, float]] = defaultdict(dict)
+
+    for r in rdb_results:
+        if r.get("type") != "rdb_row":
+            continue
+        val = r.get("value") or {}
+        if not isinstance(val, dict):
+            continue
+        aid  = str(val.get("account_id") or "")
+        amt  = val.get("value")
+        year = val.get("bsns_year")
+        corp = r.get("name") or ""
+        if corp and aid and amt is not None:
+            try:
+                groups[(corp, year)][aid] = float(amt)
+            except (TypeError, ValueError):
+                pass
+
+    if not groups:
+        return []
+
+    result: list[dict] = []
+    account_order = list(_ACCOUNT_KR.keys())
+
+    for (corp, year), raw in sorted(groups.items(), key=lambda x: -(x[0][1] or 0)):
+        max_abs = max(abs(v) for v in raw.values()) if raw else 0
+        if max_abs >= 1e12:
+            unit, divisor = "조원", 1e12
+        else:
+            unit, divisor = "억원", 1e8
+
+        # 지정 순서대로 정렬 후 나머지 추가
+        ordered_ids = [aid for aid in account_order if aid in raw]
+        ordered_ids += [aid for aid in raw if aid not in account_order]
+
+        metrics = [
+            {
+                "label": _ACCOUNT_KR.get(aid, aid),
+                "value": round(raw[aid] / divisor, 1),
+                "unit": unit,
+            }
+            for aid in ordered_ids
+        ]
+
+        result.append({"corp_name": corp, "year": year, "unit": unit, "metrics": metrics})
+
+    return result
+
+
 def serialize_state(state: dict) -> dict:
-    """최종 state → {graph, documents, panel}.
+    """최종 state → {graph, documents, financials, panel}.
 
     panel: 프론트가 자동으로 펼칠 탭 힌트.
       'graph'     → 관계도 데이터 있음
@@ -253,8 +400,9 @@ def serialize_state(state: dict) -> dict:
         answer = getattr(last, "content", "") or (
             last.get("content", "") if isinstance(last, dict) else ""
         )
-    graph = build_graph(state, answer)
-    documents = build_documents(state)
+    graph      = build_graph(state, answer)
+    documents  = build_documents(state)
+    financials = build_financials(state)
 
     if graph["edges"]:
         panel = "graph"
@@ -263,4 +411,4 @@ def serialize_state(state: dict) -> dict:
     else:
         panel = "none"
 
-    return {"graph": graph, "documents": documents, "panel": panel}
+    return {"graph": graph, "documents": documents, "financials": financials, "panel": panel}

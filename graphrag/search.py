@@ -9,26 +9,10 @@ import time
 from typing import Iterable
 
 from config.graphrag import PPR_ENABLED
+from config.relations import FOCUS_KEYWORD_GROUPS as _FOCUS_KEYWORDS
 from graphrag.matcher import match
 from graphrag.schema import GraphHit, GraphSearchOutput, Seed
 from graphrag.traverse import expand, expand_ppr, fallback_for
-
-
-# 질문 키워드 → 앞세울 관계 유형. 질문이 "주주"면 지분망만, "공급망"이면 공급망만
-# 보여주도록 관계 hit을 스코프한다 (질문 무시하고 동네 전체 덤프하던 문제 해결).
-_FOCUS_KEYWORDS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
-    (("주주", "지분", "대주주", "주식", "소유", "오너", "지배구조", "지배", "자회사",
-      "계열", "모회사", "종속"),
-     ("IS_MAJOR_SHAREHOLDER_OF", "IS_SUBSIDIARY_OF", "INVESTS_IN")),
-    (("공급", "납품", "매입", "매출처", "고객", "공급망", "협력사", "벤더", "거래처",
-      "수혜", "이득", "낙수", "납품처"),  # "수혜주" = 거래 상대(공급사)가 수혜
-     ("SUPPLIES_TO",)),
-    (("투자",), ("INVESTS_IN",)),
-    (("특수관계", "계열거래"), ("RELATED_PARTY",)),
-    (("제품", "생산", "만드", "품목"), ("PRODUCES",)),
-    (("기술", "공정"), ("USES_TECH",)),
-    (("임원", "대표", "경영진", "이사", "CEO"), ("EXECUTIVE_OF",)),
-]
 
 
 def _relation_focus(query: str) -> set[str]:

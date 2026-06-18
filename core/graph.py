@@ -11,7 +11,7 @@ from core.state import AgentState
 from nodes.memory import load_memory_node, save_memory_node
 from nodes.router import ( router_node, direct_response_node, context_reconstruct_node,
                           result_check_node, route_result_check)
-from nodes.rag import rdb_search_node, vector_search_node, graph_search_node
+from nodes.rag import (rdb_search_node, vector_search_node, graph_search_node)
 from nodes.render import generate_report_node
 
 # 2. 라우팅 조건 함수들 정의
@@ -32,7 +32,22 @@ def _timed(name: str, fn):
 
 
 def route_after_intent(state: AgentState):
-    return state["intent"]
+    # global(매크로/업계)은 시드 순회가 아니라 미리 만든 커뮤니티 요약만 읽으므로
+    # 질의 재구성(ctx, ~13s)이 불필요 → graph 로 직접 보내 오버헤드 제거.
+    # graph 노드가 intent=global 일 때 reconstructed_query 없으면 원문 질문으로 폴백.
+    intent = state["intent"]
+    if intent == "global":
+        return "graph"
+    return intent  # "direct" | "ctx"
+
+def route_after_ctx(state: AgentState):
+    """ctx(재구성) 이후 분기.
+
+    ctx 는 로컬(ctx intent) 질의만 거친다 — global 은 route 에서 graph 로 직행하므로
+    여기 오지 않는다. 따라서 항상 세 검색기(rdb/vec/graph)로 병렬 팬아웃한다.
+    결과는 result_check 로 모인다.
+    """
+    return ["rdb", "vec", "graph"]
 
 def route_search_plan(state: AgentState):
     return state["search_plan"]
@@ -70,17 +85,22 @@ workflow.add_conditional_edges(
     {
         "direct": "direct",
         "ctx": "ctx",
+        "graph": "graph",   # global: ctx 우회하고 Global Search 단독 실행
     }
 )
 
 # 단순 잡담은 답변 후 바로 종료
 workflow.add_edge("direct", END)
 
-workflow.add_edge("ctx", "rdb")
-workflow.add_edge("ctx", "vec")
-workflow.add_edge("ctx", "graph")
+# ctx 이후(로컬 질의): rdb/vec/graph 병렬 팬아웃.
+# (LangGraph conditional edge 는 리스트 반환으로 병렬 분기 지원.)
+workflow.add_conditional_edges(
+    "ctx",
+    route_after_ctx,
+    ["rdb", "vec", "graph"],
+)
 
-# 세 검색 결과가 모두 모이면 규칙 기반 충분성 체크로
+# 검색 결과가 모이면(로컬은 셋, 글로벌은 graph 단독) 규칙 기반 충분성 체크로.
 workflow.add_edge("rdb", "result_check")
 workflow.add_edge("vec", "result_check")
 workflow.add_edge("graph", "result_check")

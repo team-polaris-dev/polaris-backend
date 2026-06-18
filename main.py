@@ -108,6 +108,19 @@ class DocumentItem(BaseModel):
     source_kind: str = ""
 
 
+class FinancialMetric(BaseModel):
+    label: str = ""
+    value: float = 0.0
+    unit: str = ""
+
+
+class FinancialGroup(BaseModel):
+    corp_name: str = ""
+    year: Any = None
+    unit: str = ""
+    metrics: List[FinancialMetric] = []
+
+
 class ChatResponse(BaseModel):
     response: str
     intent: str
@@ -115,10 +128,10 @@ class ChatResponse(BaseModel):
     panel: str = "none"
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
+    financials: List[FinancialGroup] = []
 
 
 # 세션 복원용 메시지 항목 — 우측 패널(관계도/원본문서)까지 함께 복원한다.
-# GraphData/DocumentItem 을 기본값으로 쓰므로 두 클래스 정의 이후에 둔다.
 class HistoryMessage(BaseModel):
     message_id: int
     role: str
@@ -128,6 +141,7 @@ class HistoryMessage(BaseModel):
     panel: str = "none"
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
+    financials: List[FinancialGroup] = []
 
 # 3-0. 로그인 / 회원가입 — 사용자이름만 입력. 처음이면 자동 가입.
 @api.post("/api/login", response_model=LoginResponse)
@@ -195,8 +209,11 @@ def chat_endpoint(request: ChatRequest):
         # 단, result_check 가 재질문을 요청한 턴(필수 검색 소스 일부가 비어 END)에는
         # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
         # 않도록. 판정은 result_check 와 동일하게 empty_sources(필수 소스) 로 한다.
+        # 참고: 글로벌(매크로/업계) 턴은 rdb/vec/graph 가 비어 community_results 만 채우므로
+        # empty_sources 가 True → 우측 패널은 닫힌다(의도된 동작). 답변 본문(response)은
+        # gen 이 community_results 로 생성하므로 아래 분기와 무관하게 그대로 반환된다.
         if empty_sources(result):
-            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "panel": "none"}
+            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "financials": [], "panel": "none"}
         else:
             panel_data = serialize_state(result)
 
@@ -226,6 +243,7 @@ def chat_endpoint(request: ChatRequest):
             panel=panel_data["panel"],
             graph=panel_data["graph"],
             documents=panel_data["documents"],
+            financials=panel_data.get("financials", []),
         )
 
     except Exception as e:

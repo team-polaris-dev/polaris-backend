@@ -14,6 +14,11 @@ try:
 except ImportError:  # Python 3.10
     from typing_extensions import NotRequired  # type: ignore[no-redef]
 
+from config.relations import (
+    REL_TO_LEGACY_TYPE as _REL_TO_LEGACY_TYPE,
+    NETWORK_REL_TYPES as _NETWORK_REL_TYPES,
+)
+
 
 HitLabel = Literal[
     "organization", "person", "product", "technology",
@@ -65,28 +70,8 @@ _HIT_TO_LEGACY_TYPE = {
     # relationship은 attrs.rel_type 따라 분기 (아래 _rel_legacy_type)
 }
 
-_REL_TO_LEGACY_TYPE = {
-    "EXECUTIVE_OF": "executive",
-    "IS_MAJOR_SHAREHOLDER_OF": "shareholder",
-    "IS_SUBSIDIARY_OF": "subsidiary",
-    "INVESTS_IN": "investment",
-    "SUPPLIES_TO": "supply",
-    "PRODUCES": "produces",
-    "USES_TECH": "uses_tech",
-    "RELATED_PARTY": "related_party",
-    "INTERLOCKING_DIRECTORATE": "interlocking_directorate",
-}
-
-# 그래프 망(패널)에 그릴 엣지 = 회사↔회사 사업관계만 (Bloomberg SPLC / MS GraphRAG 방식).
-# 제품·기술·임원·재무는 노드가 아니라 회사의 '속성' → facts/텍스트에만 남기고 망에선 제외.
-_NETWORK_REL_TYPES = {
-    "IS_MAJOR_SHAREHOLDER_OF",
-    "IS_SUBSIDIARY_OF",
-    "SUPPLIES_TO",
-    "INVESTS_IN",
-    "RELATED_PARTY",
-    "INTERLOCKING_DIRECTORATE",
-}
+# _REL_TO_LEGACY_TYPE, _NETWORK_REL_TYPES 는 config.relations 에서 import(상단).
+# 망(패널) 엣지 = 회사↔회사 사업관계만(is_network). 임원·제품·기술은 속성 → 망 제외.
 
 
 def _fact_from_hit(hit: GraphHit) -> dict:
@@ -164,9 +149,16 @@ def _path_from_hit(hit: GraphHit) -> list[str] | None:
 
 
 def adapt_to_legacy(hits: list[GraphHit]) -> dict:
-    """신규 graph_hits → 기존 graph_facts/paths/provenance."""
+    """신규 graph_hits → 기존 graph_facts/paths/provenance.
+
+    path_sources/path_chunks 는 paths 와 행 단위로 정렬된다(같은 i = 같은 망 엣지).
+    serialize.build_graph 가 엣지별 근거를 i 로 읽으므로 paths 와 길이가 반드시 같아야
+    한다 — facts(전체 hit) 로 인덱싱하면 어긋난다(예전 버그). 그래서 같은 루프에서 동시 append.
+    """
     facts: list[dict] = []
     paths: list[list[str]] = []
+    path_sources: list[str] = []   # 문서 출처(rcept_no) — 모든 망 엣지
+    path_chunks: list[str] = []    # 청크 출처(chunk_id) — 추출 엣지만(없으면 '')
     sources: list[str] = []
     seen_sources: set[str] = set()
 
@@ -176,6 +168,8 @@ def adapt_to_legacy(hits: list[GraphHit]) -> dict:
         path = _path_from_hit(hit)
         if path:
             paths.append(path)
+            path_sources.append(hit.get("source") or "")
+            path_chunks.append((hit.get("attrs") or {}).get("chunk_id") or "")
 
         src = hit.get("source")
         if src and src not in seen_sources:
@@ -186,4 +180,6 @@ def adapt_to_legacy(hits: list[GraphHit]) -> dict:
         "facts": facts,
         "paths": paths,
         "provenance": sources,
+        "path_sources": path_sources,
+        "path_chunks": path_chunks,
     }

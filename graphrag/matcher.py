@@ -17,6 +17,8 @@ from config.graphrag import (
     MAX_SEEDS,
     SEED_SCORE_BAND,
 )
+# 회사명 정규화·일반어 판정은 SSOT(config.entities). _norm 은 정확매칭 판정용 별칭.
+from config.entities import normalize_corp_name as _norm, is_generic_org, LABEL_MAP as _LABEL_MAP
 from tool.graph_client import neo4j_driver
 from graphrag.schema import Seed
 
@@ -32,19 +34,10 @@ def escape_lucene(q: str) -> str:
     return _LUCENE_SPECIAL.sub(r"\\\1", q)
 
 
-# ── 과매칭 억제 (튠 파라미터는 config.graphrag) ───────────────────
+# ── 과매칭 억제 (튠 파라미터는 config.graphrag, 정규화는 config.entities) ──────────
 # cjk analyzer 는 "에스케이하이닉스" 를 bigram 으로 쪼개 SK 계열 수십 곳에 매칭한다.
 # 상위 N개를 그대로 시드로 쓰면 ego 그래프가 계열 합집합(헤어볼)이 된다. 그래서
-# 결과를 (1) 정규화 정확매칭 우선 (2) top score 밴드컷 (3) 시드 상한 으로 좁힌다.
-_SUFFIX_RE = re.compile(
-    r"\(주\)|㈜|\(유\)|㈜|주식회사|유한회사|\(재\)|,?\s*inc\.?|,?\s*co\.?,?\s*ltd\.?",
-    re.IGNORECASE,
-)
-
-
-def _norm(s: str) -> str:
-    """회사명 정규화 — 법인 접미사·공백 제거 후 소문자. 정확매칭 판정용."""
-    return re.sub(r"\s+", "", _SUFFIX_RE.sub("", s or "")).lower()
+# 결과를 (1) 일반어 제외 (2) 정규화 정확매칭 우선 (3) top score 밴드컷 (4) 시드 상한 으로 좁힌다.
 
 
 def _select(rows: list[dict], query: str, *, max_seeds: int, band: float) -> list[dict]:
@@ -62,6 +55,8 @@ def _select(rows: list[dict], query: str, *, max_seeds: int, band: float) -> lis
     chosen: list[dict] = []
     seen: set[str] = set()
     for r in rows:
+        if is_generic_org(r.get("name") or ""):
+            continue  # 특수관계자 등 일반어 placeholder 는 시드에서 제외
         nm = _norm(r.get("name") or "")
         strong = bool(nm) and nm in qn
         near = float(r.get("score") or 0.0) >= cut
@@ -107,14 +102,6 @@ RETURN labels(node)[0] AS raw_label,
 ORDER BY score DESC
 LIMIT $limit
 """
-
-
-_LABEL_MAP = {
-    "Organization": "organization",
-    "Person": "person",
-    "Product": "product",
-    "Technology": "technology",
-}
 
 
 def match_fulltext(

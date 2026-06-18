@@ -52,9 +52,16 @@ parser = JsonOutputParser()
 # 2-3. 문자열 기반 프롬프트 템플릿 생성
 router_prompt = PromptTemplate(
     template="""당신은 공시 분석 서비스의 라우터입니다.
-사용자의 메시지와 대화 맥락을 분석하여, 기업의 공시 정보, 재무제표, 관계사 등 데이터 검색이 필요하면 'ctx', 단순한 인사, 감사 표시, 검색이 필요 없는 잡담이면 'direct'로 분류하세요.
+사용자의 메시지와 대화 맥락을 분석하여 의도를 'direct' / 'ctx' / 'global' 중 하나로 분류하세요.
+
+- direct: 단순한 인사, 감사 표시, 검색이 필요 없는 잡담.
+- global: 특정 회사 하나가 아니라 업계·시장 전체의 구조를 묻는 매크로/주제형 질문.
+  예) "반도체 업계 전체 구조 요약", "전반적으로 어떤 그룹·계열로 나뉘나", "밸류체인/생태계가 어떻게 연결돼 있나",
+      "가장 큰 군집(계열)은 무엇인가", "산업 전체적으로 기업들이 어떻게 연결돼 있나".
+- ctx: 위에 해당하지 않으면서 특정 기업의 공시 정보, 재무제표, 관계사 등 데이터 검색이 필요한 질문.
+
 설명이나 마크다운 없이 반드시 아래의 JSON 형식으로만 응답해야 합니다.
-{{"intent": "ctx"}} 또는 {{"intent": "direct"}}
+{{"intent": "ctx"}} 또는 {{"intent": "direct"}} 또는 {{"intent": "global"}}
 
 [대화 기록]
 {chat_history}
@@ -62,6 +69,9 @@ router_prompt = PromptTemplate(
 결과 JSON:""",
     input_variables=["chat_history"]
 )
+
+# 라우터가 허용하는 의도 — 그 외 값은 ctx 로 폴백.
+_VALID_INTENTS = {"direct", "ctx", "global"}
 
 def _run_router(chat_history: str) -> dict:
     prompt_text = router_prompt.format(chat_history=chat_history)
@@ -84,13 +94,17 @@ def router_node(state: dict):
     try:
         parsed_response = _run_router(chat_history_text)
         intent = parsed_response.get("intent", "ctx")
+        # 모델이 엉뚱한 값을 주면 기존 동작(ctx)으로 폴백.
+        if intent not in _VALID_INTENTS:
+            intent = "ctx"
 
     except Exception as e:
         print(f"⚠️ [Router Node] 파싱 실패. 에러: {e}")
         print("기본값(ctx)으로 폴백합니다.")
         intent = "ctx"
 
-    print(f"🧭 [Router Node] 의도 분류: {'RAG' if intent == 'ctx' else 'DIRECT'}")
+    _label = {"ctx": "RAG", "global": "GLOBAL", "direct": "DIRECT"}.get(intent, "RAG")
+    print(f"🧭 [Router Node] 의도 분류: {_label}")
     return {"intent": intent}
 
 def direct_response_node(state: AgentState):
@@ -367,6 +381,15 @@ def _dump_resultcheck_html(state: AgentState, total_elapsed: float | None = None
             f"<h2>{label} <span class='cnt'>{len(rows)}건</span></h2>{_html_table(rows)}"
         )
 
+    # global 경로는 rdb/vec/graph 가 비고 커뮤니티 요약으로 답하므로, 있으면 별도 섹션·집계.
+    community = state.get("community_results") or []
+    if community:
+        label = "업계/그룹 종합(커뮤니티)"
+        counts[label] = len(community)
+        sections.append(
+            f"<h2>{label} <span class='cnt'>{len(community)}건</span></h2>{_html_table(community)}"
+        )
+
     summary = " · ".join(f"{label} {n}건" for label, n in counts.items())
     total_txt = f" · 총 {total_elapsed:.3f}s" if total_elapsed is not None else ""
     html = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -414,7 +437,14 @@ def _dump_resultcheck_html(state: AgentState, total_elapsed: float | None = None
 
 
 def route_result_check(state: AgentState) -> str:
-    """result_check 분기: 필수 소스가 모두 있으면 'gen', 하나라도 비면 'end'."""
+    """result_check 분기.
+
+    - global(매크로/업계): 세 소스(rdb/vec/graph)는 비기 마련이므로 검사하지 않고,
+      커뮤니티 요약(community_results)이 하나라도 있으면 'gen'.
+    - 그 외: 필수 소스가 모두 있으면 'gen', 하나라도 비면 'end'.
+    """
+    if state.get("intent") == "global":
+        return "gen" if state.get("community_results") else "end"
     return "end" if empty_sources(state) else "gen"
 
 
@@ -426,6 +456,13 @@ def result_check_node(state: AgentState):
     더 구체적인 질문을 요청하는 답변을 만들어 END 로 종료한다.
     """
     print("🔎 [ResultCheck Node] 검색 결과 충분성 점검 중...")
+
+    # global(매크로/업계)은 rdb/vec/graph 가 비기 마련이라 3소스 검사 대신
+    # 커뮤니티 요약 유무만 본다. route_result_check 가 동일 기준으로 분기한다.
+    if state.get("intent") == "global":
+        n = len(state.get("community_results") or [])
+        print(f"   -> 글로벌 경로: 커뮤니티 요약 {n}건 → {'통과✅' if n else '불충분❌'}")
+        return {}
 
     # 디버깅: 터미널엔 소스별 건수 요약만 찍는다. 전체 row 상세 + 질문 + 노드별/총
     # 소요시간은 파이프라인 종착점(save 노드)에서 정렬·검색 가능한 HTML 로 떨군다.

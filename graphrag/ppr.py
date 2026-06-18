@@ -21,33 +21,15 @@ from config.graphrag import (
     PPR_NEIGHBORHOOD_LIMIT,
     PPR_TOP_NODES,
 )
+# 관계 가중치·도메인 관계 목록은 SSOT(config.relations)에서. HAS_METRIC 등 비도메인 관계는 제외.
+from config.relations import REL_WEIGHT as _REL_WEIGHT, DOMAIN_RELS as _DOMAIN_RELS
+from config.entities import LABEL_MAP as _LABEL_MAP
 from tool.graph_client import neo4j_driver
 from graphrag.schema import Seed
 
 
-# 관련성 전파에 쓰는 도메인 관계 + 가중치(지배·공급이 특수관계/겸직보다 관련성 높음).
-# HAS_METRIC(FinMetric)·노이즈 관계는 제외 — 엔티티 관계망만으로 관련성을 본다.
-_REL_WEIGHT = {
-    "IS_MAJOR_SHAREHOLDER_OF": 3.0,
-    "IS_SUBSIDIARY_OF": 3.0,
-    "INVESTS_IN": 2.5,
-    "SUPPLIES_TO": 2.5,
-    "EXECUTIVE_OF": 1.5,
-    "PRODUCES": 1.5,
-    "USES_TECH": 1.5,
-    "RELATED_PARTY": 1.0,
-    "INTERLOCKING_DIRECTORATE": 0.5,
-}
-_DOMAIN_RELS = list(_REL_WEIGHT.keys())
 _REL_FILTER = "|".join(_DOMAIN_RELS)
 _NOISE_NAMES = {"계", "합계", "소계", "-", "주", ""}
-
-_LABEL_MAP = {
-    "Organization": "organization",
-    "Person": "person",
-    "Product": "product",
-    "Technology": "technology",
-}
 
 _OUR_ID_CYPHER = (
     "CASE "
