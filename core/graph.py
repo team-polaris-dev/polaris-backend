@@ -44,10 +44,20 @@ def route_after_ctx(state: AgentState):
     """ctx(재구성) 이후 분기.
 
     ctx 는 로컬(ctx intent) 질의만 거친다 — global 은 route 에서 graph 로 직행하므로
-    여기 오지 않는다. 따라서 항상 세 검색기(rdb/vec/graph)로 병렬 팬아웃한다.
-    결과는 result_check 로 모인다.
+    여기 오지 않는다. vec 와 graph 를 병렬 팬아웃하고, rdb 는 graph 뒤에 순차로 돈다
+    (rdb 가 graph 앵커 corp_code/rcept_no 를 state 로 받아 결정론 SQL 을 짜기 때문 —
+    LangGraph 병렬 분기는 state 를 공유하지 않아 rdb 를 graph 와 동시에 돌리면 앵커가 빈다).
     """
-    return ["rdb", "vec", "graph"]
+    return ["vec", "graph"]
+
+
+def route_after_graph(state: AgentState):
+    """graph 이후 분기.
+
+    - global(매크로/업계): rdb/vec 를 돌리지 않으므로 바로 result_check 로.
+    - 로컬(ctx): graph 가 채운 앵커로 rdb 가 결정론 검색을 잇는다(graph → rdb).
+    """
+    return "result_check" if state.get("intent") == "global" else "rdb"
 
 def route_search_plan(state: AgentState):
     return state["search_plan"]
@@ -92,18 +102,27 @@ workflow.add_conditional_edges(
 # 단순 잡담은 답변 후 바로 종료
 workflow.add_edge("direct", END)
 
-# ctx 이후(로컬 질의): rdb/vec/graph 병렬 팬아웃.
+# ctx 이후(로컬 질의): vec/graph 병렬 팬아웃. rdb 는 graph 뒤에 순차(앵커 의존).
 # (LangGraph conditional edge 는 리스트 반환으로 병렬 분기 지원.)
 workflow.add_conditional_edges(
     "ctx",
     route_after_ctx,
-    ["rdb", "vec", "graph"],
+    ["vec", "graph"],
 )
 
-# 검색 결과가 모이면(로컬은 셋, 글로벌은 graph 단독) 규칙 기반 충분성 체크로.
+# graph 이후: 로컬은 rdb 로(앵커 전달), global 은 바로 result_check.
+workflow.add_conditional_edges(
+    "graph",
+    route_after_graph,
+    {
+        "rdb": "rdb",
+        "result_check": "result_check",
+    }
+)
+
+# 검색 결과가 모이면(로컬은 rdb+vec, 글로벌은 graph 단독) 규칙 기반 충분성 체크로.
 workflow.add_edge("rdb", "result_check")
 workflow.add_edge("vec", "result_check")
-workflow.add_edge("graph", "result_check")
 
 # 결과 충분성 검증 후 분기 (LLM 미사용 — AgentState 직접 체크)
 workflow.add_conditional_edges(

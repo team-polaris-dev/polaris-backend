@@ -37,15 +37,45 @@ def _fmt_rdb(rdb_results: list[dict]) -> str:
         if aid:
             groups[(corp, year)][aid] = amt
 
-    if not groups:
+    # 공시 메타(rdb_doc) — 그래프가 인용한 원본 공시/회사 최근 공시 목록.
+    docs: list[str] = []
+    seen_docs: set[tuple] = set()
+    for r in rdb_results:
+        if r.get("type") != "rdb_doc":
+            continue
+        val = r.get("value") or {}
+        if not isinstance(val, dict):
+            continue
+        corp = r.get("name") or "(회사 미상)"
+        title = str(val.get("title") or val.get("doc_type") or "").strip()
+        date = str(val.get("date") or "").strip()
+        rcept = str(r.get("source") or "").strip()
+        if not title:
+            continue
+        key = (corp, title, date)
+        if key in seen_docs:
+            continue
+        seen_docs.add(key)
+        meta = " · ".join(x for x in (corp, date) if x)
+        src = f" (근거: {rcept})" if rcept else ""
+        docs.append(f"  - [{meta}] {title}{src}")
+
+    if not groups and not docs:
         return ""
 
-    lines = ["### [정형 데이터 — 재무수치]"]
-    for (corp, year), metrics in sorted(groups.items(), key=lambda x: -(x[0][1] or 0)):
-        lines.append(f"\n**{corp} ({year}년 기준)**")
-        for aid, amt in metrics.items():
-            label = _ACCOUNT_KR.get(aid, aid)
-            lines.append(f"  - {label}: {_fmt_krw(amt)}")
+    lines: list[str] = []
+    if groups:
+        lines.append("### [정형 데이터 — 재무수치]")
+        for (corp, year), metrics in sorted(groups.items(), key=lambda x: -(x[0][1] or 0)):
+            lines.append(f"\n**{corp} ({year}년 기준)**")
+            for aid, amt in metrics.items():
+                label = _ACCOUNT_KR.get(aid, aid)
+                lines.append(f"  - {label}: {_fmt_krw(amt)}")
+    if docs:
+        if lines:
+            lines.append("")
+        lines.append("### [정형 데이터 — 공시 문서]")
+        lines.extend(docs[:15])
     return "\n".join(lines)
 
 

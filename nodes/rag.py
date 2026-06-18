@@ -1,15 +1,16 @@
 # nodes/rag.py
 from __future__ import annotations
 
-from core.state import AgentState
-from config.llm import llm
-import re
-from pydantic import BaseModel, Field
 from core.state import AgentState, UnifiedResult
 from graphrag import graph_search_node as _graphrag_search_node
-from tool.rdb_client import execute_sql_query, get_schema_prompt
+from tool.rdb_client import (
+    fetch_financial_card,
+    fetch_documents_by_rcept,
+    fetch_recent_documents,
+    parse_year,
+    resolve_corp_codes_from_text,
+)
 from tool.vector_store import search_vector_db
-from tool.graph_client import execute_cypher_query, GraphQueryError
 
 
 def _last_human_text(state: AgentState) -> str:
@@ -26,103 +27,160 @@ def _truncate(text: str, limit: int = 1000) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-# ---------------------------------------------------------------- NL → SQL 생성
-# (구 tool/text_to_sql.py 에서 이동: 노드가 LLM 프롬프트 구성을 직접 소유)
+# ---------------------------------------------------------------- 결정론 RDB
+# GraphDB 가 확정한 앵커(corp_code / rcept_no)를 받아 고정 SQL 템플릿만 실행한다.
+# LLM Text-to-SQL 을 제거해 "같은 질문 = 같은 결과"(결정성)를 보장한다.
+# (앵커 수집 → 재무카드 + 공시 메타 템플릿 호출 → UnifiedResult)
 
-class SQLQuery(BaseModel):
-    """변환된 MariaDB SELECT 쿼리."""
-
-    sql: str = Field(description="실행할 단일 SELECT(또는 WITH) 문. 코드펜스·설명 없이 SQL만.")
-
-
-_SYSTEM = """\
-당신은 한국 반도체 기업 GraphRAG 'POLARIS'의 MariaDB Text-to-SQL 전문가다.
-사용자 질문을 MariaDB(MySQL 호환) SELECT 쿼리 하나로 변환한다.
-규칙:
-- 반드시 단일 SELECT 문만 출력한다. INSERT/UPDATE/DELETE/DDL 금지.
-- 설명·주석·코드펜스 없이 SQL 한 문장만 출력한다.
-- 아래 스키마에 없는 테이블·컬럼은 절대 지어내지 않는다.
-- 회사 식별(필터)은 corp_code(8자리)로 하되, 답에 회사가 보여야 하면 corp_name 을 SELECT 한다.
-- 사람이 읽을 결과를 만든다 — 코드·ID보다 이름·제목 같은 의미 있는 컬럼을 우선 선택한다.
-- 결과가 많을 수 있으면 LIMIT 을 붙인다."""
+_CORP_CODE_CAP = 5    # 앵커 회사 상한(다회사 비교 대비)
+_RCEPT_CAP = 20       # 인용 공시 상한
 
 
-def _build_sql_prompt(question: str, error_feedback: str | None) -> str:
-    parts = [_SYSTEM, "## 스키마\n" + get_schema_prompt()]
-    parts.append("## 질문\n" + question)
-    if error_feedback:
-        parts.append("## 직전 SQL 실행 오류 (반드시 수정)\n" + error_feedback)
-    parts.append("## 출력 (SELECT 한 문장):")
-    return "\n\n".join(parts)
+def _is_corp_code(s: str) -> bool:
+    """8자리 숫자 corp_code 형태인지(그래프 id 에 섞인 er_name·rel id 배제)."""
+    return bool(s) and len(s) == 8 and s.isdigit()
 
 
-def _extract_sql(text: str) -> str:
-    """LLM 응답에서 SQL 한 문장만 추출 (코드펜스/설명/꼬리 제거)."""
-    fence = re.search(r"```(?:sql)?\s*(.+?)```", text, re.IGNORECASE | re.DOTALL)
-    if fence:
-        text = fence.group(1)
-    m = re.search(r"(?is)\b(SELECT|WITH)\b.*", text)  # CTE(WITH) 도 시작점으로 인정
-    sql = (m.group(0) if m else text).strip()
-    if ";" in sql:  # 첫 세미콜론 뒤 설명 제거
-        sql = sql.split(";", 1)[0]
-    sql = re.split(r"\n\s*\n", sql, maxsplit=1)[0]  # 빈 줄 뒤 설명 제거
-    return sql.strip()
+def _collect_corp_codes(state: AgentState, question: str) -> list[str]:
+    """앵커 corp_code 수집: graph_seeds → graph_facts → 질문 자가해소 순(순서보존 dedup).
 
-
-def generate_sql(question: str, error_feedback: str | None = None) -> str:
-    """질문 → SQL 문자열. error_feedback 가 있으면 직전 오류를 반영해 재생성.
-
-    구조화 출력(`with_structured_output`)을 지원하는 LLM이면 이를 우선 사용하고,
-    FakeLLM 등 미지원 모델이거나 실패 시 텍스트 응답을 정규식으로 파싱한다.
+    GraphDB 가 시드를 잡았으면 그걸 1순위로, 못 잡았으면 질문에서 직접 회사명을
+    결정론으로 해소한다(재무질문이 그래프 빈 결과에도 동작하도록).
     """
-    prompt = _build_sql_prompt(question, error_feedback)
-    if hasattr(llm, "with_structured_output"):
-        try:
-            result = llm.with_structured_output(SQLQuery).invoke(prompt)
-            return _extract_sql(result.sql)
-        except Exception:
-            pass
-    resp = llm.invoke(prompt)
-    content = getattr(resp, "content", resp)
-    return _extract_sql(str(content))
+    codes: list[str] = []
+
+    def add(c: str | None) -> None:
+        if c and _is_corp_code(c) and c not in codes:
+            codes.append(c)
+
+    for seed in state.get("graph_seeds") or []:
+        if isinstance(seed, dict) and seed.get("key_type") == "corp_code":
+            add(str(seed.get("key_value") or ""))
+
+    for fact in state.get("graph_facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        add(str(fact.get("code") or ""))
+        extra = fact.get("extra") or {}
+        add(str(extra.get("from_id") or ""))
+        add(str(extra.get("to_id") or ""))
+
+    for c in resolve_corp_codes_from_text(question):
+        add(c)
+
+    return codes[:_CORP_CODE_CAP]
 
 
-def _rdb_row_to_unified(row: dict, sql: str) -> UnifiedResult:
-    """SELECT 결과 한 행 → UnifiedResult.
+def _collect_rcept_nos(state: AgentState) -> list[str]:
+    """앵커 rcept_no 수집: graph_provenance(정제된 근거) + graph_facts.source."""
+    nos: list[str] = []
 
-    질의마다 컬럼 구성이 달라 corp_code/corp_name/rcept_no 를 식별 정보로
-    분리하고 나머지 컬럼을 value 에 담는다(없으면 행 전체를 value 로).
+    def add(r: str | None) -> None:
+        if r and r not in nos:
+            nos.append(r)
+
+    for r in state.get("graph_provenance") or []:
+        add(str(r))
+    for fact in state.get("graph_facts") or []:
+        if isinstance(fact, dict):
+            add(str(fact.get("source") or ""))
+
+    return [r for r in nos if r][:_RCEPT_CAP]
+
+
+def _fin_to_unified(row: dict) -> UnifiedResult:
+    """재무카드 행 → UnifiedResult(render._fmt_rdb 가 기대하는 rdb_row 규격).
+
+    value 에 account_id/value/bsns_year 를 담아 gen 이 기업·연도로 묶어 렌더한다.
+    source 는 rcept_no — 원본 공시 링크 앵커.
     """
-    rest = {k: v for k, v in row.items() if k not in ("corp_code", "corp_name", "rcept_no")}
     return {
         "type": "rdb_row",
         "code": str(row.get("corp_code", "")),
-        "name": str(row.get("corp_name", "")),
-        "value": rest or row,
-        "extra": {"sql": sql},
-        "source": str(row.get("rcept_no", "")),
+        "name": str(row.get("corp_name") or ""),
+        "value": {
+            "account_id": row.get("account_id"),
+            "value": row.get("value"),
+            "bsns_year": row.get("bsns_year"),
+            "unit": row.get("unit"),
+            "fs_div": row.get("fs_div"),
+        },
+        "extra": {"kind": "financial"},
+        "source": str(row.get("rcept_no") or ""),
+    }
+
+
+def _doc_to_unified(row: dict) -> UnifiedResult:
+    """공시 메타 행 → UnifiedResult. render._fmt_rdb 가 별도 문서 섹션으로 렌더."""
+    return {
+        "type": "rdb_doc",
+        "code": str(row.get("corp_code", "")),
+        "name": str(row.get("corp_name") or ""),
+        "value": {
+            "title": row.get("title"),
+            "doc_type": row.get("doc_type"),
+            "date": str(row.get("date") or ""),
+            "summary_short": row.get("summary_short"),
+        },
+        "extra": {"kind": "document"},
+        "source": str(row.get("rcept_no") or ""),
+    }
+
+
+def _rdb_abstain() -> UnifiedResult:
+    """정형 데이터가 없을 때 내보내는 '표식 행'(SQL 결과 아님, 직접 생성).
+
+    이 백엔드는 세 검색 소스(rdb/vec/graph) 중 하나라도 비면 답변이 막히는 게이트
+    (router.result_check)를 갖는다. 공급망·보유기술처럼 RDB 에 정형 데이터가 없는
+    질문은 빈 결과([])를 내면 답변 전체가 차단되고, 그걸 피하려 LLM 이 chunk_index 를
+    LIKE 로 긁어 노이즈를 만든다(원인). 그래서 '진짜로 정형 데이터가 없을 때'는
+    빈 리스트 대신 이 표식 1행을 내보내 게이트는 통과시키되, gen 노드가 "정형 데이터
+    없음"으로 정직하게 렌더링하게 한다(render.py 규칙 #3). SQL 검증/실행을 거치지 않고
+    직접 만든 dict 라 SQL 안전성 경로와 무관하며, serialize(프론트 패널)는 rdb_results 를
+    읽지 않아 UI 로 새어나가지 않는다.
+    """
+    return {
+        "type": "rdb_note",
+        "code": "",
+        "name": "정형 데이터",
+        "value": "이 질문에 해당하는 정형(공시 메타·재무수치) 데이터가 없습니다.",
+        "extra": {},
+        "source": "",
     }
 
 
 def rdb_search_node(state: AgentState):
-    """RDB 검색: NL→SQL→실행 → UnifiedResult 리스트.
+    """RDB 검색(결정론): GraphDB 앵커(corp_code/rcept_no) → 고정 SQL 템플릿 → UnifiedResult.
 
-    LLM/DB 호출이 예외를 던지거나(Ollama 다운 등) 결과가 없으면
-    rdb_results=[] 를 반환해 파이프라인을 보호한다.
-    SQL 실행 실패 시 에러를 LLM에 되먹여 1회 재시도한다.
+    LLM Text-to-SQL 을 제거했다 — 같은 앵커는 항상 같은 SQL/결과를 낸다(비결정성 해소).
+      1) 회사(corp_code) 앵커가 있으면 재무카드(연결·연간, 최신연도 또는 질문 연도) 조회.
+      2) 그래프가 인용한 rcept_no 가 있으면 그 공시 메타를, 없으면 회사 최근 공시를 보강.
+    정형 데이터가 전혀 없으면 빈 리스트 대신 '표식 행'(_rdb_abstain)을 내 result_check
+    게이트를 통과시키되 gen 이 '정형 데이터 없음'으로 정직하게 렌더하게 한다.
     """
     question = state.get("reconstructed_query") or _last_human_text(state)
     try:
-        sql = generate_sql(question)
-        result = execute_sql_query(sql)
-        if not result["ok"]:
-            sql = generate_sql(question, error_feedback=result["error"])
-            result = execute_sql_query(sql)
-        if not result["ok"] or not result["rows"]:
-            return {"rdb_results": []}
-        return {"rdb_results": [_rdb_row_to_unified(row, result["sql"]) for row in result["rows"]]}
-    except Exception:
-        return {"rdb_results": []}
+        corp_codes = _collect_corp_codes(state, question)
+        rcept_nos = _collect_rcept_nos(state)
+        year = parse_year(question)
+
+        results: list[UnifiedResult] = []
+
+        if corp_codes:
+            results.extend(_fin_to_unified(r) for r in fetch_financial_card(corp_codes, year))
+
+        # 그래프가 인용한 공시(rcept_no) 우선, 없으면 회사 최근 공시로 맥락 보강.
+        if rcept_nos:
+            results.extend(_doc_to_unified(r) for r in fetch_documents_by_rcept(rcept_nos))
+        elif corp_codes:
+            results.extend(_doc_to_unified(r) for r in fetch_recent_documents(corp_codes))
+
+        if not results:
+            return {"rdb_results": [_rdb_abstain()]}
+        return {"rdb_results": results}
+    except Exception as e:
+        print(f"⚠️ [rdb_search_node] 예외 → abstain: {e!r}")
+        return {"rdb_results": [_rdb_abstain()]}
 
 
 def _chunk_to_unified(row: dict) -> UnifiedResult:
@@ -156,9 +214,15 @@ def vector_search_node(state: AgentState):
     try:
         rows = search_vector_db(question)
         if not rows:
+            # 정상 0건 — 검색은 동작했고 관련 청크가 없었다(관련도 하한/메타필터).
+            # 아래 예외 경로(검색 자체 실패)와 구분해 로깅한다. 콜드스타트 0건은
+            # vector_store 의 콜드빌드 로그로 따로 식별된다.
+            print("ℹ️ [vector_search_node] 관련 청크 0건(정상 degrade)")
             return {"vec_results": []}
         return {"vec_results": [_chunk_to_unified(row) for row in rows]}
-    except Exception:
+    except Exception as e:
+        # 예외로 인한 0건 — Qdrant/Ollama/DB 장애 등. 정상 0건과 절대 같게 보지 말 것.
+        print(f"⚠️ [vector_search_node] 검색 예외 → 0건 degrade: {e!r}")
         return {"vec_results": []}
 
 

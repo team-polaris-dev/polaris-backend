@@ -135,6 +135,42 @@ def _patch_gemini_stdin() -> None:
 _patch_gemini_stdin()
 
 
+def _resolve_codex_launcher() -> list[str] | None:
+    """Return a Windows-safe Codex launcher command prefix."""
+    command = os.environ.get("CODEX_BIN") or shutil.which("codex")
+    if not command:
+        return None
+    suffix = Path(command).suffix.lower()
+    if suffix == ".ps1":
+        shell = shutil.which("powershell") or shutil.which("pwsh")
+        if not shell:
+            return None
+        return [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", command]
+    return [command]
+
+
+def _patch_codex_for_windows() -> None:
+    if sys.platform != "win32":
+        return
+    launcher = _resolve_codex_launcher()
+    if not launcher:
+        return
+    import apimaker.providers.codex as _codex
+
+    _orig_args = _codex._codex_cli_args
+
+    def _patched_args(session, prompt):
+        args = _orig_args(session, prompt)
+        if args and args[0] == "codex":
+            return launcher + args[1:]
+        return args
+
+    _codex._codex_cli_args = _patched_args
+
+
+_patch_codex_for_windows()
+
+
 # 환경 변수 (하드코딩 금지 — .env 기반)
 APIMAKER_PROVIDER = os.environ.get("APIMAKER_PROVIDER", "gemini")
 # 모델 미지정 시 gemini CLI 기본값 사용. 지정 시 -m 로 전달 (예: gemini-2.5-flash).
