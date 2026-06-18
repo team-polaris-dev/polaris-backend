@@ -32,20 +32,21 @@ def _timed(name: str, fn):
 
 
 def route_after_intent(state: AgentState):
-    # global(매크로/업계) 도 먼저 질의 재구성(ctx)을 거친다 → ctx 로 매핑.
+    # global(매크로/업계)은 시드 순회가 아니라 미리 만든 커뮤니티 요약만 읽으므로
+    # 질의 재구성(ctx, ~13s)이 불필요 → graph 로 직접 보내 오버헤드 제거.
+    # graph 노드가 intent=global 일 때 reconstructed_query 없으면 원문 질문으로 폴백.
     intent = state["intent"]
-    return "ctx" if intent == "global" else intent
+    if intent == "global":
+        return "graph"
+    return intent  # "direct" | "ctx"
 
 def route_after_ctx(state: AgentState):
     """ctx(재구성) 이후 분기.
 
-    - global: GraphRAG 노드(graph) 단독 실행. graph 노드가 intent 를 보고
-      Global Search(커뮤니티 요약)로 분기한다. 별도 community 노드 없음.
-    - 그 외(ctx): 세 검색기(rdb/vec/graph)로 병렬 팬아웃.
-    어느 쪽이든 result_check 로 모인다(global 은 intent-aware 통과).
+    ctx 는 로컬(ctx intent) 질의만 거친다 — global 은 route 에서 graph 로 직행하므로
+    여기 오지 않는다. 따라서 항상 세 검색기(rdb/vec/graph)로 병렬 팬아웃한다.
+    결과는 result_check 로 모인다.
     """
-    if state.get("intent") == "global":
-        return "graph"
     return ["rdb", "vec", "graph"]
 
 def route_search_plan(state: AgentState):
@@ -84,14 +85,15 @@ workflow.add_conditional_edges(
     {
         "direct": "direct",
         "ctx": "ctx",
+        "graph": "graph",   # global: ctx 우회하고 Global Search 단독 실행
     }
 )
 
 # 단순 잡담은 답변 후 바로 종료
 workflow.add_edge("direct", END)
 
-# ctx 이후: global 이면 graph 단독(노드가 Global Search 로 분기), 아니면
-# rdb/vec/graph 병렬 팬아웃. (LangGraph conditional edge 는 리스트 반환으로 병렬 분기 지원.)
+# ctx 이후(로컬 질의): rdb/vec/graph 병렬 팬아웃.
+# (LangGraph conditional edge 는 리스트 반환으로 병렬 분기 지원.)
 workflow.add_conditional_edges(
     "ctx",
     route_after_ctx,

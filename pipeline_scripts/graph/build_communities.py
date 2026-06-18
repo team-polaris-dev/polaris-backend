@@ -6,8 +6,9 @@ Organization.cluster_id 적재 + 클러스터 통계 요약(JSON).
 설계 (03_neo4j.md §1 Organization cluster_id† 참조):
   - 노드: corp_code 보유 Organization (needs_er 노드는 노이즈라 제외)
   - 엣지 가중: IS_SUBSIDIARY_OF 3.0 / IS_MAJOR_SHAREHOLDER_OF 2.0 /
-              INVESTS_IN 1.0 / INTERLOCKING_DIRECTORATE 1.0 (confidence=low 감안)
-  - valid_to 마감 엣지 제외 (현재 사실만)
+              INVESTS_IN 1.0 / SUPPLIES_TO 1.0 / INTERLOCKING_DIRECTORATE 1.0
+              (SUPPLIES_TO·INTERLOCKING 은 추출 엣지라 confidence=low 감안해 1.0)
+  - valid_to 마감 엣지 제외 + QC 비활성(qc_disabled_at) 엣지 제외 (현재 사실만)
   - 크기 2 미만 군집은 cluster_id 미부여 (singleton 노이즈 방지)
   - seed=42 결정론. 멱등: 재실행 시 cluster_id 전체 재계산·덮어쓰기.
 
@@ -49,6 +50,7 @@ EDGE_WEIGHTS = {
     "IS_SUBSIDIARY_OF": 3.0,
     "IS_MAJOR_SHAREHOLDER_OF": 2.0,
     "INVESTS_IN": 1.0,
+    "SUPPLIES_TO": 1.0,          # 공급망 군집을 잡으려면 필수. 추출 엣지라 confidence 낮아 1.0.
     "INTERLOCKING_DIRECTORATE": 1.0,
 }
 
@@ -60,7 +62,8 @@ def fetch_projection(s) -> tuple[nx.Graph, dict[str, str]]:
         rows = s.run(
             f"MATCH (a:Organization)-[r:{rel}]-(b:Organization) "
             "WHERE a.corp_code IS NOT NULL AND b.corp_code IS NOT NULL "
-            "  AND a.corp_code < b.corp_code AND r.valid_to IS NULL "
+            "  AND a.corp_code < b.corp_code "
+            "  AND r.valid_to IS NULL AND r.qc_disabled_at IS NULL "
             "RETURN a.corp_code AS ac, a.name AS an, "
             "       b.corp_code AS bc, b.name AS bn"
         ).data()
