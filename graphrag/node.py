@@ -10,6 +10,7 @@ import logging
 from tool.graph_client import neo4j_driver
 from graphrag.schema import adapt_to_legacy
 from graphrag.search import search
+from graphrag.global_search import global_search
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +39,20 @@ def _preflight() -> None:
 
 
 def graph_search_node(state: dict) -> dict:
+    """GraphRAG 단일 진입점. intent 로 Local/Global 을 분기한다.
+
+    - global(매크로/업계): 인덱스 시점에 만들어둔 Community 요약 map-reduce
+      (Global Search) → community_results.
+    - 그 외: 시드 매칭→멀티홉/PPR 순회(Local Search) → graph_facts 등.
+    둘 다 같은 GraphRAG 노드가 소유하므로 별도 플로우 노드를 두지 않는다.
+    """
+    # 글로벌은 Cypher 순회가 아니라 커뮤니티 요약을 읽어 종합하므로 분기.
+    if state.get("intent") == "global":
+        query = state.get("reconstructed_query") or ""
+        results = global_search(query)
+        print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
+        return {"community_results": results}
+
     _preflight()
     query = state.get("reconstructed_query") or ""
     upstream = state.get("reconstructed_seeds") or []

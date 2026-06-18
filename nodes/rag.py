@@ -166,13 +166,12 @@ def vector_search_node(state: AgentState):
 # Graph RAG 노드 — graphrag 패키지(self-contained) 위임
 #======================================================================
 def graph_search_node(state: AgentState):
-    """LangGraph 노드 진입점. 본체는 graphrag 패키지가 담당.
+    """LangGraph 노드 진입점. 본체는 graphrag 패키지가 담당(Local/Global 통합).
 
-    I/O 계약(core/state.py:AgentState):
-      입력  reconstructed_query: str
-      출력  graph_facts: List[UnifiedResult]
-            graph_paths: List[List[str]]
-            graph_provenance: List[str]   # rcept_no
+    graphrag.node.graph_search_node 가 intent 로 분기한다:
+      입력  reconstructed_query: str, intent: str
+      출력  (local)  graph_facts / graph_paths / graph_provenance
+            (global) community_results: List[UnifiedResult]  # type="community"
     Neo4j/Anthropic 키 등 외부 의존이 끊기면 graphrag 가 빈 결과로 degrade.
     """
     print("*"*50)

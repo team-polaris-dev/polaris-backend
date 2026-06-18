@@ -35,6 +35,9 @@ class AgentState(TypedDict):
     vec_results: List[UnifiedResult]
     graph_facts: List[UnifiedResult]
 
+    # GraphRAG Global Search — 커뮤니티(군집) 요약 결과. intent="global" 경로에서만 채움.
+    community_results: NotRequired[List[UnifiedResult]]
+
     # 기타 그래프 관련 키 분리 유지
     graph_paths: List[List[str]]
     graph_provenance: List[str]  # 근거 rcept_no

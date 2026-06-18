@@ -209,6 +209,9 @@ def chat_endpoint(request: ChatRequest):
         # 단, result_check 가 재질문을 요청한 턴(필수 검색 소스 일부가 비어 END)에는
         # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
         # 않도록. 판정은 result_check 와 동일하게 empty_sources(필수 소스) 로 한다.
+        # 참고: 글로벌(매크로/업계) 턴은 rdb/vec/graph 가 비어 community_results 만 채우므로
+        # empty_sources 가 True → 우측 패널은 닫힌다(의도된 동작). 답변 본문(response)은
+        # gen 이 community_results 로 생성하므로 아래 분기와 무관하게 그대로 반환된다.
         if empty_sources(result):
             panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "financials": [], "panel": "none"}
         else:

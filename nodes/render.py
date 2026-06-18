@@ -161,27 +161,52 @@ def _fmt_vec(vec_results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _fmt_community(community_results: list[dict]) -> str:
+    """GraphRAG Global Search 결과(군집별 LLM 요약) → 매크로/업계 종합 텍스트.
+
+    intent="global" 경로에서만 채워진다. 다른 소스가 비어 있어도 이 블록만으로
+    gen 이 업계 전체 구조를 종합할 수 있다.
+    """
+    if not community_results:
+        return ""
+    lines = ["### [업계/그룹 종합 — Community (GraphRAG Global)]"]
+    for res in community_results:
+        extra = res.get("extra") or {}
+        size = extra.get("size")
+        size_txt = f" ({size}사)" if size else ""
+        name = res.get("name") or "(군집 미상)"
+        lines.append(f"\n**{name}{size_txt}**")
+        lines.append(str(res.get("value") or "").strip())
+    return "\n".join(lines)
+
+
 # ──────────────────────────────────────────────────
 # GEN 노드
 # ──────────────────────────────────────────────────
 
 def generate_report_node(state: AgentState):
     """Gen (Generate & Render):
-    rdb_results / vec_results / graph_facts 를 각 타입에 맞게 포매팅해
-    LLM 에 넘기고 최종 분석 보고서를 생성한다.
+    rdb_results / vec_results / graph_facts / community_results 를 각 타입에 맞게
+    포매팅해 LLM 에 넘기고 최종 분석 보고서를 생성한다.
     """
-    rdb_results    = state.get("rdb_results", []) or []
-    vec_results    = state.get("vec_results", []) or []
-    graph_facts    = state.get("graph_facts", []) or []
-    graph_paths    = state.get("graph_paths", []) or []
-    graph_provenance = state.get("graph_provenance", []) or []
+    rdb_results       = state.get("rdb_results", []) or []
+    vec_results       = state.get("vec_results", []) or []
+    graph_facts       = state.get("graph_facts", []) or []
+    graph_paths       = state.get("graph_paths", []) or []
+    graph_provenance  = state.get("graph_provenance", []) or []
+    community_results = state.get("community_results", []) or []
 
     sections: list[str] = []
 
-    rdb_text   = _fmt_rdb(rdb_results)
-    vec_text   = _fmt_vec(vec_results)
-    graph_text = _fmt_graph(graph_facts, graph_paths, graph_provenance)
+    community_text = _fmt_community(community_results)
+    rdb_text       = _fmt_rdb(rdb_results)
+    vec_text       = _fmt_vec(vec_results)
+    graph_text     = _fmt_graph(graph_facts, graph_paths, graph_provenance)
 
+    # 매크로/업계(global) 답변에선 군집 요약이 본론. 로컬 답변에선 비어 있어
+    # 자연스럽게 정형/관계망/원문 순으로 떨어진다.
+    if community_text:
+        sections.append(community_text)
     if rdb_text:
         sections.append(rdb_text)
     if graph_text:
@@ -219,12 +244,15 @@ def generate_report_node(state: AgentState):
    핵심 수치를 인용하되, 수치보다는 재무 건전성·수익 구조·특이사항 해석에 집중하세요.
    수치는 조원/억원 단위로 자연스럽게 표현하고, 원시 IFRS 코드나 원화 단위 숫자는 사용하지 마세요.
 
-4. [분석 기초 자료]에 없는 내용(사전 학습 지식·추정 수치)은 사용하지 마세요.
+4. **[업계/그룹 종합] 블록이 있으면** 그 군집 요약을 토대로 업계·계열 구조의 전반을 설명하세요.
+   특정 회사 단일 분석이 아니라 구성·관계 분포의 의미를 짚어 주세요.
+
+5. [분석 기초 자료]에 없는 내용(사전 학습 지식·추정 수치)은 사용하지 마세요.
    자료로 다루지 못한 부분은 솔직하게 밝히세요.
 
-5. 마크다운(##헤더·**볼드**·표)으로 가독성을 높이세요.
+6. 마크다운(##헤더·**볼드**·표)으로 가독성을 높이세요.
 
-6. "알겠습니다" 같은 서론 없이 바로 시작하세요.
+7. "알겠습니다" 같은 서론 없이 바로 시작하세요.
 """
 
     human_prompt = f"[사용자 질문]\n{question}\n\n[분석 기초 자료]\n{draft_info}"
