@@ -70,6 +70,9 @@ def _build_rdb_documents(rdb_results: list[dict]) -> list[dict]:
     """
     # (corp_name, year) → {account_id: amount}  (중복은 마지막 값 우선)
     groups: dict[tuple[str, Any], dict[str, Any]] = defaultdict(dict)
+    # (corp_name, year) → [rcept_no, …]  카드는 여러 공시(매출·영업이익 등 지표별)에서
+    # 집약될 수 있어 행마다의 출처(rdb_row.source = rcept_no)를 모아둔다.
+    group_rcepts: dict[tuple[str, Any], list[str]] = defaultdict(list)
 
     for r in rdb_results:
         if r.get("type") != "rdb_row":
@@ -84,6 +87,9 @@ def _build_rdb_documents(rdb_results: list[dict]) -> list[dict]:
         if not corp_name or not account_id:
             continue
         groups[(corp_name, year)][account_id] = amount
+        rcept = str(r.get("source") or "")
+        if rcept:
+            group_rcepts[(corp_name, year)].append(rcept)
 
     documents: list[dict] = []
     for (corp_name, year), metrics in groups.items():
@@ -96,9 +102,13 @@ def _build_rdb_documents(rdb_results: list[dict]) -> list[dict]:
             for p in _SUMMARY_ORDER
             if p in label_map
         )
+        # 대표 rcept_no = 최빈값(여러 공시 집약 시 가장 많이 나온 원문), 전체는 rcept_nos.
+        rcepts = group_rcepts.get((corp_name, year), [])
+        rcept_no = max(set(rcepts), key=rcepts.count) if rcepts else ""
         documents.append(
             {
-                "rcept_no": "",
+                "rcept_no": rcept_no,
+                "rcept_nos": sorted(set(rcepts)),
                 "chunk_id": f"rdb_{corp_name}_{year}",
                 "corp_name": corp_name,
                 "title": f"주요 재무지표 ({year}년)",
