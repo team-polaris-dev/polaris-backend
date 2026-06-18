@@ -101,6 +101,52 @@ def enforce_limit(sql: str, max_rows: int = MAX_ROWS) -> str:
     return s
 
 
+def is_chunk_text_scan(sql: str) -> bool:
+    """생성된 SQL 이 chunk_index 본문(embedding_text)을 RDB 로 긁어내는지 판별.
+
+    본문 내용/주제(공급망·보유기술 등)를 찾는 일은 벡터 검색기 담당이다.
+    RDB Text-to-SQL 이 정형 테이블(document_index/fin_metric)로 답할 게 없을 때
+    chunk_index.embedding_text 를 긁어 벡터 검색을 조잡하게 흉내내면 질문과 무관한
+    노이즈(사회공헌·기부금 표 등)만 나온다 — 이 패턴을 abstain 대상으로 잡는
+    결정론적 가드. 프롬프트(get_schema_prompt 규칙 9)가 1차 방어이고 이 함수는
+    LLM 이 규칙을 어겼을 때의 백업이다. 두 가지 변형을 모두 잡는다:
+
+    (1) `embedding_text LIKE '%키워드%'` — 본문 키워드 스캔(벡터 검색 흉내).
+      (2) LIKE 가 없어도 `SELECT embedding_text ...`(또는 `SELECT *`)로 chunk_index
+        본문 자체를 결과로 프로젝션하는 경우 — corp_code 등으로만 필터하고 본문을
+        통째로 꺼내는 패턴. 이것도 정형 답이 아니라 벡터 영역 침범이라 동일하게 abstain.
+        (resultcheck 의 사회공헌 표 노이즈가 정확히 이 본문-프로젝션 경로였다.)
+
+    chunk_index 를 건드리지 않거나 본문(embedding_text)이 결과/조건에 끼지 않는
+    정형 메타 쿼리(예: `SELECT chunk_id FROM chunk_index WHERE ...`,
+    `SELECT COUNT(*) FROM chunk_index`)는 막지 않는다. 파싱 실패는 False(보수적).
+    """
+    try:
+        root = sqlglot.parse_one(sql, read="mysql")
+    except Exception:
+        return False
+    tables = {t.name.lower() for t in root.find_all(exp.Table)}
+    if "chunk_index" not in tables:
+        return False
+    # (1) embedding_text 를 LIKE 로 긁는 본문 키워드 스캔
+    for like in root.find_all(exp.Like, exp.ILike):
+        col = like.this
+        if isinstance(col, exp.Column) and col.name.lower() == "embedding_text":
+            return True
+    # (2) LIKE 없이 embedding_text 본문을 결과로 프로젝션(SELECT 본문 / SELECT *)
+    for select in root.find_all(exp.Select):
+        for proj in select.expressions:
+            # `SELECT *` / `SELECT t.*` 는 embedding_text 를 포함 → 본문 프로젝션으로 본다.
+            # (단 COUNT(*) 등 함수 인자 속 Star 는 proj 자체가 Star/Column 이 아니라 제외된다)
+            if isinstance(proj, exp.Star) or (
+                isinstance(proj, exp.Column) and isinstance(proj.this, exp.Star)
+            ):
+                return True
+            if any(c.name.lower() == "embedding_text" for c in proj.find_all(exp.Column)):
+                return True
+    return False
+
+
 # 회사/doc_type 하드코딩을 DB introspection 으로 대체하기 위한 폴백 상수
 # (DB 미가용 시에만 사용 — 테스트/eval 무중단 보장).
 _CORP_CODES_FALLBACK = "삼성전자=00126380, SK하이닉스=00164779, 한미반도체=00161383"
@@ -196,6 +242,15 @@ MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래
        '기업설명회(IR)개최 공시' → doc_type='기업설명회(IR)개최(안내공시)' (종류명 지정)
 3) 정기보고서류(사업보고서·반기보고서·분기보고서·감사보고서)는 doc_type 이 아니라
    title 에 들어있다. 예: title LIKE '%분기보고서%'. doc_type='분기보고서' 는 0건이다.
+   ※ title 형식은 반드시 '보고서명 (YYYY.MM)' 순서다 — 연도가 보고서명 뒤 괄호 안에 온다.
+     예: '사업보고서 (2024.12)', '분기보고서 (2024.09)'
+     따라서 연도+종류를 함께 검색할 때는 LIKE 순서도 종류명 먼저, 연도 뒤:
+       title LIKE '%사업보고서%(2024%'   ← 올바름
+       title LIKE '%2024%사업보고서%'   ← 0건 (순서 반대이므로 절대 쓰지 말 것)
+   ※ '2024년에 제출된/접수된 공시'처럼 제출 시점을 물으면 title 패턴이 아니라
+     date 컬럼으로 필터한다: date LIKE '2024%' 또는 YEAR(date)=2024.
+     title 안의 연도(회계기간)와 date(접수일)는 서로 다른 개념이다
+     (사업보고서는 다음 해 3월에 접수되므로 2024년 사업보고서의 date 는 2025년일 수 있음).
 4) doc_type 값에는 가운뎃점 'ㆍ'(U+318D) 가 그대로 쓰인다(일반 점 '·'·중점 아님).
    직접 매칭이 필요하면 아래 실제 값을 글자 그대로 복사해 쓰고, 애매하면 title LIKE 로 우회한다.
    ※ 사용자는 중점 '·' 나 공백을 넣어 쓰기 쉬운데, DB 실제값은 가운뎃점 'ㆍ' + 공백 없음
@@ -233,11 +288,25 @@ MariaDB (MySQL 호환). 한국 반도체 기업 공시·뉴스 데이터. 아래
    ※ 같은 계정도 fs_div(연결 CFS/별도 OFS)·reprt_code(연간/분기)·bsns_year 별로
      여러 행이 있다. 사용자가 따로 말하지 않으면 연결·연간 기준
      (fs_div='CFS' AND reprt_code='11011')으로 한정하고 bsns_year 도 명시한다.
-   예) '삼성전자 2024년 매출' → SELECT d.corp_name, f.value FROM fin_metric f
-       LEFT JOIN document_index d ON d.rcept_no=f.rcept_no
+   예) '삼성전자 2024년 매출' →
+       SELECT (SELECT corp_name FROM document_index d
+               WHERE d.corp_code=f.corp_code LIMIT 1) AS corp_name, f.value
+       FROM fin_metric f
        WHERE f.corp_code='00126380' AND f.account_id='ifrs-full_Revenue'
          AND f.bsns_year=2024 AND f.fs_div='CFS' AND f.reprt_code='11011'
-   (fin_metric 엔 corp_name 이 없으니 회사명이 필요하면 document_index 와 LEFT JOIN 한다)
+   ※ fin_metric 엔 corp_name 이 없다. 회사명은 corp_code 로 풀어야 한다(위 상관 서브쿼리).
+     rcept_no 로 document_index 와 JOIN 하지 말 것 — 최신 회계연도(가장 자주 묻는 값)의
+     공시는 fin_metric 엔 있어도 document_index 엔 아직 없어 corp_name 이 NULL 이 된다.
+9) [중요: 검색 범위와 빈 결과 처리] 이 RDB 검색은 '정형 데이터' 전용이다 —
+   공시 메타(document_index: doc_type·title·date·요약)와 재무수치(fin_metric: 금액)만 다룬다.
+   본문 내용·주제(예: 공급망/거래처 현황, 보유·핵심 기술, 사업의 내용 설명)를 키워드로
+   찾는 일은 별도 벡터 검색기가 담당하므로 RDB 가 할 일이 아니다.
+   - chunk_index.embedding_text 를 `LIKE '%키워드%'` 로 긁어 본문을 검색하지 말 것.
+     질문과 무관한 노이즈만 나온다(그건 벡터 검색기의 영역).
+   - 질문이 document_index(공시 메타)로도 fin_metric(재무수치)로도 답할 수 없는
+     '본문/주제'성 질문이면, 억지로 chunk_index 를 긁지 말고 빈 결과를 내라:
+       SELECT NULL WHERE 1=0
+     (정형 데이터가 없다는 사실은 빈 결과로 정직하게 전달된다 — 0건이 정답일 수 있다.)
 """
 
 
@@ -267,6 +336,167 @@ def execute_sql_query(sql: str, max_rows: int = MAX_ROWS) -> dict:
 
     except Exception as e:
         return {"ok": False, "rows": [], "error": str(e), "sql": safe_sql}
+
+
+# ======================================================================
+# 결정론 RDB 템플릿 — GraphDB 앵커(corp_code / rcept_no) 기반 고정 SQL
+# ----------------------------------------------------------------------
+# LLM Text-to-SQL 은 같은 질문에도 매번 다른 SQL 을 내 결과가 흔들린다(비결정성).
+# GraphDB 가 이미 시드(corp_code)·근거(rcept_no)를 구조적으로 확정하므로, 그 값을
+# 파라미터(%s 바인딩)로 받아 아래 고정 템플릿만 실행한다 → 같은 앵커 = 같은 결과.
+# 모든 SQL 은 상수 문자열(주입 표면 없음)이고 식별자는 바인딩으로만 들어간다.
+# (팀원 커밋 125dc5f: 재무카드에 rcept_no 출처 부착 / 085e804: 엣지→rcept_no·chunk_id)
+# ======================================================================
+
+# 연결·연간 기준(가장 자주 묻는 값)으로 한정. 사용자가 따로 말하지 않으면 이 기준.
+_FIN_FS_DIV = "CFS"        # 연결재무제표
+_FIN_REPRT_CODE = "11011"  # 사업보고서(연간)
+
+# 재무카드에 담을 핵심 계정(IFRS/DART 택소노미). config.graphrag.FIN_KEY_ACCOUNTS 와
+# 같은 의도지만, RDB 는 graph 패키지에 의존하지 않도록 여기 독립 정의한다(레이어 분리).
+_FIN_CARD_ACCOUNTS = [
+    "ifrs-full_Revenue",              # 매출액
+    "ifrs-full_GrossProfit",          # 매출총이익
+    "dart_OperatingIncomeLoss",       # 영업이익
+    "ifrs-full_ProfitLossBeforeTax",  # 법인세차감전순이익
+    "ifrs-full_ProfitLoss",           # 당기순이익
+    "ifrs-full_Assets",               # 자산총계
+    "ifrs-full_Liabilities",          # 부채총계
+    "ifrs-full_Equity",               # 자본총계
+    "ifrs-full_CashAndCashEquivalents",  # 현금및현금성자산
+]
+
+_YEAR_RE = re.compile(r"(20\d{2})\s*년?")
+
+
+def _placeholders(n: int) -> str:
+    """IN 절용 `%s,%s,...` 문자열 생성(n>=1 가정)."""
+    return ", ".join(["%s"] * n)
+
+
+def _run_select(sql: str, params: tuple, max_rows: int = MAX_ROWS) -> list[dict]:
+    """파라미터 바인딩 SELECT 실행. 상수 SQL + 바인딩 식별자 전용(주입 안전).
+
+    DB 미가용/쿼리 실패 시 [] 로 degrade(파이프라인 보호). 행 상한도 보장한다.
+    """
+    try:
+        with mariadb_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return list(rows)[:max_rows]
+    except Exception as e:
+        print(f"⚠️ [MariaDB] 템플릿 쿼리 실패: {e!r}")
+        return []
+
+
+def parse_year(text: str) -> int | None:
+    """질문에서 회계연도를 추출(없으면 None → 템플릿이 최신연도로 폴백)."""
+    m = _YEAR_RE.search(text or "")
+    return int(m.group(1)) if m else None
+
+
+def resolve_corp_codes_from_text(text: str, cap: int = 5) -> list[str]:
+    """질문 문자열에서 회사명을 찾아 corp_code 로 변환(결정론, LLM 미사용).
+
+    GraphDB 가 시드를 못 잡은 경우(예: 그래프 빈 결과)에도 재무질문이 동작하도록
+    RDB 가 자체적으로 회사를 해소한다. 긴 이름 우선 매칭으로 부분일치 오탐을 줄인다
+    (예: 'SK' 가 'SK하이닉스' 를 가로채지 않게).
+    """
+    mapping = get_corp_name_to_code()
+    if not mapping or not text:
+        return []
+    remaining = text
+    found: list[str] = []
+    for name in sorted(mapping, key=len, reverse=True):
+        if name and name in remaining:
+            code = mapping[name]
+            if code not in found:
+                found.append(code)
+            remaining = remaining.replace(name, " ")  # 매칭 구간 소거(중복/부분일치 방지)
+            if len(found) >= cap:
+                break
+    return found
+
+
+def fetch_financial_card(
+    corp_codes: list[str], year: int | None = None
+) -> list[dict]:
+    """회사별 핵심 재무지표 카드(연결·연간). year 미지정 시 회사별 최신 회계연도.
+
+    반환 행: corp_code, corp_name, bsns_year, account_id, value, unit, fs_div, rcept_no.
+    rcept_no 를 함께 실어 보내 RDB 노드가 원본 공시를 링크할 수 있게 한다(125dc5f).
+    """
+    codes = [c for c in dict.fromkeys(corp_codes) if c]  # 순서보존 dedup + 빈값 제거
+    if not codes:
+        return []
+
+    code_ph = _placeholders(len(codes))
+    acct_ph = _placeholders(len(_FIN_CARD_ACCOUNTS))
+    params: list = [*codes, *_FIN_CARD_ACCOUNTS, _FIN_FS_DIV, _FIN_REPRT_CODE]
+
+    if year is not None:
+        year_clause = "AND f.bsns_year = %s"
+        params.append(year)
+    else:
+        # 회사별 최신 회계연도(연결·연간 기준)로 자동 한정.
+        year_clause = (
+            "AND f.bsns_year = ("
+            "  SELECT MAX(f2.bsns_year) FROM fin_metric f2"
+            "  WHERE f2.corp_code = f.corp_code AND f2.fs_div = %s AND f2.reprt_code = %s"
+            ")"
+        )
+        params.extend([_FIN_FS_DIV, _FIN_REPRT_CODE])
+
+    sql = (
+        "SELECT f.corp_code, "
+        "  (SELECT d.corp_name FROM document_index d "
+        "   WHERE d.corp_code = f.corp_code AND d.corp_name IS NOT NULL LIMIT 1) AS corp_name, "
+        "  f.bsns_year, f.account_id, f.value, f.unit, f.fs_div, f.rcept_no "
+        "FROM fin_metric f "
+        f"WHERE f.corp_code IN ({code_ph}) "
+        f"  AND f.account_id IN ({acct_ph}) "
+        "  AND f.fs_div = %s AND f.reprt_code = %s "
+        f"  {year_clause} "
+        "ORDER BY f.corp_code, f.bsns_year DESC, f.account_id"
+    )
+    return _run_select(sql, tuple(params))
+
+
+def fetch_documents_by_rcept(rcept_nos: list[str]) -> list[dict]:
+    """GraphDB 가 인용한 rcept_no 들의 공시 문서 메타(원본 링크용).
+
+    반환 행: rcept_no, corp_code, corp_name, doc_type, date, title, summary_short.
+    """
+    nos = [r for r in dict.fromkeys(rcept_nos) if r]
+    if not nos:
+        return []
+    ph = _placeholders(len(nos))
+    sql = (
+        "SELECT rcept_no, corp_code, corp_name, doc_type, date, title, summary_short "
+        "FROM document_index "
+        f"WHERE rcept_no IN ({ph}) "
+        "ORDER BY date DESC"
+    )
+    return _run_select(sql, tuple(nos))
+
+
+def fetch_recent_documents(corp_codes: list[str], limit: int = 10) -> list[dict]:
+    """회사별 최근 공시 목록(rcept_no 앵커가 없을 때 회사 맥락 보강).
+
+    반환 행: rcept_no, corp_code, corp_name, doc_type, date, title, summary_short.
+    """
+    codes = [c for c in dict.fromkeys(corp_codes) if c]
+    if not codes:
+        return []
+    ph = _placeholders(len(codes))
+    sql = (
+        "SELECT rcept_no, corp_code, corp_name, doc_type, date, title, summary_short "
+        "FROM document_index "
+        f"WHERE corp_code IN ({ph}) "
+        "ORDER BY date DESC "
+        "LIMIT %s"
+    )
+    return _run_select(sql, (*codes, int(limit)))
 
 
 # ======================================================================
@@ -368,20 +598,28 @@ def normalize_doc_type_literals(sql: str) -> str:
     except Exception:
         return sql
 
+    def _fix_literal(lit: "exp.Literal") -> bool:
+        """문자열 리터럴이 어떤 실제 doc_type 값과 정규화 동일하면 그 값으로 치환."""
+        if not (isinstance(lit, exp.Literal) and lit.is_string):
+            return False
+        real = norm_to_val.get(_normalize_doctype(lit.this))
+        if real and real != lit.this:
+            lit.set("this", real)
+            return True
+        return False
+
     changed = False
+    # (1) doc_type = '리터럴'
     for eq in root.find_all(exp.EQ):
-        # 양변 중 하나가 doc_type 컬럼, 다른 하나가 문자열 리터럴인 경우만
         for col_side, lit_side in ((eq.left, eq.right), (eq.right, eq.left)):
-            if (
-                isinstance(col_side, exp.Column)
-                and col_side.name.lower() == "doc_type"
-                and isinstance(lit_side, exp.Literal)
-                and lit_side.is_string
-            ):
-                real = norm_to_val.get(_normalize_doctype(lit_side.this))
-                if real and real != lit_side.this:
-                    lit_side.set("this", real)
-                    changed = True
+            if isinstance(col_side, exp.Column) and col_side.name.lower() == "doc_type":
+                changed |= _fix_literal(lit_side)
                 break
+    # (2) doc_type IN ('리터럴', ...) — 가운뎃점 doc_type 이 많아 IN 도 정규화해야 0건을 막는다
+    for in_expr in root.find_all(exp.In):
+        col = in_expr.this
+        if isinstance(col, exp.Column) and col.name.lower() == "doc_type":
+            for lit in in_expr.expressions:
+                changed |= _fix_literal(lit)
 
     return root.sql(dialect="mysql") if changed else sql
