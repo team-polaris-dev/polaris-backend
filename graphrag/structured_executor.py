@@ -46,6 +46,24 @@ _RELATION_EVIDENCE_TERMS = {
 }
 _TYPE_ATTESTED_RELS = {"RELATED_PARTY", "INVESTS_IN"}
 
+# 엣지 근거 신뢰도 사다리(_score_edge_evidence). 출처+청크본문+양끝언급+관계어가 모두 있으면
+# 최상(FULL), 단계적으로 약해진다. config 로 빼지 않는다 — 게이트 임계(STRUCTURED_MIN_EVIDENCE
+# 등)는 config 지만 이 사다리 값 자체는 모듈 내부 판정 로직이라 함께 읽혀야 의미가 산다.
+_EVIDENCE_CONF_FULL = 0.95         # 출처+청크본문+양끝언급+관계어
+_EVIDENCE_CONF_ENDPOINTS = 0.8     # 출처+청크본문+양끝언급(관계어 누락)
+_EVIDENCE_CONF_CHUNK_TEXT = 0.55   # 출처+청크본문(양끝 미언급)
+_EVIDENCE_CONF_CHUNK_REF = 0.45    # 출처+청크참조(본문 못 찾음)
+_EVIDENCE_CONF_SOURCE_ONLY = 0.35  # 출처만(청크 없음)
+_EVIDENCE_CONF_NONE = 0.1          # 출처 없음
+# level 경계 = 점수 가산 경계와 동일 임계. high≥0.8, medium≥0.55.
+_EVIDENCE_LEVEL_HIGH_MIN = 0.8
+_EVIDENCE_LEVEL_MEDIUM_MIN = 0.55
+# 근거 level → 답 노드 hit score(높을수록 확신). 강근거=1.0, 중=0.75, 약=0.55.
+_NODE_SCORE_HIGH = 1.0
+_NODE_SCORE_MEDIUM = 0.75
+_NODE_SCORE_LOW = 0.55
+_ANSWER_HIT_DEFAULT_SCORE = 0.95   # add_answer_hit 기본(메트릭 랭킹 1위 등 명시 근거)
+
 
 def _placeholders(n: int) -> str:
     return ", ".join(["%s"] * n)
@@ -156,27 +174,31 @@ def _score_edge_evidence(edge: dict[str, Any], chunk_texts: dict[str, str]) -> d
     relation_term = bool(text_norm and any(t in text for t in _RELATION_EVIDENCE_TERMS.get(rel_type, ())))
 
     if has_source and has_chunk_text and from_mentioned and to_mentioned and relation_term:
-        confidence = 0.95
+        confidence = _EVIDENCE_CONF_FULL
     elif has_source and has_chunk_text and from_mentioned and to_mentioned:
-        confidence = 0.8
+        confidence = _EVIDENCE_CONF_ENDPOINTS
         warnings.append("chunk_names_relation_term_missing")
     elif has_source and has_chunk_text:
-        confidence = 0.55
+        confidence = _EVIDENCE_CONF_CHUNK_TEXT
         warnings.append("chunk_does_not_name_both_endpoints")
     elif has_source and has_chunk_ref:
-        confidence = 0.45
+        confidence = _EVIDENCE_CONF_CHUNK_REF
         warnings.append("chunk_reference_not_found")
     elif has_source:
-        confidence = 0.35
+        confidence = _EVIDENCE_CONF_SOURCE_ONLY
         warnings.append("document_source_without_chunk")
     else:
-        confidence = 0.1
+        confidence = _EVIDENCE_CONF_NONE
         warnings.append("missing_source")
 
-    if rel_type in {"RELATED_PARTY", "INVESTS_IN"} and confidence < 0.8:
+    if rel_type in _TYPE_ATTESTED_RELS and confidence < _EVIDENCE_LEVEL_HIGH_MIN:
         warnings.append("weak_evidence_for_accounting_or_investment_relation")
 
-    level = "high" if confidence >= 0.8 else "medium" if confidence >= 0.55 else "low"
+    level = (
+        "high" if confidence >= _EVIDENCE_LEVEL_HIGH_MIN
+        else "medium" if confidence >= _EVIDENCE_LEVEL_MEDIUM_MIN
+        else "low"
+    )
     return {
         "confidence": confidence,
         "level": level,
@@ -390,10 +412,10 @@ def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[fl
     score = 0.0
     reasons: list[str] = []
 
-    if evidence_confidence >= 0.8:
+    if evidence_confidence >= _EVIDENCE_LEVEL_HIGH_MIN:
         score += 1.0
         reasons.append("strong_edge_evidence")
-    elif evidence_confidence >= 0.55:
+    elif evidence_confidence >= _EVIDENCE_LEVEL_MEDIUM_MIN:
         score += 0.25
         reasons.append("medium_edge_evidence")
     elif evidence_confidence > 0:
@@ -863,7 +885,7 @@ def _execute_multi_anchor_branch_rank(
             return
         seen_rels.add(rel_id)
         evidence = edge.get("evidence") or {}
-        score = 1.0 if evidence.get("level") == "high" else 0.75 if evidence.get("level") == "medium" else 0.55
+        score = _NODE_SCORE_HIGH if evidence.get("level") == "high" else _NODE_SCORE_MEDIUM if evidence.get("level") == "medium" else _NODE_SCORE_LOW
         hits.append(_rel_hit(edge, score))
 
     for anchor in anchors:
@@ -963,7 +985,7 @@ def _execute_single_anchor_branch_rank(
             return
         seen_rels.add(rel_id)
         evidence = edge.get("evidence") or {}
-        score = 1.0 if evidence.get("level") == "high" else 0.75 if evidence.get("level") == "medium" else 0.55
+        score = _NODE_SCORE_HIGH if evidence.get("level") == "high" else _NODE_SCORE_MEDIUM if evidence.get("level") == "medium" else _NODE_SCORE_LOW
         hits.append(_rel_hit(edge, score))
 
     add_node(str(anchor.get("id") or ""), str(anchor.get("name") or ""), "anchor")
@@ -1084,7 +1106,7 @@ def _execute_for_seed(
     hits: list[GraphHit] = [_node_hit(anchor_id, str(anchor.get("name") or ""), {"structured_role": "anchor"})]
     seen_nodes = {anchor_id}
 
-    def add_answer_hit(cand: dict[str, Any] | None, role: str, node_score: float = 0.95) -> None:
+    def add_answer_hit(cand: dict[str, Any] | None, role: str, node_score: float = _ANSWER_HIT_DEFAULT_SCORE) -> None:
         if not cand:
             return
         cid = cand.get("id") or ""

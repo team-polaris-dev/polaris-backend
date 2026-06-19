@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+from config.relations import RANK_TERMS
 from graphrag.plan_schema import BranchRankStep, MetricRankStep, RelationStep, StructuredPlan
 
 
@@ -16,7 +17,7 @@ _SUPPLY_IN = (
 )
 _SUPPLY_OUT = ("고객", "고객사", "매출처", "납품처", "구매처", "사가는", "판매", "판매하는", "공급처")
 _RELATED = ("특수관계", "관련된 회사", "관련 회사", "관계자", "계열거래", "관계기업")
-_RANK = ("가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가")
+_RANK = RANK_TERMS  # config.relations SSOT (구 중복 정의 제거)
 _SECOND_HOP = ("그 회사", "해당 기업", "해당 회사", "그회사", "관련된 회사중", "특수관계자 중")
 _COMMON_ANCHOR = ("둘 다", "모두", "공통", "양사", "둘다")
 _BRANCH_COMPARE = ("각각", "비교", "관계 타입", "관계타입", "근거")
@@ -165,26 +166,6 @@ def _branch_ranks(metric_id: str) -> list[BranchRankStep]:
             kind="major_customer",
             relation=RelationStep("SUPPLIES_TO", "outgoing", "major_customers", "major_customer"),
             rank=MetricRankStep(metric_id, alias="top_major_customer"),  # type: ignore[arg-type]
-        ),
-        BranchRankStep(
-            kind="related_party",
-            relation=RelationStep("RELATED_PARTY", "undirected", "related_parties", "related_party"),
-            rank=MetricRankStep(metric_id, alias="top_related_party"),  # type: ignore[arg-type]
-        ),
-        BranchRankStep(
-            kind="investment",
-            relation=RelationStep("INVESTS_IN", "undirected", "investment_parties", "investment"),
-            rank=MetricRankStep(metric_id, alias="top_investment"),  # type: ignore[arg-type]
-        ),
-    ]
-
-
-def _single_anchor_branch_ranks(metric_id: str) -> list[BranchRankStep]:
-    return [
-        BranchRankStep(
-            kind="supplier",
-            relation=RelationStep("SUPPLIES_TO", "incoming", "suppliers", "supplier"),
-            rank=MetricRankStep(metric_id, alias="top_supplier"),  # type: ignore[arg-type]
         ),
         BranchRankStep(
             kind="related_party",

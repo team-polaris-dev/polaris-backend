@@ -14,6 +14,7 @@ from typing import Any
 from config.graphrag import (
     CROSS_EDGE_MIN_RELEVANCE,
     FIN_KEY_ACCOUNTS,
+    INDUCED_EDGE_SCORE,
     INDUCED_EDGES,
     INDUCED_MAX_NODES,
     MAX_EDGES,
@@ -722,7 +723,7 @@ def _induced_edges(assembled: list[GraphHit]) -> list[GraphHit]:
             from_id=from_id, from_name=from_name,
             to_id=to_id, to_name=to_name,
             attrs=attrs, source=r.get("source"), chunk=r.get("chunk"),
-            score=0.55,
+            score=INDUCED_EDGE_SCORE,
         )
         hit["seed_origin"] = "induced"
         induced.append(hit)

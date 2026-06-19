@@ -98,3 +98,5 @@ GLOBAL_MAP_MIN_SCORE = int(os.environ.get("GRAPHRAG_GLOBAL_MAP_MIN_SCORE", "1"))
 # ── traverse hit 기본 점수 (graphrag/traverse.py) ──────────────────
 REL_HIT_SCORE = float(os.environ.get("GRAPHRAG_REL_HIT_SCORE", "0.8"))   # 관계 hit 기본 score
 NODE_HIT_SCORE = float(os.environ.get("GRAPHRAG_NODE_HIT_SCORE", "1.0"))  # 노드 hit 기본 score
+# induced(이웃끼리) 엣지 hit score. 직접 엣지(REL_HIT_SCORE)보다 낮게 둬 후순위로 cap 된다.
+INDUCED_EDGE_SCORE = float(os.environ.get("GRAPHRAG_INDUCED_EDGE_SCORE", "0.55"))

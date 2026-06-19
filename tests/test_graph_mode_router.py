@@ -1,0 +1,286 @@
+"""GraphMode 라우터 + 노드 분기 (오프라인).
+
+llm_planner 의 결정적 프리필터(5모드)·fallback·LLM 검증과, graph 노드의 silent 봉인·
+relation_only degrade(시드 관계망 채우기) 를 monkeypatch 로 검증한다. 네트워크 0.
+프리필터로 해소되는 질의만 써서 LLM 미호출(결정성)을 함께 보장한다.
+"""
+from __future__ import annotations
+
+import pytest
+
+from graphrag import llm_planner as lp
+from graphrag import node as graph_node
+from graphrag.llm_planner import GraphMode
+
+
+# ── 결정적 프리필터: 5모드 + 위임(None) + 노이즈 ───────────────────────────
+
+@pytest.mark.parametrize(
+    "query, has_anchor, has_metric, expected",
+    [
+        ("삼성전자 매출은?", True, True, GraphMode.SILENT),                  # 속성전용 → 침묵
+        ("삼성 계열사 중 매출 가장 높은 곳", True, True, GraphMode.RELATION_RANK),  # 랭크+관계+노드지표
+        ("동진쎄미켐 가장 큰 공급처", True, False, GraphMode.RELATION_ONLY),   # 랭크+관계, 지표없음 → degrade
+        ("삼성전자 협력사", True, False, GraphMode.RELATION_EXPLORE),         # 관계만+앵커
+        ("국내 대기업 큰 그림", False, False, GraphMode.MACRO),               # 앵커없음+매크로cue
+    ],
+)
+def test_prefilter_resolves_five_modes(query, has_anchor, has_metric, expected):
+    assert lp._prefilter_mode(query, has_anchor=has_anchor, has_metric=has_metric) is expected
+
+
+def test_prefilter_defers_ambiguous_relation_without_anchor():
+    # 관계를 묻지만 엔티티 미해소 → 결정 불가, LLM 에 위임(None).
+    assert lp._prefilter_mode("협력사 알려줘", has_anchor=False, has_metric=False) is None
+
+
+def test_prefilter_noise_degrades_to_explore_not_llm():
+    # 신호 없음(앵커X·cue X·관계어 X) → EXPLORE 로 확정해 LLM 미호출.
+    # 노드는 시드 0 으로 빈 로컬을 내며 안전 degrade (n_seeds=0 계약 보존).
+    assert (
+        lp._prefilter_mode("존재하지않는회사명999XYZ", has_anchor=False, has_metric=False)
+        is GraphMode.RELATION_EXPLORE
+    )
+
+
+def test_prefilter_structured_without_metric_is_relation_only():
+    # 금액 랭킹류(노드 지표 없음) → 억지 1위 금지, ONLY 로 degrade.
+    assert (
+        lp._prefilter_mode("가장 큰 공급처", has_anchor=True, has_metric=False)
+        is GraphMode.RELATION_ONLY
+    )
+
+
+# ── _fallback_mode: 결정적 백스톱 ──────────────────────────────────────────
+
+def test_fallback_silent_for_attribute_only():
+    assert lp._fallback_mode("삼성전자 매출은?", has_anchor=True, has_metric=True) is GraphMode.SILENT
+
+
+def test_fallback_macro_only_with_cue_when_no_anchor():
+    assert lp._fallback_mode("업계 동향", has_anchor=False, has_metric=False) is GraphMode.MACRO
+
+
+def test_fallback_explore_when_no_anchor_no_cue():
+    # 앵커 미해소 + 매크로 cue 없음 → MACRO 가 아니라 EXPLORE(빈 로컬 degrade).
+    # MACRO 면 global_search 가 강제돼 n_seeds=0 결과를 덮어쓰는 회귀가 난다.
+    assert (
+        lp._fallback_mode("존재하지않는회사명999XYZ", has_anchor=False, has_metric=False)
+        is GraphMode.RELATION_EXPLORE
+    )
+
+
+# ── _coerce_mode: LLM 출력 검증 ────────────────────────────────────────────
+
+def test_coerce_mode_accepts_valid_enum():
+    data = {"supported": True, "mode": "relation_explore"}
+    assert (
+        lp._coerce_mode(data, "협력사 알려줘", has_anchor=True, has_metric=False)
+        is GraphMode.RELATION_EXPLORE
+    )
+
+
+def test_coerce_mode_unsupported_falls_back():
+    data = {"supported": False, "mode": "macro"}
+    # supported:false → 결정적 fallback. 앵커 있음 → EXPLORE.
+    assert (
+        lp._coerce_mode(data, "협력사 알려줘", has_anchor=True, has_metric=False)
+        is GraphMode.RELATION_EXPLORE
+    )
+
+
+def test_coerce_mode_invalid_enum_falls_back():
+    data = {"supported": True, "mode": "freeform_cypher"}
+    assert (
+        lp._coerce_mode(data, "업계 동향", has_anchor=False, has_metric=False)
+        is GraphMode.MACRO
+    )
+
+
+def test_coerce_mode_relation_rank_without_metric_degrades():
+    data = {"supported": True, "mode": "relation_rank"}
+    assert (
+        lp._coerce_mode(data, "동진쎄미켐 가장 큰 공급처", has_anchor=True, has_metric=False)
+        is GraphMode.RELATION_ONLY
+    )
+
+
+# ── plan_with_mode: LLM off / 다운 → degrade ───────────────────────────────
+
+def test_plan_with_mode_llm_off_uses_fallback(monkeypatch):
+    monkeypatch.setattr(lp, "_ENABLED", False)
+
+    def _must_not_call(_q):
+        raise AssertionError("LLM off 인데 호출됨")
+
+    monkeypatch.setattr(lp, "_invoke_llm", _must_not_call)
+    # 프리필터가 None 인 애매 질의도 LLM off → fallback(앵커 없음·cue 없음 → EXPLORE).
+    mode, plan = lp.plan_with_mode("협력사 알려줘", has_anchor=False, has_metric=False)
+    assert mode is GraphMode.RELATION_EXPLORE
+    assert plan is None
+
+
+def test_plan_with_mode_llm_down_degrades(monkeypatch):
+    monkeypatch.setattr(lp, "_ENABLED", True)
+
+    def _raise(_q):
+        raise RuntimeError("LLM 다운")
+
+    monkeypatch.setattr(lp, "_invoke_llm", _raise)
+    mode, plan = lp.plan_with_mode("협력사 알려줘", has_anchor=True, has_metric=False)
+    assert mode is GraphMode.RELATION_EXPLORE  # 앵커 있음 → 시드 관계망
+    assert plan is None
+
+
+def test_plan_with_mode_prefilter_skips_llm(monkeypatch):
+    def _must_not_call(_q):
+        raise AssertionError("프리필터로 해소됐는데 LLM 호출됨")
+
+    monkeypatch.setattr(lp, "_invoke_llm", _must_not_call)
+    mode, plan = lp.plan_with_mode("삼성전자 협력사", has_anchor=True, has_metric=False)
+    assert mode is GraphMode.RELATION_EXPLORE
+    assert plan is None
+
+
+# ── 노드: silent 봉인 ──────────────────────────────────────────────────────
+
+def test_node_silent_returns_anchor_stub(monkeypatch):
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(
+        graph_node, "match",
+        lambda q, upstream_seeds=None: [
+            {"label": "organization", "id": "00126380", "key_value": "00126380", "name": "삼성전자", "score": 1.0}
+        ],
+    )
+
+    def _must_not_call(*a, **k):
+        raise AssertionError("silent 인데 search() 호출됨")
+
+    monkeypatch.setattr(graph_node, "search", _must_not_call)
+
+    out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "삼성전자 매출은?"})
+
+    assert out["graph_meta"]["mode"] == "silent"
+    assert len(out["graph_hits"]) == 1
+    assert out["graph_hits"][0]["attrs"]["silent"] is True
+    # 셰임 계약: graph_facts 길이 1 → empty_sources 게이트 통과(스텁).
+    assert len(out["graph_facts"]) == len(out["graph_hits"])
+
+
+def test_node_silent_empty_when_no_org_anchor(monkeypatch):
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(graph_node, "match", lambda q, upstream_seeds=None: [])
+
+    def _must_not_call(*a, **k):
+        raise AssertionError("silent 인데 search() 호출됨")
+
+    monkeypatch.setattr(graph_node, "search", _must_not_call)
+
+    out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "삼성전자 매출 얼마?"})
+    assert out == {}  # 앵커 미해소 → 그래프 기여 없음(fail-closed)
+
+
+def test_node_silent_match_failure_is_fail_closed(monkeypatch):
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+
+    def _raise(*a, **k):
+        raise RuntimeError("matcher 다운")
+
+    monkeypatch.setattr(graph_node, "match", _raise)
+    out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "삼성전자 자산은?"})
+    assert out == {}
+
+
+# ── 노드: relation_only degrade (시드 관계망 채우기) ────────────────────────
+
+def _abstain_output():
+    seed = {
+        "label": "organization", "id": "org:동진", "key_type": "er_name",
+        "key_value": "org:동진", "name": "동진쎄미켐", "score": 1.0,
+    }
+    hit = {
+        "id": "org:동진", "label": "organization", "name": "동진쎄미켐",
+        "attrs": {"structured_role": "anchor", "abstained": True},
+        "score": 1.0, "seed_origin": "structured",
+    }
+    return {
+        "graph_hits": [hit],
+        "graph_seeds": [seed],
+        "graph_meta": {
+            "mode": "structured",
+            "structured": {"mode": "structured", "abstained": True, "answer_edges": []},
+            "n_seeds": 1, "n_hits": 1, "fallback_used": False, "errors": [],
+        },
+    }
+
+
+def _fallback_hits(_seed):
+    return [
+        {"id": "rel:1", "label": "relationship", "name": "공급",
+         "attrs": {"rel_type": "SUPPLIES_TO", "src": "org:동진", "dst": "co:A"}, "score": 0.5},
+        {"id": "co:A", "label": "organization", "name": "협력사A", "attrs": {}, "score": 0.5},
+    ]
+
+
+def test_node_relation_only_fills_seed_network_and_signals(monkeypatch):
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _abstain_output())
+    monkeypatch.setattr(graph_node, "fallback_for", _fallback_hits)
+
+    def _must_not_call(*a, **k):
+        raise AssertionError("er_name 앵커(코드 없음)인데 global_search 호출됨")
+
+    monkeypatch.setattr(graph_node, "global_search", _must_not_call)
+
+    out = graph_node.graph_search_node(
+        {"intent": "ctx", "reconstructed_query": "동진쎄미켐 가장 큰 공급처"}
+    )
+
+    # degrade 신호는 graph_meta 에만(셰임 계약 미파괴).
+    assert out["graph_meta"]["rankable"] is False
+    assert out["graph_meta"]["degrade_reason"]
+    assert out["graph_meta"]["fallback_used"] is True
+    # 시드 관계망이 채워졌다(앵커 스텁 + fallback_for hits).
+    ids = {h["id"] for h in out["graph_hits"]}
+    assert {"rel:1", "co:A"} <= ids
+    # 셰임 1:1 계약 유지.
+    assert len(out["graph_facts"]) == len(out["graph_hits"])
+
+
+def test_node_relation_explore_assembles_without_degrade(monkeypatch):
+    # 관계 탐색(랭크 없음·앵커 있음) → relation_explore, degrade 신호 없음.
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    seeds = [{"key_type": "er_name", "key_value": "org:삼성", "label": "organization", "name": "삼성전자"}]
+    out_search = {
+        "graph_hits": [
+            {"id": "rel:9", "label": "relationship", "name": "협력",
+             "attrs": {"rel_type": "SUPPLIES_TO"}, "score": 0.7},
+        ],
+        "graph_seeds": seeds,
+        "graph_meta": {"n_seeds": 1, "n_hits": 1, "fallback_used": False, "errors": []},
+    }
+    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: out_search)
+    out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "삼성전자 협력사"})
+    assert "rankable" not in out["graph_meta"]
+    assert len(out["graph_facts"]) == len(out["graph_hits"])
+
+
+def test_node_macro_without_anchor_routes_to_community(monkeypatch):
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    # 앵커 미해소 매크로 → community map-reduce.
+    monkeypatch.setattr(
+        graph_node, "search",
+        lambda q, upstream_seeds=None: {
+            "graph_hits": [], "graph_seeds": [],
+            "graph_meta": {"n_seeds": 0, "n_hits": 0, "fallback_used": False, "errors": []},
+        },
+    )
+    monkeypatch.setattr(
+        graph_node, "global_search",
+        lambda q, anchor_corp_codes=None: [
+            {"type": "community", "code": "1", "name": "g", "value": "v", "extra": {}, "source": "community:1"}
+        ],
+    )
+    out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "반도체 업계 전반 큰 그림"})
+    assert set(out.keys()) == {"community_results"}
+    assert out["community_results"][0]["code"] == "1"

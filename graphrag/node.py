@@ -8,9 +8,13 @@ from __future__ import annotations
 import logging
 
 from tool.graph_client import neo4j_driver
+from graphrag import planner
+from graphrag.llm_planner import GraphMode, _is_silent, plan_with_mode
+from graphrag.matcher import match
 from graphrag.schema import adapt_to_legacy
 from graphrag.search import search
 from graphrag.global_search import global_search
+from graphrag.traverse import fallback_for
 
 log = logging.getLogger(__name__)
 
@@ -100,41 +104,146 @@ def _attach_communities(result: dict, query: str, out: dict) -> None:
         result["community_results"] = community_results
 
 
-def graph_search_node(state: dict) -> dict:
-    """GraphRAG 단일 진입점. intent 로 Local/Global 을 분기하고 DRIFT 로 결합한다.
+def _safe_match(query: str, upstream: list[str]) -> list[dict]:
+    """match() 를 fail-closed 로 감싼다(silent 선처리용). 실패 시 []."""
+    try:
+        return match(query, upstream_seeds=upstream or [])
+    except Exception as e:
+        log.warning("graph silent match failed: %s", e)
+        return []
 
-    - global(매크로/업계): 먼저 로컬 search() 로 corp_code 앵커 해소를 시도한다.
-      · 앵커가 잡히면(라우터는 global 로 봤지만 실은 구체 엔티티 질문) → ctx 와 동일한
-        DRIFT 융합(로컬 graph_facts + 앵커 군집 community_results)을 반환(대칭 DRIFT).
-      · 앵커가 없으면(순수 매크로) → 커뮤니티 요약 map-reduce 만(community_results).
-    - 그 외(ctx/local): 시드 매칭→멀티홉/PPR 순회(Local Search) → graph_facts 등 +
-      앵커 군집 DRIFT 결합.
-    둘 다 같은 GraphRAG 노드가 소유하므로 별도 플로우 노드를 두지 않는다.
+
+def _silent_output(seeds: list[dict]) -> dict:
+    """순수 속성 질문 → 그래프 침묵. org 앵커가 해소되면 단일 노드 스텁만, 미해소면 빈 {}.
+
+    스텁은 graph_facts 길이를 1 로 만들어 ctx 게이트(empty_sources)는 통과시키되, 망 엣지가
+    없어 패널은 자동으로 닫힌다(serialize.build_graph). rdb/vec 가 실제 답을 낸다.
     """
+    anchor = next((s for s in (seeds or []) if s.get("label") == "organization"), None)
+    if not anchor:
+        return {}
+    hit = {
+        "id": str(anchor.get("id") or anchor.get("key_value") or anchor.get("name") or ""),
+        "label": "organization",
+        "name": str(anchor.get("name") or ""),
+        "attrs": {"silent": True},
+        "score": float(anchor.get("score") or 1.0),
+        "seed_origin": "silent",
+    }
+    out = {
+        "graph_hits": [hit],
+        "graph_seeds": [dict(s) for s in seeds],
+        "graph_meta": {
+            "mode": "silent",
+            "patterns_run": ["silent"],
+            "n_seeds": len(seeds),
+            "n_hits": 1,
+            "fallback_used": False,
+            "errors": [],
+        },
+    }
+    return _assemble_local(out)
+
+
+def _first_org_seed(graph_seeds: list[dict]) -> dict | None:
+    return next((s for s in (graph_seeds or []) if s.get("label") == "organization"), None)
+
+
+def _is_rankless(out: dict) -> bool:
+    """줄세울 결과가 없는 상태인가 — 구조화 abstain 또는 앵커 스텁만 남은 경우."""
+    meta = out.get("graph_meta") or {}
+    if (meta.get("structured") or {}).get("abstained"):
+        return True
+    hits = out.get("graph_hits") or []
+    non_anchor = [h for h in hits if (h.get("attrs") or {}).get("structured_role") != "anchor"]
+    return not non_anchor
+
+
+def _with_fallback_network(out: dict, seed: dict) -> dict:
+    """비어 있는 결과를 시드 depth-2 관계망(fallback_for)으로 채워 재조립한다.
+
+    기존 hit(앵커 스텁 등)와 id 로 dedup. 결정성은 fallback_for 내부 _postprocess 가 보장.
+    """
+    existing = list(out.get("graph_hits") or [])
+    seen = {h.get("id") for h in existing if h.get("id")}
+    try:
+        extra = fallback_for(seed)
+    except Exception as e:
+        log.warning("graph degrade fallback_for failed: %s", e)
+        extra = []
+    for h in extra:
+        hid = h.get("id")
+        if hid and hid in seen:
+            continue
+        if hid:
+            seen.add(hid)
+        existing.append(h)
+    merged = dict(out)
+    merged["graph_hits"] = existing
+    meta = dict(out.get("graph_meta") or {})
+    meta["n_hits"] = len(existing)
+    meta["fallback_used"] = True
+    merged["graph_meta"] = meta
+    return _assemble_local(merged)
+
+
+def graph_search_node(state: dict) -> dict:
+    """GraphRAG 단일 진입점. 질문마다 모드(역할)를 골라 무엇을 할지/말지 결정한다.
+
+    - global(매크로/업계): 로컬 search() 로 앵커 해소를 시도해 잡히면 대칭 DRIFT(로컬 사실
+      + 앵커 군집), 없으면 순수 매크로 map-reduce(community_results). (현행 보존)
+    - 그 외(ctx/local): silent(순수 속성)→침묵, macro(앵커없는 매크로)→커뮤니티,
+      relation_only(줄세울 지표 없음)→시드 관계망 + 'rankable=False' 신호로 degrade,
+      relation_rank/relation_explore→search() 가 이미 실행한 구조화/PPR 결과를 조립.
+    모드는 graphrag.llm_planner.plan_with_mode(결정적 프리필터 우선, 애매하면 LLM 1회)가 정한다.
+    별도 플로우 노드 없이 이 노드 안에서 분기한다.
+    """
+    _preflight()
+
     if state.get("intent") == "global":
-        # global 은 ctx 를 건너뛰므로(core.graph) reconstructed_query 가 비어 있다.
-        # 이때 원문 질문으로 폴백해 시드 매칭·커뮤니티 멤버명 매칭을 살린다.
+        # global 은 ctx 를 건너뛰므로 reconstructed_query 가 비어 원문으로 폴백.
         query = state.get("reconstructed_query") or _last_human_text(state)
-        _preflight()
-        # ctx 를 건너뛴 경로라 upstream_seeds 가 없다 — 질의 텍스트로만 시드 해소.
         out = search(query)
         anchors = _anchor_corp_codes(out["graph_seeds"])
         if anchors:
-            # 대칭 DRIFT: 엔티티가 해소되면 로컬 사실 + 앵커 군집을 함께 반환.
             result = _assemble_local(out)
             _attach_communities(result, query, out)
             print(f"🌐 [GraphRAG/DRIFT-global] 앵커 {len(anchors)}개 + 로컬 사실 결합")
             return result
-        # 순수 매크로: 군집 요약 map-reduce 만.
         results = global_search(query)
         print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
         return {"community_results": results}
 
-    _preflight()
     query = state.get("reconstructed_query") or ""
     upstream = state.get("reconstructed_seeds") or []
+    has_metric = planner._metric_id(query) is not None
+
+    # SILENT 선처리: PPR 펼치기 전에 차단(억지 관계망 방지). 앵커는 match() 로 가볍게 해소.
+    if _is_silent(query):
+        return _silent_output(_safe_match(query, upstream))
 
     out = search(query, upstream_seeds=upstream)
+    anchors = _anchor_corp_codes(out["graph_seeds"])
+    has_anchor = bool(out["graph_seeds"])
+    mode, _ = plan_with_mode(query, has_anchor=has_anchor, has_metric=has_metric)
+
+    # 앵커 미해소 매크로 질문(ctx 인데 실은 업계 큰그림) → 커뮤니티 map-reduce.
+    if mode is GraphMode.MACRO and not anchors:
+        results = global_search(query)
+        print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
+        return {"community_results": results}
+
     result = _assemble_local(out)
+
+    # RELATION_ONLY: 줄세울 노드 지표가 없는 관계질문 → 억지 1위 금지.
+    # 시드 관계망은 (PPR 로 이미 있거나) fallback_for 로 채우고, 신호는 graph_meta 에만 둔다.
+    if mode is GraphMode.RELATION_ONLY:
+        if _is_rankless(out):
+            seed = _first_org_seed(out["graph_seeds"])
+            if seed:
+                result = _with_fallback_network(out, seed)
+        result["graph_meta"]["rankable"] = False
+        result["graph_meta"].setdefault("degrade_reason", "순위 매길 관계 없음; 시드 관계망 표시")
+
     _attach_communities(result, query, out)
     return result

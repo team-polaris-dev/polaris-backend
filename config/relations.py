@@ -55,6 +55,10 @@ INGEST_EDGE_TYPES: frozenset[str] = frozenset({
     "PRODUCES", "USES_TECH", "SUPPLIES_TO", "RELATED_PARTY", "hasObject",
 })
 
+# 랭킹 의도 키워드 SSOT. 예전엔 planner._RANK 와 llm_planner._RANK_TERMS 에 같은 8단어가
+# 중복 정의돼 한쪽만 고치면 어긋났다. 여기서 한 번 정의하고 양쪽이 import 한다.
+RANK_TERMS: tuple[str, ...] = ("가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가")
+
 # 질문 키워드 → 앞세울 관계 유형(검색 focus). search._relation_focus 가 사용한다.
 # "주주" 질문이면 지분망만, "공급망"이면 공급망만 보여주도록 관계 hit 을 스코프한다.
 FOCUS_KEYWORD_GROUPS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [

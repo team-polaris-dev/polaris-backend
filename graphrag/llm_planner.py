@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+from enum import Enum
 from typing import Any
 
+from config.relations import RANK_TERMS
 from graphrag.plan_schema import (
     BranchKind,
     BranchRankStep,
@@ -57,11 +59,38 @@ _RELATION_DEFAULTS: dict[tuple[str, str], tuple[str, str]] = {
     ("INVESTS_IN", "undirected"): ("investment_parties", "investment"),
 }
 
-_RANK_TERMS = ("가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가")
+_RANK_TERMS = RANK_TERMS  # config.relations SSOT (구 중복 정의 제거)
 _RELATION_TERMS = (
     "거래", "공급", "납품", "협력", "벤더", "매출처", "고객", "관련",
     "특수관계", "관계자", "계열", "주주", "지분", "자회사", "종속", "투자",
 )
+# 순수 노드 속성(스칼라) 단어. 관계어·랭크어가 같이 없으면 그래프가 침묵할 신호.
+# 관계 유형 단어(대표·임원 등 EXECUTIVE_OF 류)는 일부러 제외 — silent 가 관계질문을 삼키지 않도록.
+_ATTRIBUTE_ONLY_TERMS = (
+    "매출", "영업이익", "순이익", "당기순이익", "자산", "부채", "자본",
+    "주가", "시가총액", "시총", "직원수", "종업원", "임직원", "영업이익률",
+    "설립", "본사", "소재지", "배당", "주식수",
+)
+# 앵커 없는 매크로/업계 질문 cue. MACRO 분기는 has_anchor=False 일 때만 발화.
+_MACRO_TERMS = (
+    "업계", "산업", "시장", "전반", "트렌드", "동향", "큰 그림", "큰그림",
+    "생태계", "흐름", "지형", "판도", "대기업",
+)
+
+
+class GraphMode(str, Enum):
+    """그래프 노드가 질문마다 고르는 실행 모드(역할 계약).
+
+    macro=커뮤니티 sensemaking, relation_rank=노드지표 랭킹(구조화),
+    relation_explore=시드 관계망 펼치기, relation_only=랭킹 불가 → 시드 관계망으로 degrade,
+    silent=순수 속성질문 → 그래프 침묵(rdb/vec 가 답).
+    """
+
+    MACRO = "macro"
+    RELATION_RANK = "relation_rank"
+    RELATION_EXPLORE = "relation_explore"
+    RELATION_ONLY = "relation_only"
+    SILENT = "silent"
 
 
 def _has_any(text: str, terms: tuple[str, ...]) -> bool:
@@ -71,6 +100,18 @@ def _has_any(text: str, terms: tuple[str, ...]) -> bool:
 def _looks_structured(query: str) -> bool:
     q = " ".join((query or "").split())
     return bool(q and _has_any(q, _RANK_TERMS) and _has_any(q, _RELATION_TERMS))
+
+
+def _is_silent(query: str) -> bool:
+    """순수 노드 속성 질문인가. 속성어 present AND 관계어·랭크어 모두 없음.
+
+    앵커 유무와 무관(앵커 있어도 '삼성전자 매출은?'은 침묵). 애매하면 침묵 금지(False) —
+    관계어/랭크어가 하나라도 있으면 그래프가 기여할 여지가 있다고 보고 False.
+    """
+    q = " ".join((query or "").split())
+    if not q or not _has_any(q, _ATTRIBUTE_ONLY_TERMS):
+        return False
+    return not (_has_any(q, _RELATION_TERMS) or _has_any(q, _RANK_TERMS))
 
 
 def _as_dict(raw: Any) -> dict[str, Any]:
@@ -250,6 +291,99 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
     )
 
 
+def _prefilter_mode(query: str, *, has_anchor: bool, has_metric: bool) -> GraphMode | None:
+    """명백한 질문은 결정적으로 모드 확정. 애매하면 None(=LLM 에 위임).
+
+    순서: SILENT(속성전용) → 구조화(랭크+관계) → EXPLORE(관계만+앵커) → MACRO(앵커없음+매크로cue).
+    구조화면 has_metric 으로 RANK(노드지표 랭킹·가능) vs ONLY(금액랭킹류·degrade) 분리.
+    """
+    q = " ".join((query or "").split())
+    if not q:
+        return None
+    if _is_silent(q):
+        return GraphMode.SILENT
+    if _looks_structured(q):
+        return GraphMode.RELATION_RANK if has_metric else GraphMode.RELATION_ONLY
+    # 앵커가 해소된 질문은 그 회사의 관계망을 보여주는 게 안전한 기본값. 랭킹·속성 신호가
+    # 없으면 explore 로 확정 — LLM 은 엔티티가 안 잡힌 관계질문에만 부른다.
+    if has_anchor:
+        return GraphMode.RELATION_EXPLORE
+    if _has_any(q, _MACRO_TERMS):
+        return GraphMode.MACRO
+    if _has_any(q, _RELATION_TERMS):
+        return None  # 관계를 묻지만 엔티티 미해소 → 모드를 LLM 에 위임
+    return GraphMode.RELATION_EXPLORE  # 신호 없음 → 노드가 빈 로컬로 degrade(시드 0)
+
+
+def _fallback_mode(query: str, *, has_anchor: bool, has_metric: bool) -> GraphMode:
+    """결정적 최종 백스톱. LLM off·다운·invalid 전부 여기로 = graceful degrade.
+
+    순수속성→SILENT, 앵커없는 매크로 cue→MACRO, 그 외→EXPLORE. 앵커 미해소를 무조건
+    MACRO 로 보내면 global_search 가 강제돼 n_seeds=0 결과를 덮어쓰는 회귀가 나므로,
+    매크로 cue 가 있을 때만 MACRO 로 보낸다. 앵커 없고 cue 도 없으면 EXPLORE 가 빈 로컬을 내며
+    안전 degrade(노드 search 가 시드 0 → assemble_local 빈 결과).
+    """
+    if _is_silent(query):
+        return GraphMode.SILENT
+    if not has_anchor and _has_any(query, _MACRO_TERMS):
+        return GraphMode.MACRO
+    return GraphMode.RELATION_EXPLORE
+
+
+def _coerce_mode(data: dict[str, Any] | None, query: str, *, has_anchor: bool, has_metric: bool) -> GraphMode:
+    """LLM 의 mode 필드 검증. 누락·미지원 enum·supported:false → 결정적 fallback.
+
+    relation_rank 인데 노드 지표가 없으면 ONLY 로 강등(억지 1위 금지).
+    """
+    if not data or data.get("supported") is False:
+        return _fallback_mode(query, has_anchor=has_anchor, has_metric=has_metric)
+    raw = str(data.get("mode") or "").strip()
+    try:
+        mode = GraphMode(raw)
+    except ValueError:
+        return _fallback_mode(query, has_anchor=has_anchor, has_metric=has_metric)
+    if mode is GraphMode.RELATION_RANK and not has_metric:
+        return GraphMode.RELATION_ONLY
+    return mode
+
+
+def _invoke_llm(query: str) -> dict[str, Any]:
+    from config.llm import json_llm  # noqa: PLC0415
+    from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
+
+    raw = json_llm.invoke([
+        SystemMessage(content=_SYSTEM_PROMPT),
+        HumanMessage(content=_USER_TEMPLATE.format(query=query)),
+    ])
+    return _as_dict(raw)
+
+
+def plan_with_mode(
+    query: str, *, has_anchor: bool, has_metric: bool
+) -> tuple[GraphMode, StructuredPlan | None]:
+    """질문 → (모드, plan). 결정적 프리필터 우선, 애매하면 LLM 1회로 모드+plan 동시 추출.
+
+    plan 은 relation_rank 일 때만 채워질 수 있다(search 가 자체 빌드하므로 노드는 보통 무시).
+    프리필터 hit·LLM off·다운·invalid 는 전부 plan None + degrade 모드.
+    """
+    pre = _prefilter_mode(query, has_anchor=has_anchor, has_metric=has_metric)
+    if pre is not None:
+        return pre, None
+    if not _ENABLED:
+        return _fallback_mode(query, has_anchor=has_anchor, has_metric=has_metric), None
+    try:
+        data = _invoke_llm(query)
+    except Exception:
+        return _fallback_mode(query, has_anchor=has_anchor, has_metric=has_metric), None
+    mode = _coerce_mode(data, query, has_anchor=has_anchor, has_metric=has_metric)
+    plan_obj: StructuredPlan | None = None
+    if mode is GraphMode.RELATION_RANK:
+        plan_obj = coerce_plan(data, query)
+        if plan_obj is None:
+            mode = GraphMode.RELATION_ONLY  # 쓸 plan 없음 → degrade, 억지 1위 금지
+    return mode, plan_obj
+
+
 _SYSTEM_PROMPT = """너는 GraphRAG 질의를 제한된 실행 계획으로 바꾸는 semantic parser다.
 너는 Cypher, SQL, 자유 텍스트 계획을 절대 만들지 않는다. 아래 허용값 중에서만 고른다.
 
@@ -270,12 +404,20 @@ first_candidate_policy:
 - default: 질문이 그룹/특수관계/지배 관계까지 포함해도 되는 경우.
 - operating_counterparty: 거래처, 협력사, 공급사처럼 운영상 거래 상대를 묻는 경우.
 
+mode (그래프 역할 — 질문마다 무엇을 할지 고른다):
+- macro: 특정 회사 앵커 없이 업계/산업/시장 전반을 묻는 sensemaking 질문.
+- relation_rank: 회사들을 노드 지표(매출·영업이익·순이익·자산)로 줄세우는 랭킹 질문. 이때만 위 plan 필드를 채운다.
+- relation_explore: 특정 회사의 관계망(협력사·주주·자회사 등)을 펼쳐 보여주는 질문(랭킹 아님).
+- relation_only: 관계를 묻지만 줄세울 노드 지표가 없는 질문(예: 거래금액 최대 공급처 — 금액은 데이터에 없음). 억지 1위를 만들지 말 것.
+- silent: 한 회사의 단일 속성(매출·자산·주가 등)만 묻는 질문. 관계가 필요 없다.
+
 출력은 JSON 객체 하나만 한다."""
 
 _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 
 {{
   "supported": true 또는 false,
+  "mode": "macro|relation_rank|relation_explore|relation_only|silent",
   "kind": "single_hop_rank" 또는 "two_hop_rank" 또는 "multi_anchor_branch_rank" 또는 "single_anchor_branch_rank",
   "first_relation": {{
     "rel_type": "SUPPLIES_TO|RELATED_PARTY|IS_MAJOR_SHAREHOLDER_OF|IS_SUBSIDIARY_OF|INVESTS_IN",
@@ -302,6 +444,9 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 }}
 
 규칙:
+- mode 는 항상 채운다. macro/relation_rank/relation_explore/relation_only/silent 중 하나.
+- mode=relation_rank 이고 줄세울 노드 지표(매출·영업이익·순이익·자산)가 있을 때만 supported=true 로 두고 plan 필드(kind, first_relation 등)를 채운다. 그 외 mode 는 supported=false.
+- 거래금액·점유율처럼 노드 지표가 아닌 크기로 줄세우라는 질문은 데이터에 없으므로 mode=relation_only(억지 1위 금지).
 - 랭킹/최댓값/1위 질문이 아니면 supported=false.
 - 두 번째로 '그 회사/해당 기업의 관련 회사 중'처럼 이어지면 two_hop_rank.
 - 'A와 B 둘 다/공통 협력사'를 먼저 찾고, 그 회사의 매출처/특수관계자/투자 관계를 각각 비교하라고 하면 multi_anchor_branch_rank.
@@ -322,13 +467,5 @@ def plan(query: str) -> StructuredPlan | None:
     """Return an LLM-derived constrained plan, or None when unsupported/invalid."""
     if not _ENABLED or not _looks_structured(query):
         return None
-
-    from config.llm import json_llm  # noqa: PLC0415
-    from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
-
-    raw = json_llm.invoke([
-        SystemMessage(content=_SYSTEM_PROMPT),
-        HumanMessage(content=_USER_TEMPLATE.format(query=query)),
-    ])
-    data = _as_dict(raw)
+    data = _invoke_llm(query)
     return coerce_plan(data, query)

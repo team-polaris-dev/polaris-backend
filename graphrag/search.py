@@ -17,6 +17,9 @@ from graphrag.schema import GraphHit, GraphSearchOutput, Seed
 from graphrag.structured_executor import execute as execute_structured
 from graphrag.traverse import expand, expand_ppr, fallback_for
 
+# 결정적 플래너가 확정한 멀티/단일 앵커 branch-rank 는 LLM 플래너로 덮어쓰지 않고 그대로 쓴다.
+DETERMINISTIC_PRIORITY_KINDS = {"multi_anchor_branch_rank", "single_anchor_branch_rank"}
+
 
 def _structured_abstain_output(
     query: str,
@@ -114,8 +117,7 @@ def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSear
     if seeds:
         deterministic_plan = plan_structured(query)
         structured_plan = deterministic_plan
-        deterministic_priority_kinds = {"multi_anchor_branch_rank", "single_anchor_branch_rank"}
-        if not deterministic_plan or deterministic_plan.kind not in deterministic_priority_kinds:
+        if not deterministic_plan or deterministic_plan.kind not in DETERMINISTIC_PRIORITY_KINDS:
             try:
                 structured_plan = plan_structured_llm(query)
             except Exception as e:
