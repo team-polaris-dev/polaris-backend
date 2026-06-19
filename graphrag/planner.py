@@ -21,7 +21,9 @@ _SECOND_HOP = ("그 회사", "해당 기업", "해당 회사", "그회사", "관
 _COMMON_ANCHOR = ("둘 다", "모두", "공통", "양사", "둘다")
 _BRANCH_COMPARE = ("각각", "비교", "관계 타입", "관계타입", "근거")
 _CUSTOMER_BRANCH = ("주요 매출처", "매출처", "고객", "납품처")
-_INVESTMENT_BRANCH = ("투자 관계", "투자관계", "투자")
+_RELATED_BRANCH = ("특수관계", "관련 회사", "관계자", "관계기업")
+_INVESTMENT_BRANCH = ("투자 관계", "투자관계", "투자", "출자 관계", "출자관계", "출자")
+_RELATION_TYPE_COMPARE = ("관계 유형", "관계유형", "관계 유형별", "관계유형별", "관계 타입", "관계타입")
 
 
 def _has_any(text: str, terms: tuple[str, ...]) -> bool:
@@ -96,12 +98,43 @@ def _is_multi_anchor_branch_question(query: str) -> bool:
     )
 
 
+def _is_single_anchor_branch_question(query: str) -> bool:
+    """Detect one-anchor questions that ask separate relation-type branches."""
+    return (
+        not _has_any(query, _COMMON_ANCHOR)
+        and _has_any(query, _SUPPLY_IN)
+        and _has_any(query, _RELATED_BRANCH)
+        and _has_any(query, _INVESTMENT_BRANCH)
+        and (_has_any(query, _BRANCH_COMPARE) or _has_any(query, _RELATION_TYPE_COMPARE))
+    )
+
+
 def _branch_ranks(metric_id: str) -> list[BranchRankStep]:
     return [
         BranchRankStep(
             kind="major_customer",
             relation=RelationStep("SUPPLIES_TO", "outgoing", "major_customers", "major_customer"),
             rank=MetricRankStep(metric_id, alias="top_major_customer"),  # type: ignore[arg-type]
+        ),
+        BranchRankStep(
+            kind="related_party",
+            relation=RelationStep("RELATED_PARTY", "undirected", "related_parties", "related_party"),
+            rank=MetricRankStep(metric_id, alias="top_related_party"),  # type: ignore[arg-type]
+        ),
+        BranchRankStep(
+            kind="investment",
+            relation=RelationStep("INVESTS_IN", "undirected", "investment_parties", "investment"),
+            rank=MetricRankStep(metric_id, alias="top_investment"),  # type: ignore[arg-type]
+        ),
+    ]
+
+
+def _single_anchor_branch_ranks(metric_id: str) -> list[BranchRankStep]:
+    return [
+        BranchRankStep(
+            kind="supplier",
+            relation=RelationStep("SUPPLIES_TO", "incoming", "suppliers", "supplier"),
+            rank=MetricRankStep(metric_id, alias="top_supplier"),  # type: ignore[arg-type]
         ),
         BranchRankStep(
             kind="related_party",
@@ -169,6 +202,39 @@ def plan(query: str) -> StructuredPlan | None:
                 first_reason,
                 metric_reason,
                 "매출처/특수관계자/투자 관계를 별도 branch로 비교",
+            ]),
+            steps=steps,
+        )
+
+    if _is_single_anchor_branch_question(q):
+        branch_ranks = _single_anchor_branch_ranks(metric_id)
+        steps: list[dict] = []
+        for branch in branch_ranks:
+            steps.extend([
+                {
+                    "op": "branch_traverse",
+                    "branch": branch.kind,
+                    "from": "anchor",
+                    "relation": branch.relation.rel_type,
+                    "direction": branch.relation.direction,
+                    "as": branch.relation.alias,
+                },
+                {"op": "join_metric", "metric": metric_id, "target": branch.relation.alias},
+                {"op": "argmax", "by": metric_id, "as": branch.rank.alias},
+                {"op": "score_evidence", "target": branch.rank.alias},
+            ])
+        return StructuredPlan(
+            kind="single_anchor_branch_rank",
+            first_relation=branch_ranks[0].relation,
+            first_rank=branch_ranks[0].rank,
+            branch_ranks=branch_ranks,
+            common_anchor_min=1,
+            first_candidate_policy="default",
+            raw_reason="; ".join([
+                "단일 기준 기업의 관계 유형별 branch ranking 질문",
+                first_reason,
+                metric_reason,
+                "공급/특수관계/투자 관계를 기준 기업에서 각각 독립 탐색",
             ]),
             steps=steps,
         )

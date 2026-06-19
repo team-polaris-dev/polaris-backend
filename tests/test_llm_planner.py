@@ -74,3 +74,43 @@ def test_llm_multi_anchor_plan_rejects_missing_branch():
     }
 
     assert coerce_plan(data, "공통 협력사 관계 타입 비교") is None
+
+
+def test_llm_plan_json_is_coerced_to_single_anchor_branch_plan():
+    data = {
+        "supported": True,
+        "kind": "single_anchor_branch_rank",
+        "rank_metric": "ifrs-full_Revenue",
+        "branch_relations": [
+            {"kind": "supplier", "relation": {"rel_type": "SUPPLIES_TO", "direction": "incoming"}},
+            {"kind": "related_party", "relation": {"rel_type": "RELATED_PARTY", "direction": "undirected"}},
+            {"kind": "investment", "relation": {"rel_type": "INVESTS_IN", "direction": "undirected"}},
+        ],
+        "reason": "기준 회사에서 공급/특수관계/투자 branch를 각각 랭킹",
+    }
+
+    out = coerce_plan(
+        data,
+        "SK하이닉스와 관련된 공급 관계, 특수관계, 투자 관계를 각각 탐색해 관계 타입별 1위를 비교해줘",
+    )
+
+    assert out is not None
+    assert out.kind == "single_anchor_branch_rank"
+    assert out.common_anchor_min == 1
+    assert out.first_relation.rel_type == "SUPPLIES_TO"
+    assert out.first_relation.direction == "incoming"
+    assert {b.kind for b in out.branch_ranks} == {"supplier", "related_party", "investment"}
+
+
+def test_llm_single_anchor_plan_rejects_missing_branch():
+    data = {
+        "supported": True,
+        "kind": "single_anchor_branch_rank",
+        "rank_metric": "ifrs-full_Revenue",
+        "branch_relations": [
+            {"kind": "supplier", "relation": {"rel_type": "SUPPLIES_TO", "direction": "incoming"}},
+            {"kind": "related_party", "relation": {"rel_type": "RELATED_PARTY", "direction": "undirected"}},
+        ],
+    }
+
+    assert coerce_plan(data, "기준 회사 관계 타입별 비교") is None

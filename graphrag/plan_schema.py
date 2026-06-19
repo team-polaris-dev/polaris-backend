@@ -32,6 +32,7 @@ FirstCandidatePolicy = Literal[
 ]
 
 BranchKind = Literal[
+    "supplier",
     "major_customer",
     "related_party",
     "investment",
@@ -64,7 +65,12 @@ class BranchRankStep:
 class StructuredPlan:
     """A small executable plan for multi-hop ranking questions."""
 
-    kind: Literal["single_hop_rank", "two_hop_rank", "multi_anchor_branch_rank"]
+    kind: Literal[
+        "single_hop_rank",
+        "two_hop_rank",
+        "multi_anchor_branch_rank",
+        "single_anchor_branch_rank",
+    ]
     first_relation: RelationStep
     first_rank: MetricRankStep
     second_relation: RelationStep | None = None

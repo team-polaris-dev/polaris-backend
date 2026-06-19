@@ -41,7 +41,7 @@ _METRICS = {
     "ifrs-full_Assets",
 }
 _FIRST_POLICIES = {"default", "operating_counterparty"}
-_BRANCH_KINDS = {"major_customer", "related_party", "investment"}
+_BRANCH_KINDS = {"supplier", "major_customer", "related_party", "investment"}
 
 _RELATION_DEFAULTS: dict[tuple[str, str], tuple[str, str]] = {
     ("SUPPLIES_TO", "incoming"): ("suppliers", "supplier"),
@@ -118,6 +118,24 @@ def _make_steps(
     second: RelationStep | None,
     branches: list[BranchRankStep] | None = None,
 ) -> list[dict]:
+    if kind == "single_anchor_branch_rank":
+        steps: list[dict] = []
+        for branch in branches or []:
+            steps.extend([
+                {
+                    "op": "branch_traverse",
+                    "branch": branch.kind,
+                    "from": "anchor",
+                    "relation": branch.relation.rel_type,
+                    "direction": branch.relation.direction,
+                    "as": branch.relation.alias,
+                },
+                {"op": "join_metric", "metric": metric_id, "target": branch.relation.alias},
+                {"op": "argmax", "by": metric_id, "as": branch.rank.alias},
+                {"op": "score_evidence", "target": branch.rank.alias},
+            ])
+        return steps
+
     steps: list[dict] = [
         {
             "op": "intersect_anchors" if kind == "multi_anchor_branch_rank" else "traverse",
@@ -172,19 +190,15 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
         return None
 
     kind = str(data.get("kind") or "").strip()
-    if kind not in {"single_hop_rank", "two_hop_rank", "multi_anchor_branch_rank"}:
+    if kind not in {"single_hop_rank", "two_hop_rank", "multi_anchor_branch_rank", "single_anchor_branch_rank"}:
         return None
 
     metric_id = _metric_id(data, query)
-    first = _relation_step(data.get("first_relation"))
-    if not metric_id or first is None:
+    if not metric_id:
         return None
 
-    second = _relation_step(data.get("second_relation")) if kind == "two_hop_rank" else None
-    if kind == "two_hop_rank" and second is None:
-        return None
     branches: list[BranchRankStep] = []
-    if kind == "multi_anchor_branch_rank":
+    if kind in {"multi_anchor_branch_rank", "single_anchor_branch_rank"}:
         raw_branches = data.get("branch_relations") or data.get("branches") or []
         if not isinstance(raw_branches, list):
             return None
@@ -194,8 +208,20 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
                 if branch:
                     branches.append(branch)
         needed = {"major_customer", "related_party", "investment"}
+        if kind == "single_anchor_branch_rank":
+            needed = {"supplier", "related_party", "investment"}
         if {b.kind for b in branches} != needed:
             return None
+
+    first = _relation_step(data.get("first_relation"))
+    if first is None and kind == "single_anchor_branch_rank" and branches:
+        first = next((b.relation for b in branches if b.kind == "supplier"), branches[0].relation)
+    if first is None:
+        return None
+
+    second = _relation_step(data.get("second_relation")) if kind == "two_hop_rank" else None
+    if kind == "two_hop_rank" and second is None:
+        return None
 
     first_policy = str(data.get("first_candidate_policy") or "default")
     if first_policy not in _FIRST_POLICIES:
@@ -248,7 +274,7 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 
 {{
   "supported": true 또는 false,
-  "kind": "single_hop_rank" 또는 "two_hop_rank" 또는 "multi_anchor_branch_rank",
+  "kind": "single_hop_rank" 또는 "two_hop_rank" 또는 "multi_anchor_branch_rank" 또는 "single_anchor_branch_rank",
   "first_relation": {{
     "rel_type": "SUPPLIES_TO|RELATED_PARTY|IS_MAJOR_SHAREHOLDER_OF|IS_SUBSIDIARY_OF|INVESTS_IN",
     "direction": "incoming|outgoing|undirected"
@@ -260,7 +286,7 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
   }} 또는 null,
   "branch_relations": [
     {{
-      "kind": "major_customer|related_party|investment",
+      "kind": "supplier|major_customer|related_party|investment",
       "relation": {{
         "rel_type": "SUPPLIES_TO|RELATED_PARTY|INVESTS_IN",
         "direction": "incoming|outgoing|undirected"
@@ -277,10 +303,12 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 - 랭킹/최댓값/1위 질문이 아니면 supported=false.
 - 두 번째로 '그 회사/해당 기업의 관련 회사 중'처럼 이어지면 two_hop_rank.
 - 'A와 B 둘 다/공통 협력사'를 먼저 찾고, 그 회사의 매출처/특수관계자/투자 관계를 각각 비교하라고 하면 multi_anchor_branch_rank.
+- 한 기준 회사에 대해 공급/특수관계/투자 관계를 각각 탐색하고 관계 유형별 1위와 근거를 비교하라고 하면 single_anchor_branch_rank.
 - '잘나가는'은 별도 지표가 없으면 매출액(ifrs-full_Revenue)으로 둔다.
 - 2-hop에서는 원래 기준 회사가 다시 답으로 돌아오지 않도록 exclude_original_anchor_from_second=true.
 - multi_anchor_branch_rank의 first_relation은 보통 SUPPLIES_TO incoming이며, first_candidate_policy는 보통 default다. 공통 공급사 교집합 자체가 운영 거래 필터다.
 - multi_anchor_branch_rank의 branch_relations는 major_customer=SUPPLIES_TO outgoing, related_party=RELATED_PARTY undirected, investment=INVESTS_IN undirected 세 개를 모두 포함한다.
+- single_anchor_branch_rank의 branch_relations는 supplier=SUPPLIES_TO incoming, related_party=RELATED_PARTY undirected, investment=INVESTS_IN undirected 세 개를 모두 포함한다.
 
 질문: {query}"""
 

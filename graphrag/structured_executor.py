@@ -505,15 +505,17 @@ def _intersect_common_candidates(
     return common
 
 
-def _run_branch(
-    top_first: dict[str, Any],
+def _run_branch_from_anchor(
+    anchor: dict[str, Any],
     branch: BranchRankStep,
     year: int | None,
+    *,
+    exclude_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     candidates = _relation_candidates(
-        _anchor_from_candidate(top_first),
+        anchor,
         branch.relation,
-        exclude_ids={str(top_first.get("id") or "")},
+        exclude_ids=exclude_ids or {str(anchor.get("id") or "")},
     )
     for cand in candidates:
         cand["edge"]["branch_kind"] = branch.kind
@@ -527,6 +529,19 @@ def _run_branch(
         "candidates": ranked,
         "selected": selected,
     }
+
+
+def _run_branch(
+    top_first: dict[str, Any],
+    branch: BranchRankStep,
+    year: int | None,
+) -> dict[str, Any]:
+    return _run_branch_from_anchor(
+        _anchor_from_candidate(top_first),
+        branch,
+        year,
+        exclude_ids={str(top_first.get("id") or "")},
+    )
 
 
 def _best_supported_branch(branches: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
@@ -554,6 +569,12 @@ def execute(plan: StructuredPlan, seeds: list[Seed], query: str) -> tuple[list[G
         return None
     if plan.kind == "multi_anchor_branch_rank":
         return _execute_multi_anchor_branch_rank(plan, org_seeds, query)
+    if plan.kind == "single_anchor_branch_rank":
+        for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
+            result = _execute_single_anchor_branch_rank(plan, org_seed, query)
+            if result:
+                return result
+        return None
     for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
         result = _execute_for_seed(plan, org_seed, query)
         if result:
@@ -644,6 +665,82 @@ def _execute_multi_anchor_branch_rank(
         "quality_notes": [
             "common supplier candidates are intersected across anchors before ranking",
             "major_customer, related_party, and investment branches are executed independently",
+            "edge evidence is scored from source/chunk availability and endpoint mentions",
+        ],
+    }
+    meta = {
+        "mode": "structured",
+        "structured": structured,
+        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
+        "n_hits": len(hits),
+        "fallback_used": False,
+        "errors": [],
+    }
+    return hits, meta
+
+
+def _execute_single_anchor_branch_rank(
+    plan: StructuredPlan,
+    org_seed: Seed,
+    query: str,
+) -> tuple[list[GraphHit], dict] | None:
+    year = parse_year(query)
+    anchor = _anchor_from_seed(org_seed)
+
+    branches: dict[str, dict[str, Any]] = {}
+    for branch in plan.branch_ranks:
+        branches[branch.kind] = _run_branch_from_anchor(
+            anchor,
+            branch,
+            year,
+            exclude_ids={str(anchor.get("id") or "")},
+        )
+
+    selected_branches = [b for b in branches.values() if b.get("selected")]
+    if not selected_branches:
+        return None
+
+    hits: list[GraphHit] = []
+    seen_nodes: set[str] = set()
+    seen_rels: set[str] = set()
+
+    def add_node(id_: str, name: str, role: str, score: float = 1.0) -> None:
+        if not id_ or id_ in seen_nodes:
+            return
+        seen_nodes.add(id_)
+        hits.append(_node_hit(id_, name, {"structured_role": role}, score))
+
+    def add_rel(edge: dict[str, Any]) -> None:
+        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
+        if rel_id in seen_rels:
+            return
+        seen_rels.add(rel_id)
+        evidence = edge.get("evidence") or {}
+        score = 1.0 if evidence.get("level") == "high" else 0.75 if evidence.get("level") == "medium" else 0.55
+        hits.append(_rel_hit(edge, score))
+
+    add_node(str(anchor.get("id") or ""), str(anchor.get("name") or ""), "anchor")
+    answer_edges: list[dict[str, Any]] = []
+    for kind, branch in branches.items():
+        selected = branch.get("selected")
+        if not selected:
+            continue
+        add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
+        add_rel(selected["edge"])
+        answer_edges.append(selected["edge"])
+
+    structured = {
+        "mode": "structured",
+        "year": year,
+        "metric_label": _METRIC_LABEL.get(plan.first_rank.metric_id, plan.first_rank.metric_id),
+        "plan": plan.to_dict(),
+        "anchor": anchor,
+        "branches": branches,
+        "best_supported_branch": _best_supported_branch(branches),
+        "answer_edges": answer_edges,
+        "quality_notes": [
+            "supplier, related_party, and investment branches are executed independently from the same anchor",
+            "each branch is ranked by the same metric before answer assembly",
             "edge evidence is scored from source/chunk availability and endpoint mentions",
         ],
     }

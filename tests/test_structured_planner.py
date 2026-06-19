@@ -46,3 +46,27 @@ def test_common_supplier_branch_compare_question_gets_multi_anchor_plan():
     assert by_kind["related_party"].relation.rel_type == "RELATED_PARTY"
     assert by_kind["investment"].relation.rel_type == "INVESTS_IN"
     assert by_kind["investment"].relation.direction == "undirected"
+
+
+def test_single_anchor_relation_type_compare_question_gets_branch_plan():
+    q = (
+        "SK하이닉스와 관련된 공급 관계, 특수관계, 투자 관계를 각각 따로 탐색해서 "
+        "각 관계 타입별로 매출액이 가장 큰 회사를 하나씩 찾고, "
+        "어떤 관계가 공시 근거상 가장 확실한지 비교해줘."
+    )
+
+    out = plan(q)
+
+    assert out is not None
+    assert out.kind == "single_anchor_branch_rank"
+    assert out.common_anchor_min == 1
+    assert out.first_candidate_policy == "default"
+    assert {b.kind for b in out.branch_ranks} == {"supplier", "related_party", "investment"}
+    by_kind = {b.kind: b for b in out.branch_ranks}
+    assert by_kind["supplier"].relation.rel_type == "SUPPLIES_TO"
+    assert by_kind["supplier"].relation.direction == "incoming"
+    assert by_kind["related_party"].relation.rel_type == "RELATED_PARTY"
+    assert by_kind["related_party"].relation.direction == "undirected"
+    assert by_kind["investment"].relation.rel_type == "INVESTS_IN"
+    assert by_kind["investment"].relation.direction == "undirected"
+    assert all(b.rank.metric_id == "ifrs-full_Revenue" for b in out.branch_ranks)

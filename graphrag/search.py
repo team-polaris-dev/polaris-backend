@@ -64,7 +64,8 @@ def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSear
     if seeds:
         deterministic_plan = plan_structured(query)
         structured_plan = deterministic_plan
-        if not deterministic_plan or deterministic_plan.kind != "multi_anchor_branch_rank":
+        deterministic_priority_kinds = {"multi_anchor_branch_rank", "single_anchor_branch_rank"}
+        if not deterministic_plan or deterministic_plan.kind not in deterministic_priority_kinds:
             try:
                 structured_plan = plan_structured_llm(query)
             except Exception as e:
