@@ -18,6 +18,7 @@ from config.relations import (
     REL_TO_LEGACY_TYPE as _REL_TO_LEGACY_TYPE,
     NETWORK_REL_TYPES as _NETWORK_REL_TYPES,
 )
+from config.graphrag import PANEL_MIN_EVIDENCE
 
 
 HitLabel = Literal[
@@ -141,6 +142,13 @@ def _path_from_hit(hit: GraphHit) -> list[str] | None:
     rel_type = attrs.get("rel_type") or ""
     if rel_type not in _NETWORK_REL_TYPES:
         return None
+    evidence_confidence = attrs.get("evidence_confidence")
+    if evidence_confidence is not None:
+        try:
+            if float(evidence_confidence) < PANEL_MIN_EVIDENCE:
+                return None
+        except (TypeError, ValueError):
+            return None
     from_name = attrs.get("from_name") or attrs.get("from") or ""
     to_name = attrs.get("to_name") or attrs.get("to") or ""
     if not (rel_type and from_name and to_name):

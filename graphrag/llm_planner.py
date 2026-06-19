@@ -33,7 +33,7 @@ _RELATION_TYPES = {
     "IS_SUBSIDIARY_OF",
     "INVESTS_IN",
 }
-_DIRECTIONS = {"incoming", "outgoing", "undirected"}
+_DIRECTIONS = {"incoming", "outgoing", "undirected", "auto"}
 _METRICS = {
     "ifrs-full_Revenue",
     "dart_OperatingIncomeLoss",
@@ -46,6 +46,7 @@ _BRANCH_KINDS = {"supplier", "major_customer", "related_party", "investment"}
 _RELATION_DEFAULTS: dict[tuple[str, str], tuple[str, str]] = {
     ("SUPPLIES_TO", "incoming"): ("suppliers", "supplier"),
     ("SUPPLIES_TO", "outgoing"): ("buyers", "buyer"),
+    ("SUPPLIES_TO", "auto"): ("supply_counterparties", "supply_counterparty"),
     ("RELATED_PARTY", "undirected"): ("related_parties", "related_party"),
     ("IS_MAJOR_SHAREHOLDER_OF", "incoming"): ("shareholders", "shareholder"),
     ("IS_MAJOR_SHAREHOLDER_OF", "outgoing"): ("shareholdings", "shareholding"),
@@ -207,10 +208,11 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
                 branch = _branch_rank(raw_branch, metric_id)
                 if branch:
                     branches.append(branch)
-        needed = {"major_customer", "related_party", "investment"}
+        allowed = {"major_customer", "related_party", "investment"}
         if kind == "single_anchor_branch_rank":
-            needed = {"supplier", "related_party", "investment"}
-        if {b.kind for b in branches} != needed:
+            allowed = {"supplier", "major_customer", "related_party", "investment"}
+        branch_kinds = {b.kind for b in branches}
+        if not branch_kinds or not branch_kinds <= allowed:
             return None
 
     first = _relation_step(data.get("first_relation"))
@@ -277,7 +279,7 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
   "kind": "single_hop_rank" 또는 "two_hop_rank" 또는 "multi_anchor_branch_rank" 또는 "single_anchor_branch_rank",
   "first_relation": {{
     "rel_type": "SUPPLIES_TO|RELATED_PARTY|IS_MAJOR_SHAREHOLDER_OF|IS_SUBSIDIARY_OF|INVESTS_IN",
-    "direction": "incoming|outgoing|undirected"
+    "direction": "incoming|outgoing|undirected|auto"
   }},
   "rank_metric": "ifrs-full_Revenue|dart_OperatingIncomeLoss|ifrs-full_ProfitLoss|ifrs-full_Assets",
   "second_relation": {{
@@ -289,7 +291,7 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
       "kind": "supplier|major_customer|related_party|investment",
       "relation": {{
         "rel_type": "SUPPLIES_TO|RELATED_PARTY|INVESTS_IN",
-        "direction": "incoming|outgoing|undirected"
+        "direction": "incoming|outgoing|undirected|auto"
       }}
     }}
   ],
@@ -303,13 +305,15 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 - 랭킹/최댓값/1위 질문이 아니면 supported=false.
 - 두 번째로 '그 회사/해당 기업의 관련 회사 중'처럼 이어지면 two_hop_rank.
 - 'A와 B 둘 다/공통 협력사'를 먼저 찾고, 그 회사의 매출처/특수관계자/투자 관계를 각각 비교하라고 하면 multi_anchor_branch_rank.
-- 한 기준 회사에 대해 공급/특수관계/투자 관계를 각각 탐색하고 관계 유형별 1위와 근거를 비교하라고 하면 single_anchor_branch_rank.
+- 한 기준 회사에 대해 공급/특수관계/투자 등 관계 유형별 1위와 근거를 비교하라고 하면 single_anchor_branch_rank.
+- single_anchor_branch_rank의 branch_relations에는 질문에 나온 관계만 넣는다. 질문에 없는 investment/related_party/supplier를 보충하지 않는다.
+- 공급 방향이 고객/매출처/납품처이면 SUPPLIES_TO outgoing, 협력사/공급사/벤더/매입이면 incoming, 문맥상 애매하면 auto.
 - '잘나가는'은 별도 지표가 없으면 매출액(ifrs-full_Revenue)으로 둔다.
 - 2-hop에서는 원래 기준 회사가 다시 답으로 돌아오지 않도록 exclude_original_anchor_from_second=true.
 - 협력사/공급사/거래처 후보를 매출액으로 고르는 질문은 first_candidate_policy=operating_counterparty. 단 공통 협력사 교집합 질문은 아래 multi_anchor 규칙을 따른다.
 - multi_anchor_branch_rank의 first_relation은 보통 SUPPLIES_TO incoming이며, first_candidate_policy는 보통 default다. 공통 공급사 교집합 자체가 운영 거래 필터다.
 - multi_anchor_branch_rank의 branch_relations는 major_customer=SUPPLIES_TO outgoing, related_party=RELATED_PARTY undirected, investment=INVESTS_IN undirected 세 개를 모두 포함한다.
-- single_anchor_branch_rank의 branch_relations는 supplier=SUPPLIES_TO incoming, related_party=RELATED_PARTY undirected, investment=INVESTS_IN undirected 세 개를 모두 포함한다.
+- single_anchor_branch_rank의 branch_relations는 supplier=SUPPLIES_TO incoming 또는 auto, major_customer=SUPPLIES_TO outgoing, related_party=RELATED_PARTY undirected, investment=INVESTS_IN undirected 중 질문에 나온 subset만 포함한다.
 
 질문: {query}"""
 

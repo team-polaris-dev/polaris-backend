@@ -72,6 +72,13 @@ PANEL_CURATION_MIN_EDGES = int(os.environ.get("GRAPHRAG_PANEL_MIN_EDGES", "6")) 
 PANEL_CURATION_KEEP_MIN = int(os.environ.get("GRAPHRAG_PANEL_KEEP_MIN", "3"))     # 큐레이션 후 최소 엣지(미만이면 큐레이션 포기)
 PANEL_MENTION_MIN_LEN = int(os.environ.get("GRAPHRAG_PANEL_MENTION_MIN_LEN", "2"))  # 답변 언급 매칭 최소 정규화 회사명 길이
 
+# ── 구조화 GraphRAG 근거 게이트 (graphrag/structured_executor.py) ─────────
+# 회계/투자/특수관계처럼 공시 주석 근거가 핵심인 관계는 높은 플로어를 적용하고,
+# 공급 관계는 추출 텍스트가 거래 양쪽을 직접 언급하지 못하는 경우가 있어 중간 플로어를 둔다.
+STRUCTURED_MIN_EVIDENCE = float(os.environ.get("GRAPHRAG_STRUCTURED_MIN_EVIDENCE", "0.8"))
+STRUCTURED_MIN_EVIDENCE_OPERATING = float(os.environ.get("GRAPHRAG_STRUCTURED_MIN_EVIDENCE_OPERATING", "0.55"))
+PANEL_MIN_EVIDENCE = float(os.environ.get("GRAPHRAG_PANEL_MIN_EVIDENCE", "0.55"))
+
 # ── traverse hit 기본 점수 (graphrag/traverse.py) ──────────────────
 REL_HIT_SCORE = float(os.environ.get("GRAPHRAG_REL_HIT_SCORE", "0.8"))   # 관계 hit 기본 score
 NODE_HIT_SCORE = float(os.environ.get("GRAPHRAG_NODE_HIT_SCORE", "1.0"))  # 노드 hit 기본 score

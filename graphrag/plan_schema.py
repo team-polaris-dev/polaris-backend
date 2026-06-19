@@ -17,7 +17,7 @@ RelationType = Literal[
     "INVESTS_IN",
 ]
 
-Direction = Literal["incoming", "outgoing", "undirected"]
+Direction = Literal["incoming", "outgoing", "undirected", "auto"]
 
 MetricId = Literal[
     "ifrs-full_Revenue",

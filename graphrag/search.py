@@ -18,6 +18,56 @@ from graphrag.structured_executor import execute as execute_structured
 from graphrag.traverse import expand, expand_ppr, fallback_for
 
 
+def _structured_abstain_output(
+    query: str,
+    seeds: list[Seed],
+    structured_plan,
+    errors: list[str],
+    started: float,
+    reason: str,
+) -> GraphSearchOutput:
+    anchor_hits: list[GraphHit] = []
+    seen: set[str] = set()
+    for seed in seeds:
+        if seed.get("label") != "organization":
+            continue
+        sid = str(seed.get("id") or seed.get("key_value") or seed.get("name") or "")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        anchor_hits.append({
+            "id": sid,
+            "label": "organization",
+            "name": str(seed.get("name") or ""),
+            "attrs": {"structured_role": "anchor", "abstained": True},
+            "score": float(seed.get("score") or 1.0),
+            "seed_origin": "structured",
+        })
+        break
+
+    elapsed = (time.perf_counter() - started) * 1000.0
+    return {
+        "graph_hits": anchor_hits,
+        "graph_seeds": [dict(s) for s in seeds],
+        "graph_meta": {
+            "mode": "structured",
+            "structured": {
+                "mode": "structured",
+                "plan": structured_plan.to_dict() if structured_plan else None,
+                "answer_edges": [],
+                "abstained": True,
+                "abstain_reason": reason,
+            },
+            "patterns_run": ["structured_plan", "abstain"],
+            "n_seeds": len(seeds),
+            "n_hits": len(anchor_hits),
+            "fallback_used": False,
+            "latency_ms": round(elapsed, 1),
+            "errors": errors,
+        },
+    }
+
+
 def _relation_focus(query: str) -> set[str]:
     """질문에서 어떤 관계를 앞세울지 결정. 매칭 없으면 빈 set(=전체)."""
     focus: set[str] = set()
@@ -89,6 +139,14 @@ def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSear
                     "graph_seeds": [dict(s) for s in seeds],
                     "graph_meta": structured_meta,
                 }
+            return _structured_abstain_output(
+                query,
+                seeds,
+                structured_plan,
+                errors,
+                started,
+                "structured plan found no candidate that passed relation, evidence, and metric gates",
+            )
 
         # PPR 우선(시드 관련성 멀티홉). 실패·빈 결과면 패턴 확장으로 폴백.
         if PPR_ENABLED:

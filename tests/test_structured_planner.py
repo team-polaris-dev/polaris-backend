@@ -65,9 +65,27 @@ def test_single_anchor_relation_type_compare_question_gets_branch_plan():
     assert {b.kind for b in out.branch_ranks} == {"supplier", "related_party", "investment"}
     by_kind = {b.kind: b for b in out.branch_ranks}
     assert by_kind["supplier"].relation.rel_type == "SUPPLIES_TO"
-    assert by_kind["supplier"].relation.direction == "incoming"
+    assert by_kind["supplier"].relation.direction == "auto"
     assert by_kind["related_party"].relation.rel_type == "RELATED_PARTY"
     assert by_kind["related_party"].relation.direction == "undirected"
     assert by_kind["investment"].relation.rel_type == "INVESTS_IN"
     assert by_kind["investment"].relation.direction == "undirected"
     assert all(b.rank.metric_id == "ifrs-full_Revenue" for b in out.branch_ranks)
+
+
+def test_single_anchor_two_branch_question_uses_only_requested_branches():
+    q = (
+        "동진쎄미켐을 기준으로 공급 관계와 특수관계 관계를 각각 탐색해서, "
+        "각 관계 유형별 매출액이 가장 큰 회사를 찾고 실제 사업 관계로 보기 더 적합한 쪽을 설명해줘."
+    )
+
+    out = plan(q)
+
+    assert out is not None
+    assert out.kind == "single_anchor_branch_rank"
+    assert {b.kind for b in out.branch_ranks} == {"supplier", "related_party"}
+    by_kind = {b.kind: b for b in out.branch_ranks}
+    assert by_kind["supplier"].relation.rel_type == "SUPPLIES_TO"
+    assert by_kind["supplier"].relation.direction == "auto"
+    assert by_kind["related_party"].relation.rel_type == "RELATED_PARTY"
+    assert "investment" not in by_kind

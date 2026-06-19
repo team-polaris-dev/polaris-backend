@@ -11,8 +11,12 @@ from typing import Any
 from tool.graph_client import neo4j_driver
 from tool.rdb_client import mariadb_conn, parse_year
 
+from config.graphrag import (
+    STRUCTURED_MIN_EVIDENCE,
+    STRUCTURED_MIN_EVIDENCE_OPERATING,
+)
 from config.relations import NETWORK_REL_TYPES
-from graphrag.plan_schema import BranchRankStep, RelationStep, StructuredPlan
+from graphrag.plan_schema import BranchRankStep, MetricRankStep, RelationStep, StructuredPlan
 from graphrag.schema import GraphHit, Seed
 
 
@@ -337,6 +341,7 @@ RETURN
   r.chunk_id AS chunk_id,
   anchor_rels,
   graph_degree
+ORDER BY (r.chunk_id IS NOT NULL) DESC, (r.rcept_no IS NOT NULL) DESC, cand_id ASC
 LIMIT 200
 """
     params["exclude_ids"] = list(exclude_ids or set())
@@ -383,6 +388,20 @@ def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[fl
     score = 0.0
     reasons: list[str] = []
 
+    if evidence_confidence >= 0.8:
+        score += 1.0
+        reasons.append("strong_edge_evidence")
+    elif evidence_confidence >= 0.55:
+        score += 0.25
+        reasons.append("medium_edge_evidence")
+    elif evidence_confidence > 0:
+        score -= 0.5
+        reasons.append("weak_edge_evidence")
+
+    if flags["evidence_relation_term_found"]:
+        score += 0.25
+        reasons.append("relation_term_found")
+
     if policy == "operating_counterparty":
         if flags["governance_linked"]:
             score -= 2.0
@@ -398,19 +417,6 @@ def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[fl
             score -= 0.5
             reasons.append("soft_hub_degree")
 
-        if evidence_confidence >= 0.8:
-            score += 1.0
-            reasons.append("strong_edge_evidence")
-        elif evidence_confidence >= 0.55:
-            score += 0.25
-            reasons.append("medium_edge_evidence")
-        elif evidence_confidence > 0:
-            score -= 0.5
-            reasons.append("weak_edge_evidence")
-
-        if flags["evidence_relation_term_found"]:
-            score += 0.25
-            reasons.append("relation_term_found")
         if not flags["governance_linked"] and not flags["related_party_linked"]:
             score += 0.5
             reasons.append("pure_operating_counterparty")
@@ -465,13 +471,105 @@ def _rank_candidates(
 
     ranked.sort(
         key=lambda c: (
-            c.get("metric", {}).get("value") is not None,
             c.get("policy", {}).get("bucket", 0),
+            c.get("metric", {}).get("value") is not None,
             c.get("metric", {}).get("value") or float("-inf"),
+            c.get("id") or c.get("name") or "",
         ),
         reverse=True,
     )
     return ranked
+
+
+def _evidence_confidence(candidate: dict[str, Any]) -> float:
+    evidence = candidate.get("evidence") or candidate.get("edge", {}).get("evidence") or {}
+    return _as_float(evidence.get("confidence"))
+
+
+def _evidence_floor(rel_type: str) -> float:
+    if rel_type == "SUPPLIES_TO":
+        return STRUCTURED_MIN_EVIDENCE_OPERATING
+    return STRUCTURED_MIN_EVIDENCE
+
+
+def _select_supported(
+    ranked: list[dict[str, Any]],
+    rel_type: str,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    floor = _evidence_floor(rel_type)
+    supported = [c for c in ranked if _evidence_confidence(c) >= floor]
+    metric_supported = [
+        c for c in supported
+        if c.get("metric", {}).get("value") is not None
+    ]
+    selected = metric_supported[0] if metric_supported else None
+    unranked_confirmed = [
+        c for c in supported
+        if c.get("metric", {}).get("value") is None
+    ]
+    return selected, unranked_confirmed
+
+
+def _supply_direction_from_counts(incoming_count: int, outgoing_count: int) -> str:
+    if outgoing_count > incoming_count:
+        return "outgoing"
+    return "incoming"
+
+
+def _resolve_supply_direction(anchor: dict[str, Any]) -> str:
+    match, params = _anchor_match(anchor)
+    cypher = f"""
+{match}
+OPTIONAL MATCH (src:Organization)-[rin:SUPPLIES_TO]->(anchor)
+WHERE coalesce(rin.valid_to, '') = '' AND rin.qc_disabled_at IS NULL
+WITH anchor, count(DISTINCT rin) AS incoming_count
+OPTIONAL MATCH (anchor)-[rout:SUPPLIES_TO]->(dst:Organization)
+WHERE coalesce(rout.valid_to, '') = '' AND rout.qc_disabled_at IS NULL
+RETURN incoming_count, count(DISTINCT rout) AS outgoing_count
+"""
+    try:
+        with neo4j_driver.session() as session:
+            row = session.run(cypher, **params).single()
+        if not row:
+            return "incoming"
+        return _supply_direction_from_counts(
+            int(row.get("incoming_count") or 0),
+            int(row.get("outgoing_count") or 0),
+        )
+    except Exception as exc:
+        print(f"⚠️ [structured_executor] supply direction probe failed: {exc!r}")
+        return "incoming"
+
+
+def _resolve_relation_for_anchor(anchor: dict[str, Any], step: RelationStep) -> RelationStep:
+    if step.rel_type != "SUPPLIES_TO" or step.direction != "auto":
+        return step
+    direction = _resolve_supply_direction(anchor)
+    if direction == "outgoing":
+        return RelationStep("SUPPLIES_TO", "outgoing", "major_customers", "major_customer")
+    return RelationStep("SUPPLIES_TO", "incoming", "suppliers", "supplier")
+
+
+def _resolve_branch_for_anchor(anchor: dict[str, Any], branch: BranchRankStep) -> BranchRankStep:
+    relation = _resolve_relation_for_anchor(anchor, branch.relation)
+    if relation is branch.relation:
+        return branch
+    kind = "major_customer" if relation.direction == "outgoing" else "supplier"
+    return BranchRankStep(
+        kind=kind,  # type: ignore[arg-type]
+        relation=relation,
+        rank=MetricRankStep(branch.rank.metric_id, alias="top_" + kind),
+    )
+
+
+def _edge_matches_relation(edge: dict[str, Any], relation: RelationStep, anchor_id: str | None = None) -> bool:
+    if edge.get("rel_type") != relation.rel_type:
+        return False
+    if relation.direction == "incoming" and anchor_id:
+        return str(edge.get("to_id") or "") == str(anchor_id)
+    if relation.direction == "outgoing" and anchor_id:
+        return str(edge.get("from_id") or "") == str(anchor_id)
+    return True
 
 
 def _anchor_from_seed(seed: Seed) -> dict[str, Any]:
@@ -571,6 +669,48 @@ def _run_branch_from_anchor(
     *,
     exclude_ids: set[str] | None = None,
 ) -> dict[str, Any]:
+    if branch.relation.rel_type == "SUPPLIES_TO" and branch.relation.direction == "auto":
+        incoming = BranchRankStep(
+            kind="supplier",
+            relation=RelationStep("SUPPLIES_TO", "incoming", "suppliers", "supplier"),
+            rank=MetricRankStep(branch.rank.metric_id, alias="top_supplier"),
+        )
+        outgoing = BranchRankStep(
+            kind="major_customer",
+            relation=RelationStep("SUPPLIES_TO", "outgoing", "major_customers", "major_customer"),
+            rank=MetricRankStep(branch.rank.metric_id, alias="top_major_customer"),
+        )
+        results = [
+            _run_branch_from_anchor(anchor, incoming, year, exclude_ids=exclude_ids),
+            _run_branch_from_anchor(anchor, outgoing, year, exclude_ids=exclude_ids),
+        ]
+
+        def result_score(result: dict[str, Any]) -> tuple[bool, float, float, int]:
+            selected = result.get("selected") or {}
+            evidence = selected.get("evidence") or selected.get("edge", {}).get("evidence") or {}
+            metric_value = _as_float(selected.get("metric", {}).get("value"), float("-inf"))
+            if metric_value == 0.0 and selected.get("metric", {}).get("value") is None:
+                metric_value = float("-inf")
+            return (
+                bool(selected),
+                _as_float(evidence.get("confidence")),
+                metric_value,
+                len(result.get("unranked_confirmed") or []),
+            )
+
+        best = max(results, key=result_score)
+        best["auto_direction_candidates"] = [
+            {
+                "kind": r.get("kind"),
+                "relation": r.get("relation"),
+                "selected": (r.get("selected") or {}).get("name"),
+                "abstained": r.get("abstained"),
+            }
+            for r in results
+        ]
+        return best
+
+    branch = _resolve_branch_for_anchor(anchor, branch)
     candidates = _relation_candidates(
         anchor,
         branch.relation,
@@ -581,13 +721,16 @@ def _run_branch_from_anchor(
     _attach_candidate_evidence(candidates)
     policy = "operating_counterparty" if branch.kind in {"supplier", "major_customer"} else "default"
     ranked = _rank_candidates(candidates, branch.rank.metric_id, year, policy=policy)
-    selected = next((c for c in ranked if c.get("metric", {}).get("value") is not None), None)
+    selected, unranked_confirmed = _select_supported(ranked, branch.relation.rel_type)
     return {
         "kind": branch.kind,
         "relation": branch.relation.__dict__,
         "rank": branch.rank.__dict__,
         "candidates": ranked,
         "selected": selected,
+        "unranked_confirmed": unranked_confirmed,
+        "abstained": selected is None,
+        "evidence_floor": _evidence_floor(branch.relation.rel_type),
     }
 
 
@@ -660,7 +803,7 @@ def _execute_multi_anchor_branch_rank(
         year,
         policy=plan.first_candidate_policy,
     )
-    top_first = next((c for c in first_ranked if c.get("metric", {}).get("value") is not None), None)
+    top_first, first_unranked_confirmed = _select_supported(first_ranked, plan.first_relation.rel_type)
     if not top_first:
         return None
 
@@ -718,6 +861,8 @@ def _execute_multi_anchor_branch_rank(
             "common_anchor_min": plan.common_anchor_min,
             "candidates": first_ranked,
             "selected": top_first,
+            "unranked_confirmed": first_unranked_confirmed,
+            "evidence_floor": _evidence_floor(plan.first_relation.rel_type),
         },
         "branches": branches,
         "best_supported_branch": _best_supported_branch(branches),
@@ -749,16 +894,13 @@ def _execute_single_anchor_branch_rank(
 
     branches: dict[str, dict[str, Any]] = {}
     for branch in plan.branch_ranks:
-        branches[branch.kind] = _run_branch_from_anchor(
+        branch_result = _run_branch_from_anchor(
             anchor,
             branch,
             year,
             exclude_ids={str(anchor.get("id") or "")},
         )
-
-    selected_branches = [b for b in branches.values() if b.get("selected")]
-    if not selected_branches:
-        return None
+        branches[branch_result["kind"]] = branch_result
 
     hits: list[GraphHit] = []
     seen_nodes: set[str] = set()
@@ -785,6 +927,9 @@ def _execute_single_anchor_branch_rank(
         selected = branch.get("selected")
         if not selected:
             continue
+        relation = RelationStep(**branch["relation"])
+        if not _edge_matches_relation(selected["edge"], relation, str(anchor.get("id") or "")):
+            continue
         add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
         add_rel(selected["edge"])
         answer_edges.append(selected["edge"])
@@ -798,6 +943,8 @@ def _execute_single_anchor_branch_rank(
         "branches": branches,
         "best_supported_branch": _best_supported_branch(branches),
         "answer_edges": answer_edges,
+        "abstained": not bool(answer_edges),
+        "abstain_reason": "" if answer_edges else "no branch candidate passed relation, evidence, and metric gates",
         "quality_notes": [
             "supplier, related_party, and investment branches are executed independently from the same anchor",
             "each branch is ranked by the same metric before answer assembly",
@@ -823,10 +970,11 @@ def _execute_for_seed(
     year = parse_year(query)
     anchor = _anchor_from_seed(org_seed)
 
-    first_candidates = _relation_candidates(anchor, plan.first_relation)
+    first_relation = _resolve_relation_for_anchor(anchor, plan.first_relation)
+    first_candidates = _relation_candidates(anchor, first_relation)
     _attach_candidate_evidence(first_candidates)
     first_policy = plan.first_candidate_policy
-    if plan.first_relation.rel_type != "SUPPLIES_TO":
+    if first_relation.rel_type != "SUPPLIES_TO":
         first_policy = "default"
     first_ranked = _rank_candidates(
         first_candidates,
@@ -834,24 +982,26 @@ def _execute_for_seed(
         year,
         policy=first_policy,
     )
-    top_first = next((c for c in first_ranked if c.get("metric", {}).get("value") is not None), None)
+    top_first, first_unranked_confirmed = _select_supported(first_ranked, first_relation.rel_type)
     if not top_first:
         return None
 
     second_ranked: list[dict[str, Any]] = []
     top_second: dict[str, Any] | None = None
+    resolved_second_relation: RelationStep | None = None
     if plan.kind == "two_hop_rank" and plan.second_relation and plan.second_rank:
         exclude = {top_first["id"]}
         if anchor.get("id"):
             exclude.add(str(anchor["id"]))
+        resolved_second_relation = _resolve_relation_for_anchor(_anchor_from_candidate(top_first), plan.second_relation)
         second_candidates = _relation_candidates(
             _anchor_from_candidate(top_first),
-            plan.second_relation,
+            resolved_second_relation,
             exclude_ids=exclude,
         )
         _attach_candidate_evidence(second_candidates)
         second_ranked = _rank_candidates(second_candidates, plan.second_rank.metric_id, year)
-        top_second = next((c for c in second_ranked if c.get("metric", {}).get("value") is not None), None)
+        top_second, _ = _select_supported(second_ranked, resolved_second_relation.rel_type)
 
     hits: list[GraphHit] = [_node_hit(str(anchor.get("id") or ""), str(anchor.get("name") or ""), {"structured_role": "anchor"})]
     seen_nodes = {str(anchor.get("id") or "")}
@@ -880,12 +1030,14 @@ def _execute_for_seed(
         "first_candidate_policy": plan.first_candidate_policy,
         "anchor": anchor,
         "first": {
-            "relation": plan.first_relation.__dict__,
+            "relation": first_relation.__dict__,
             "candidates": first_ranked,
             "selected": top_first,
+            "unranked_confirmed": first_unranked_confirmed,
+            "evidence_floor": _evidence_floor(first_relation.rel_type),
         },
         "second": {
-            "relation": plan.second_relation.__dict__ if plan.second_relation else None,
+            "relation": resolved_second_relation.__dict__ if resolved_second_relation else None,
             "candidates": second_ranked,
             "selected": top_second,
         } if plan.kind == "two_hop_rank" else None,
