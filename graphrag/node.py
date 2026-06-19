@@ -46,12 +46,30 @@ def _preflight() -> None:
         log.warning("graphrag preflight skipped (Neo4j unreachable?): %s", e)
 
 
-def graph_search_node(state: dict) -> dict:
-    """GraphRAG 단일 진입점. intent 로 Local/Global 을 분기한다.
+def _anchor_corp_codes(graph_seeds: list[dict]) -> list[str]:
+    """로컬 시드에서 corp_code 앵커만 추출(순서·중복제거). DRIFT 군집 선택용.
 
-    - global(매크로/업계): 인덱스 시점에 만들어둔 Community 요약 map-reduce
-      (Global Search) → community_results.
-    - 그 외: 시드 매칭→멀티홉/PPR 순회(Local Search) → graph_facts 등.
+    Seed.key_type=='corp_code' 인 시드의 key_value 가 실제 corp_code(schema.Seed).
+    """
+    codes: list[str] = []
+    seen: set[str] = set()
+    for sd in graph_seeds or []:
+        if sd.get("key_type") != "corp_code":
+            continue
+        code = sd.get("key_value")
+        if code and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
+def graph_search_node(state: dict) -> dict:
+    """GraphRAG 단일 진입점. intent 로 Local/Global 을 분기하고 DRIFT 로 결합한다.
+
+    - global(매크로/업계): 커뮤니티 요약 query-time map-reduce → community_results.
+    - 그 외(ctx/local): 시드 매칭→멀티홉/PPR 순회(Local Search) → graph_facts 등.
+      추가로 로컬 시드 corp_code 를 앵커로 그 시드가 속한 군집의 map-reduce 부분답을
+      community_results 로 함께 반환한다(DRIFT — local+global 한 검색 스텝 융합).
     둘 다 같은 GraphRAG 노드가 소유하므로 별도 플로우 노드를 두지 않는다.
     """
     # 글로벌은 Cypher 순회가 아니라 커뮤니티 요약을 읽어 종합하므로 분기.
@@ -70,7 +88,7 @@ def graph_search_node(state: dict) -> dict:
     out = search(query, upstream_seeds=upstream)
     legacy = adapt_to_legacy(out["graph_hits"])
 
-    return {
+    result = {
         # 신규
         "graph_hits": out["graph_hits"],
         "graph_seeds": out["graph_seeds"],
@@ -83,3 +101,14 @@ def graph_search_node(state: dict) -> dict:
         "graph_path_sources": legacy["path_sources"],
         "graph_path_chunks": legacy["path_chunks"],
     }
+
+    # DRIFT: 로컬 앵커가 속한 군집의 map-reduce 부분답을 함께 실어 보낸다.
+    # 앵커가 없으면(엔티티 미해소) 군집을 붙이지 않는다 — 노이즈 0.
+    anchors = _anchor_corp_codes(out["graph_seeds"])
+    if anchors:
+        community_results = global_search(query, anchor_corp_codes=anchors)
+        if community_results:
+            print(f"🌐 [GraphRAG/DRIFT] 앵커 군집 {len(community_results)}개 결합")
+            result["community_results"] = community_results
+
+    return result

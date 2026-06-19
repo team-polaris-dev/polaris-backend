@@ -84,6 +84,17 @@ PANEL_MIN_EVIDENCE = float(os.environ.get("GRAPHRAG_PANEL_MIN_EVIDENCE", "0.55")
 # 질문이 요구한 관계망 자체가 통째로 비는 것을 방지한다.
 STRUCTURED_CONFIRMED_RENDER_CAP = int(os.environ.get("GRAPHRAG_STRUCTURED_CONFIRMED_RENDER_CAP", "8"))
 
+# ── GraphRAG Global Search map-reduce (graphrag/global_search.py) ──────────
+# MS GraphRAG global search 방식: 후보 군집마다 LLM이 질문 맞춤 부분답+점수를 만들고(map),
+# gen 노드가 종합(reduce). 인덱스 시점 정적요약을 문자열매칭으로 고르던 기존 동작 대비
+# 질문-맞춤 정확도가 오르지만 질의 시점 LLM 호출이 늘어난다(비용·지연).
+# GLOBAL_MAP_REDUCE=0 이면 기존 정적-요약 읽기 경로로 폴백(견고성 스위치).
+GLOBAL_MAP_REDUCE = os.environ.get("GRAPHRAG_GLOBAL_MAP_REDUCE", "1") not in ("0", "false", "False")
+# select/map 대상 군집 상한 — map LLM 호출 수를 bound 한다(군집 size 상위 N).
+GLOBAL_MAP_MAX_COMMUNITIES = int(os.environ.get("GRAPHRAG_GLOBAL_MAP_MAX_COMMUNITIES", "5"))
+# 부분답 관련성 점수(0~100) 하한. 미만이면 폐기 — 좁은 질문에 무관 군집 노이즈 차단.
+GLOBAL_MAP_MIN_SCORE = int(os.environ.get("GRAPHRAG_GLOBAL_MAP_MIN_SCORE", "1"))
+
 # ── traverse hit 기본 점수 (graphrag/traverse.py) ──────────────────
 REL_HIT_SCORE = float(os.environ.get("GRAPHRAG_REL_HIT_SCORE", "0.8"))   # 관계 hit 기본 score
 NODE_HIT_SCORE = float(os.environ.get("GRAPHRAG_NODE_HIT_SCORE", "1.0"))  # 노드 hit 기본 score
