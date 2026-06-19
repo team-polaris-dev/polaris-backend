@@ -21,6 +21,9 @@ from config.relations import (
 from config.graphrag import PANEL_MIN_EVIDENCE
 
 
+_TYPE_ATTESTED_RELS = {"RELATED_PARTY", "INVESTS_IN"}
+
+
 HitLabel = Literal[
     "organization", "person", "product", "technology",
     "fin_metric", "relationship",
@@ -141,6 +144,8 @@ def _path_from_hit(hit: GraphHit) -> list[str] | None:
     attrs = hit.get("attrs", {})
     rel_type = attrs.get("rel_type") or ""
     if rel_type not in _NETWORK_REL_TYPES:
+        return None
+    if rel_type in _TYPE_ATTESTED_RELS and not attrs.get("evidence_relation_term_found"):
         return None
     evidence_confidence = attrs.get("evidence_confidence")
     if evidence_confidence is not None:

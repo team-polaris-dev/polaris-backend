@@ -84,6 +84,55 @@ def test_supplier_role_preserved_in_path_direction() -> None:
     assert legacy["facts"][0]["extra"]["role"] == "supplier"
 
 
+def test_related_party_without_attested_relation_term_is_not_rendered_as_path() -> None:
+    hits = [{
+        "id": "rel:RELATED_PARTY:001:002",
+        "label": "relationship",
+        "name": "동진쎄미켐 → SK하이닉스",
+        "attrs": {
+            "rel_type": "RELATED_PARTY",
+            "from_id": "001",
+            "from_name": "동진쎄미켐",
+            "to_id": "002",
+            "to_name": "SK하이닉스",
+            "evidence_confidence": 0.8,
+            "evidence_relation_term_found": False,
+        },
+        "score": 0.8,
+        "source": "20240314001382",
+    }]
+
+    legacy = adapt_to_legacy(hits)
+
+    assert legacy["facts"][0]["type"] == "related_party"
+    assert legacy["paths"] == []
+    assert legacy["path_sources"] == []
+
+
+def test_related_party_with_attested_relation_term_is_rendered_as_path() -> None:
+    hits = [{
+        "id": "rel:RELATED_PARTY:001:003",
+        "label": "relationship",
+        "name": "동진쎄미켐 → 동진홀딩스",
+        "attrs": {
+            "rel_type": "RELATED_PARTY",
+            "from_id": "001",
+            "from_name": "동진쎄미켐",
+            "to_id": "003",
+            "to_name": "동진홀딩스",
+            "evidence_confidence": 0.95,
+            "evidence_relation_term_found": True,
+        },
+        "score": 1.0,
+        "source": "20240314001382",
+    }]
+
+    legacy = adapt_to_legacy(hits)
+
+    assert legacy["paths"] == [["동진쎄미켐", "RELATED_PARTY", "동진홀딩스"]]
+    assert legacy["path_sources"] == ["20240314001382"]
+
+
 def test_empty_hits_yield_empty_keys_without_error() -> None:
     """빈 hits — KeyError 없이 빈 키 반환."""
     legacy = adapt_to_legacy([])

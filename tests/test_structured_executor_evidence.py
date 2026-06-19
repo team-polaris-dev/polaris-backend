@@ -137,6 +137,86 @@ def test_select_supported_prefers_stronger_evidence_before_metric(monkeypatch):
     assert unranked == []
 
 
+def test_select_supported_requires_relation_term_for_related_party():
+    ranked = [
+        {
+            "id": "co_mentioned_big",
+            "name": "SK하이닉스",
+            "metric": {"value": 333000000000000.0},
+            "evidence": {"confidence": 0.8, "level": "high", "relation_term_found": False},
+        },
+        {
+            "id": "attested_smaller",
+            "name": "동진홀딩스",
+            "metric": {"value": 1000000000.0},
+            "evidence": {"confidence": 0.95, "level": "high", "relation_term_found": True},
+        },
+    ]
+
+    selected, unranked = _select_supported(ranked, "RELATED_PARTY")
+
+    assert selected is not None
+    assert selected["name"] == "동진홀딩스"
+    assert unranked == []
+
+
+def test_select_supported_requires_relation_term_for_investment():
+    ranked = [
+        {
+            "id": "co_mentioned_big",
+            "name": "삼성전자",
+            "metric": {"value": 333000000000000.0},
+            "evidence": {"confidence": 0.8, "level": "high", "relation_term_found": False},
+        },
+        {
+            "id": "attested_smaller",
+            "name": "관계기업",
+            "metric": {"value": 1000000000.0},
+            "evidence": {"confidence": 0.95, "level": "high", "relation_term_found": True},
+        },
+    ]
+
+    selected, unranked = _select_supported(ranked, "INVESTS_IN")
+
+    assert selected is not None
+    assert selected["name"] == "관계기업"
+    assert unranked == []
+
+
+def test_select_supported_keeps_numeric_floor_for_supply_relation():
+    ranked = [
+        {
+            "id": "co_mentioned_customer",
+            "name": "SK하이닉스",
+            "metric": {"value": 333000000000000.0},
+            "evidence": {"confidence": 0.8, "level": "high", "relation_term_found": False},
+        },
+    ]
+
+    selected, unranked = _select_supported(ranked, "SUPPLIES_TO")
+
+    assert selected is not None
+    assert selected["name"] == "SK하이닉스"
+    assert unranked == []
+
+
+def test_select_supported_keeps_numeric_floor_for_shareholder_relation():
+    ranked = [
+        {
+            "id": "shareholder",
+            "name": "삼성생명",
+            "metric": {"value": 1000000000.0},
+            "evidence": {"confidence": 0.8, "level": "high", "relation_term_found": False},
+        },
+    ]
+
+    selected, unranked = _select_supported(ranked, "IS_MAJOR_SHAREHOLDER_OF")
+
+    assert selected is not None
+    assert selected["name"] == "삼성생명"
+    assert unranked == []
+
+
 def test_select_supported_keeps_metricless_candidate_out_of_rank(monkeypatch):
     candidates = [
         {

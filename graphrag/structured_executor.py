@@ -43,6 +43,7 @@ _RELATION_EVIDENCE_TERMS = {
     "RELATED_PARTY": ("특수관계", "관계기업", "관계회사", "관련회사", "계열"),
     "INVESTS_IN": ("투자", "지분", "관계기업", "공동기업", "주식"),
 }
+_TYPE_ATTESTED_RELS = {"RELATED_PARTY", "INVESTS_IN"}
 
 
 def _placeholders(n: int) -> str:
@@ -486,6 +487,17 @@ def _evidence_confidence(candidate: dict[str, Any]) -> float:
     return _as_float(evidence.get("confidence"))
 
 
+def _relation_type_attested(candidate: dict[str, Any]) -> bool:
+    evidence = candidate.get("evidence") or candidate.get("edge", {}).get("evidence") or {}
+    return bool(evidence.get("relation_term_found"))
+
+
+def _candidate_supported(candidate: dict[str, Any], rel_type: str) -> bool:
+    if rel_type in _TYPE_ATTESTED_RELS:
+        return _relation_type_attested(candidate)
+    return _evidence_confidence(candidate) >= _evidence_floor(rel_type)
+
+
 def _evidence_floor(rel_type: str) -> float:
     if rel_type == "SUPPLIES_TO":
         return STRUCTURED_MIN_EVIDENCE_OPERATING
@@ -496,8 +508,7 @@ def _select_supported(
     ranked: list[dict[str, Any]],
     rel_type: str,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    floor = _evidence_floor(rel_type)
-    supported = [c for c in ranked if _evidence_confidence(c) >= floor]
+    supported = [c for c in ranked if _candidate_supported(c, rel_type)]
     metric_supported = [
         c for c in supported
         if c.get("metric", {}).get("value") is not None
