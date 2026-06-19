@@ -149,6 +149,12 @@ def _single_anchor_branch_ranks(metric_id: str) -> list[BranchRankStep]:
     ]
 
 
+def _first_candidate_policy(step: RelationStep) -> str:
+    if step.rel_type == "SUPPLIES_TO" and step.direction == "incoming":
+        return "operating_counterparty"
+    return "default"
+
+
 def plan(query: str) -> StructuredPlan | None:
     """Return a supported structured plan or None for local/PPR fallback."""
     q = " ".join((query or "").split())
@@ -263,6 +269,7 @@ def plan(query: str) -> StructuredPlan | None:
             first_rank=MetricRankStep(metric_id, alias="top_" + first_step.role),  # type: ignore[arg-type]
             second_relation=second_step,
             second_rank=MetricRankStep(metric_id, alias="top_" + second_step.role),  # type: ignore[arg-type]
+            first_candidate_policy=_first_candidate_policy(first_step),
             exclude_original_anchor_from_second=not _include_original_anchor_on_second(q),
             raw_reason="; ".join(raw_reasons),
             steps=steps,
@@ -272,6 +279,7 @@ def plan(query: str) -> StructuredPlan | None:
         kind="single_hop_rank",
         first_relation=first_step,
         first_rank=MetricRankStep(metric_id, alias="top_" + first_step.role),  # type: ignore[arg-type]
+        first_candidate_policy=_first_candidate_policy(first_step),
         raw_reason="; ".join(raw_reasons),
         steps=steps,
     )

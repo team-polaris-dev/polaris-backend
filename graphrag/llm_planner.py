@@ -306,6 +306,7 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 - 한 기준 회사에 대해 공급/특수관계/투자 관계를 각각 탐색하고 관계 유형별 1위와 근거를 비교하라고 하면 single_anchor_branch_rank.
 - '잘나가는'은 별도 지표가 없으면 매출액(ifrs-full_Revenue)으로 둔다.
 - 2-hop에서는 원래 기준 회사가 다시 답으로 돌아오지 않도록 exclude_original_anchor_from_second=true.
+- 협력사/공급사/거래처 후보를 매출액으로 고르는 질문은 first_candidate_policy=operating_counterparty. 단 공통 협력사 교집합 질문은 아래 multi_anchor 규칙을 따른다.
 - multi_anchor_branch_rank의 first_relation은 보통 SUPPLIES_TO incoming이며, first_candidate_policy는 보통 default다. 공통 공급사 교집합 자체가 운영 거래 필터다.
 - multi_anchor_branch_rank의 branch_relations는 major_customer=SUPPLIES_TO outgoing, related_party=RELATED_PARTY undirected, investment=INVESTS_IN undirected 세 개를 모두 포함한다.
 - single_anchor_branch_rank의 branch_relations는 supplier=SUPPLIES_TO incoming, related_party=RELATED_PARTY undirected, investment=INVESTS_IN undirected 세 개를 모두 포함한다.

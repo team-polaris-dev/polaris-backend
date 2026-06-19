@@ -11,6 +11,7 @@ from typing import Any
 from tool.graph_client import neo4j_driver
 from tool.rdb_client import mariadb_conn, parse_year
 
+from config.relations import NETWORK_REL_TYPES
 from graphrag.plan_schema import BranchRankStep, RelationStep, StructuredPlan
 from graphrag.schema import GraphHit, Seed
 
@@ -28,6 +29,8 @@ _GOVERNANCE_RELS = {
     "IS_SUBSIDIARY_OF",
     "INVESTS_IN",
 }
+_HUB_DEGREE_SOFT_CAP = 25
+_HUB_DEGREE_HARD_CAP = 80
 _FIN_FS_DIV = "CFS"
 _FIN_REPRT_CODE = "11011"
 
@@ -273,6 +276,7 @@ def _clean_candidate(row: dict[str, Any], step: RelationStep) -> dict[str, Any]:
         "source": str(row.get("source") or ""),
         "chunk_id": str(row.get("chunk_id") or ""),
         "anchor_rels": [str(v) for v in (row.get("anchor_rels") or []) if v],
+        "graph_degree": int(row.get("graph_degree") or 0),
         "edge": {
             "rel_type": step.rel_type,
             "from_id": str(row.get("from_id") or ""),
@@ -316,6 +320,10 @@ WITH anchor, cand, r, anchor_id, cand_id, startNode(r) = anchor AS anchor_is_sta
 OPTIONAL MATCH (cand)-[other]-(anchor)
 WITH anchor, cand, r, anchor_id, cand_id, anchor_is_start,
      [x IN collect(DISTINCT type(other)) WHERE x IS NOT NULL AND x <> $rel_type] AS anchor_rels
+OPTIONAL MATCH (cand)-[deg_rel]-(deg_node:Organization)
+WHERE type(deg_rel) IN $network_rel_types
+WITH anchor, cand, r, anchor_id, cand_id, anchor_is_start, anchor_rels,
+     count(DISTINCT deg_rel) AS graph_degree
 RETURN
   cand_id,
   cand.corp_code AS corp_code,
@@ -327,11 +335,13 @@ RETURN
   CASE WHEN anchor_is_start THEN cand.name ELSE anchor.name END AS to_name,
   r.rcept_no AS source,
   r.chunk_id AS chunk_id,
-  anchor_rels
+  anchor_rels,
+  graph_degree
 LIMIT 200
 """
     params["exclude_ids"] = list(exclude_ids or set())
     params["rel_type"] = rel
+    params["network_rel_types"] = list(NETWORK_REL_TYPES)
     with neo4j_driver.session() as session:
         rows = [r.data() for r in session.run(cypher, **params)]
     out: list[dict[str, Any]] = []
@@ -350,15 +360,64 @@ LIMIT 200
     return out
 
 
-def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[int, dict[str, Any]]:
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[float, dict[str, Any]]:
     anchor_rels = set(candidate.get("anchor_rels") or [])
+    evidence = candidate.get("evidence") or candidate.get("edge", {}).get("evidence") or {}
+    evidence_confidence = _as_float(evidence.get("confidence"))
+    graph_degree = int(_as_float(candidate.get("graph_degree"), 0.0))
     flags = {
         "governance_linked": bool(anchor_rels & _GOVERNANCE_RELS),
         "related_party_linked": "RELATED_PARTY" in anchor_rels,
+        "graph_degree": graph_degree,
+        "evidence_confidence": evidence_confidence,
+        "evidence_level": evidence.get("level") or "",
+        "evidence_relation_term_found": bool(evidence.get("relation_term_found")),
     }
-    if policy == "operating_counterparty" and flags["governance_linked"]:
-        return -1, flags
-    return 0, flags
+    score = 0.0
+    reasons: list[str] = []
+
+    if policy == "operating_counterparty":
+        if flags["governance_linked"]:
+            score -= 2.0
+            reasons.append("governance_linked")
+        if flags["related_party_linked"]:
+            score -= 1.0
+            reasons.append("related_party_linked")
+
+        if graph_degree >= _HUB_DEGREE_HARD_CAP:
+            score -= 1.0
+            reasons.append("hard_hub_degree")
+        elif graph_degree >= _HUB_DEGREE_SOFT_CAP:
+            score -= 0.5
+            reasons.append("soft_hub_degree")
+
+        if evidence_confidence >= 0.8:
+            score += 1.0
+            reasons.append("strong_edge_evidence")
+        elif evidence_confidence >= 0.55:
+            score += 0.25
+            reasons.append("medium_edge_evidence")
+        elif evidence_confidence > 0:
+            score -= 0.5
+            reasons.append("weak_edge_evidence")
+
+        if flags["evidence_relation_term_found"]:
+            score += 0.25
+            reasons.append("relation_term_found")
+        if not flags["governance_linked"] and not flags["related_party_linked"]:
+            score += 0.5
+            reasons.append("pure_operating_counterparty")
+
+    flags["score"] = score
+    flags["reasons"] = reasons
+    return score, flags
 
 
 def _rank_candidates(
@@ -520,7 +579,8 @@ def _run_branch_from_anchor(
     for cand in candidates:
         cand["edge"]["branch_kind"] = branch.kind
     _attach_candidate_evidence(candidates)
-    ranked = _rank_candidates(candidates, branch.rank.metric_id, year)
+    policy = "operating_counterparty" if branch.kind in {"supplier", "major_customer"} else "default"
+    ranked = _rank_candidates(candidates, branch.rank.metric_id, year, policy=policy)
     selected = next((c for c in ranked if c.get("metric", {}).get("value") is not None), None)
     return {
         "kind": branch.kind,

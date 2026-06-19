@@ -14,6 +14,7 @@ def test_supply_related_revenue_question_becomes_two_hop_plan():
     assert out.first_relation.rel_type == "SUPPLIES_TO"
     assert out.first_relation.direction == "incoming"
     assert out.first_rank.metric_id == "ifrs-full_Revenue"
+    assert out.first_candidate_policy == "operating_counterparty"
     assert out.second_relation is not None
     assert out.second_relation.rel_type == "RELATED_PARTY"
     assert out.second_relation.direction == "undirected"

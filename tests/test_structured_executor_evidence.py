@@ -1,3 +1,4 @@
+from graphrag import structured_executor
 from graphrag.structured_executor import _score_edge_evidence
 
 
@@ -51,3 +52,47 @@ def test_investment_edge_without_chunk_is_low_confidence():
     assert evidence["level"] == "low"
     assert "document_source_without_chunk" in evidence["warnings"]
     assert "weak_evidence_for_accounting_or_investment_relation" in evidence["warnings"]
+
+
+def test_operating_counterparty_policy_demotes_governance_hub(monkeypatch):
+    candidates = [
+        {
+            "id": "sk",
+            "corp_code": "001",
+            "name": "SK(주)",
+            "anchor_rels": ["RELATED_PARTY", "INVESTS_IN"],
+            "graph_degree": 120,
+            "edge": {},
+            "evidence": {"confidence": 0.95, "level": "high", "relation_term_found": True},
+        },
+        {
+            "id": "supplier",
+            "corp_code": "002",
+            "name": "동진쎄미켐",
+            "anchor_rels": [],
+            "graph_degree": 4,
+            "edge": {},
+            "evidence": {"confidence": 0.55, "level": "medium", "relation_term_found": True},
+        },
+    ]
+
+    def fake_metric_values(corp_codes, account_id="ifrs-full_Revenue", year=None):
+        return [
+            {"corp_code": "001", "account_id": account_id, "value": "122000000000000", "bsns_year": 2025},
+            {"corp_code": "002", "account_id": account_id, "value": "1200000000000", "bsns_year": 2025},
+        ]
+
+    monkeypatch.setattr(structured_executor, "_fetch_metric_values", fake_metric_values)
+
+    default_ranked = structured_executor._rank_candidates(candidates, "ifrs-full_Revenue", 2025)
+    operating_ranked = structured_executor._rank_candidates(
+        candidates,
+        "ifrs-full_Revenue",
+        2025,
+        policy="operating_counterparty",
+    )
+
+    assert default_ranked[0]["name"] == "SK(주)"
+    assert operating_ranked[0]["name"] == "동진쎄미켐"
+    assert "governance_linked" in operating_ranked[1]["policy"]["reasons"]
+    assert "pure_operating_counterparty" in operating_ranked[0]["policy"]["reasons"]
