@@ -79,6 +79,11 @@ STRUCTURED_MIN_EVIDENCE = float(os.environ.get("GRAPHRAG_STRUCTURED_MIN_EVIDENCE
 STRUCTURED_MIN_EVIDENCE_OPERATING = float(os.environ.get("GRAPHRAG_STRUCTURED_MIN_EVIDENCE_OPERATING", "0.55"))
 PANEL_MIN_EVIDENCE = float(os.environ.get("GRAPHRAG_PANEL_MIN_EVIDENCE", "0.55"))
 
+# 매출(metric)로 순위를 매길 수 없는 '근거 확인된' 관계(해외·비상장 특수관계자 등)도
+# 그래프에는 보여준다. branch별로 이 상한까지 confirmed 엣지를 렌더해 헤어볼은 막되
+# 질문이 요구한 관계망 자체가 통째로 비는 것을 방지한다.
+STRUCTURED_CONFIRMED_RENDER_CAP = int(os.environ.get("GRAPHRAG_STRUCTURED_CONFIRMED_RENDER_CAP", "8"))
+
 # ── traverse hit 기본 점수 (graphrag/traverse.py) ──────────────────
 REL_HIT_SCORE = float(os.environ.get("GRAPHRAG_REL_HIT_SCORE", "0.8"))   # 관계 hit 기본 score
 NODE_HIT_SCORE = float(os.environ.get("GRAPHRAG_NODE_HIT_SCORE", "1.0"))  # 노드 hit 기본 score

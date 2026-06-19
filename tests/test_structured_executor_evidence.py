@@ -1,6 +1,7 @@
 from graphrag import structured_executor
 from graphrag.plan_schema import RelationStep
 from graphrag.structured_executor import (
+    _confirmed_render_candidates,
     _edge_matches_relation,
     _score_edge_evidence,
     _select_supported,
@@ -249,3 +250,46 @@ def test_edge_matches_relation_direction():
     assert not _edge_matches_relation(edge, RelationStep("SUPPLIES_TO", "incoming", "suppliers"), "a")
     assert _edge_matches_relation(edge, RelationStep("SUPPLIES_TO", "outgoing", "buyers"), "a")
     assert not _edge_matches_relation(edge, RelationStep("SUPPLIES_TO", "outgoing", "buyers"), "b")
+
+
+def test_confirmed_render_candidates_returns_matching_in_order():
+    relation = RelationStep("RELATED_PARTY", "undirected", "related")
+    confirmed = [
+        {"id": "a", "name": "동진첨단소재", "edge": {"rel_type": "RELATED_PARTY", "from_id": "anchor", "to_id": "a"}},
+        {"id": "b", "name": "이브이에스텍", "edge": {"rel_type": "RELATED_PARTY", "from_id": "anchor", "to_id": "b"}},
+    ]
+
+    out = _confirmed_render_candidates(confirmed, relation, cap=8, anchor_id="anchor")
+
+    assert [c["id"] for c in out] == ["a", "b"]
+
+
+def test_confirmed_render_candidates_respects_cap_in_order():
+    relation = RelationStep("RELATED_PARTY", "undirected", "related")
+    confirmed = [
+        {"id": f"c{i}", "name": f"n{i}", "edge": {"rel_type": "RELATED_PARTY", "from_id": "anchor", "to_id": f"c{i}"}}
+        for i in range(20)
+    ]
+
+    out = _confirmed_render_candidates(confirmed, relation, cap=8, anchor_id="anchor")
+
+    assert [c["id"] for c in out] == [f"c{i}" for i in range(8)]
+
+
+def test_confirmed_render_candidates_drops_relation_mismatch():
+    relation = RelationStep("SUPPLIES_TO", "incoming", "suppliers")
+    confirmed = [
+        {"id": "ok", "name": "협력사", "edge": {"rel_type": "SUPPLIES_TO", "from_id": "ok", "to_id": "anchor"}},
+        {"id": "wrong_type", "name": "투자사", "edge": {"rel_type": "INVESTS_IN", "from_id": "wrong_type", "to_id": "anchor"}},
+        {"id": "wrong_dir", "name": "고객사", "edge": {"rel_type": "SUPPLIES_TO", "from_id": "anchor", "to_id": "wrong_dir"}},
+    ]
+
+    out = _confirmed_render_candidates(confirmed, relation, cap=8, anchor_id="anchor")
+
+    assert [c["id"] for c in out] == ["ok"]
+
+
+def test_confirmed_render_candidates_empty_when_none():
+    relation = RelationStep("RELATED_PARTY", "undirected", "related")
+
+    assert _confirmed_render_candidates([], relation, cap=8, anchor_id="anchor") == []

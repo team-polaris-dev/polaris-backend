@@ -12,6 +12,7 @@ from tool.graph_client import neo4j_driver
 from tool.rdb_client import mariadb_conn, parse_year
 
 from config.graphrag import (
+    STRUCTURED_CONFIRMED_RENDER_CAP,
     STRUCTURED_MIN_EVIDENCE,
     STRUCTURED_MIN_EVIDENCE_OPERATING,
 )
@@ -583,6 +584,30 @@ def _edge_matches_relation(edge: dict[str, Any], relation: RelationStep, anchor_
     return True
 
 
+def _confirmed_render_candidates(
+    unranked_confirmed: list[dict[str, Any]],
+    relation: RelationStep,
+    cap: int,
+    anchor_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Evidence-confirmed relationships that have no comparable metric.
+
+    They pass the evidence / type-attestation gate but carry no metric value, so
+    they cannot win the metric ranking. Render them (capped, in ranked order) so
+    the relationship network the question asked for is not blank when no
+    metric-bearing candidate exists. The cap prevents hairballs.
+    """
+    out: list[dict[str, Any]] = []
+    for cand in unranked_confirmed or []:
+        if len(out) >= cap:
+            break
+        edge = cand.get("edge")
+        if not edge or not _edge_matches_relation(edge, relation, anchor_id):
+            continue
+        out.append(cand)
+    return out
+
+
 def _anchor_from_seed(seed: Seed) -> dict[str, Any]:
     return {
         "id": seed.get("id") or "",
@@ -847,12 +872,20 @@ def _execute_multi_anchor_branch_rank(
     for edge in top_first.get("anchor_edges") or [top_first["edge"]]:
         add_rel(edge)
 
+    branch_anchor_id = str(top_first.get("id") or "")
+    confirmed_edges: list[dict[str, Any]] = []
     for kind, branch in branches.items():
+        relation = RelationStep(**branch["relation"])
         selected = branch.get("selected")
-        if not selected:
-            continue
-        add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
-        add_rel(selected["edge"])
+        if selected:
+            add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
+            add_rel(selected["edge"])
+        for cand in _confirmed_render_candidates(
+            branch.get("unranked_confirmed") or [], relation, STRUCTURED_CONFIRMED_RENDER_CAP, branch_anchor_id,
+        ):
+            add_node(str(cand.get("id") or ""), str(cand.get("name") or ""), "confirmed_" + kind, 0.7)
+            add_rel(cand["edge"])
+            confirmed_edges.append(cand["edge"])
 
     answer_edges = list(top_first.get("anchor_edges") or [top_first["edge"]])
     for branch in branches.values():
@@ -878,6 +911,7 @@ def _execute_multi_anchor_branch_rank(
         "branches": branches,
         "best_supported_branch": _best_supported_branch(branches),
         "answer_edges": answer_edges,
+        "confirmed_edges": confirmed_edges,
         "quality_notes": [
             "common supplier candidates are intersected across anchors before ranking",
             "major_customer, related_party, and investment branches are executed independently",
@@ -933,17 +967,33 @@ def _execute_single_anchor_branch_rank(
         hits.append(_rel_hit(edge, score))
 
     add_node(str(anchor.get("id") or ""), str(anchor.get("name") or ""), "anchor")
+    anchor_id = str(anchor.get("id") or "")
     answer_edges: list[dict[str, Any]] = []
+    confirmed_edges: list[dict[str, Any]] = []
     for kind, branch in branches.items():
-        selected = branch.get("selected")
-        if not selected:
-            continue
         relation = RelationStep(**branch["relation"])
-        if not _edge_matches_relation(selected["edge"], relation, str(anchor.get("id") or "")):
-            continue
-        add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
-        add_rel(selected["edge"])
-        answer_edges.append(selected["edge"])
+        selected = branch.get("selected")
+        if selected and _edge_matches_relation(selected["edge"], relation, anchor_id):
+            add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
+            add_rel(selected["edge"])
+            answer_edges.append(selected["edge"])
+        for cand in _confirmed_render_candidates(
+            branch.get("unranked_confirmed") or [], relation, STRUCTURED_CONFIRMED_RENDER_CAP, anchor_id,
+        ):
+            add_node(str(cand.get("id") or ""), str(cand.get("name") or ""), "confirmed_" + kind, 0.7)
+            add_rel(cand["edge"])
+            confirmed_edges.append(cand["edge"])
+
+    abstained = not answer_edges and not confirmed_edges
+    if abstained:
+        abstain_reason = "no branch candidate passed relation, evidence, and metric gates"
+    elif not answer_edges:
+        abstain_reason = (
+            f"ranked answer unavailable (no comparable metric); "
+            f"{len(confirmed_edges)} confirmed relationships shown"
+        )
+    else:
+        abstain_reason = ""
 
     structured = {
         "mode": "structured",
@@ -954,8 +1004,9 @@ def _execute_single_anchor_branch_rank(
         "branches": branches,
         "best_supported_branch": _best_supported_branch(branches),
         "answer_edges": answer_edges,
-        "abstained": not bool(answer_edges),
-        "abstain_reason": "" if answer_edges else "no branch candidate passed relation, evidence, and metric gates",
+        "confirmed_edges": confirmed_edges,
+        "abstained": abstained,
+        "abstain_reason": abstain_reason,
         "quality_notes": [
             "supplier, related_party, and investment branches are executed independently from the same anchor",
             "each branch is ranked by the same metric before answer assembly",
@@ -994,45 +1045,68 @@ def _execute_for_seed(
         policy=first_policy,
     )
     top_first, first_unranked_confirmed = _select_supported(first_ranked, first_relation.rel_type)
-    if not top_first:
+    anchor_id = str(anchor.get("id") or "")
+    first_confirmed = (
+        _confirmed_render_candidates(
+            first_unranked_confirmed, first_relation, STRUCTURED_CONFIRMED_RENDER_CAP, anchor_id,
+        )
+        if not top_first
+        else []
+    )
+    if not top_first and not first_confirmed:
         return None
 
     second_ranked: list[dict[str, Any]] = []
     top_second: dict[str, Any] | None = None
+    second_unranked_confirmed: list[dict[str, Any]] = []
+    second_confirmed: list[dict[str, Any]] = []
     resolved_second_relation: RelationStep | None = None
-    if plan.kind == "two_hop_rank" and plan.second_relation and plan.second_rank:
+    if top_first and plan.kind == "two_hop_rank" and plan.second_relation and plan.second_rank:
         exclude = {top_first["id"]}
         if anchor.get("id"):
             exclude.add(str(anchor["id"]))
-        resolved_second_relation = _resolve_relation_for_anchor(_anchor_from_candidate(top_first), plan.second_relation)
+        second_anchor = _anchor_from_candidate(top_first)
+        resolved_second_relation = _resolve_relation_for_anchor(second_anchor, plan.second_relation)
         second_candidates = _relation_candidates(
-            _anchor_from_candidate(top_first),
+            second_anchor,
             resolved_second_relation,
             exclude_ids=exclude,
         )
         _attach_candidate_evidence(second_candidates)
         second_ranked = _rank_candidates(second_candidates, plan.second_rank.metric_id, year)
-        top_second, _ = _select_supported(second_ranked, resolved_second_relation.rel_type)
+        top_second, second_unranked_confirmed = _select_supported(second_ranked, resolved_second_relation.rel_type)
+        if not top_second:
+            second_confirmed = _confirmed_render_candidates(
+                second_unranked_confirmed, resolved_second_relation,
+                STRUCTURED_CONFIRMED_RENDER_CAP, str(top_first.get("id") or ""),
+            )
 
-    hits: list[GraphHit] = [_node_hit(str(anchor.get("id") or ""), str(anchor.get("name") or ""), {"structured_role": "anchor"})]
-    seen_nodes = {str(anchor.get("id") or "")}
+    hits: list[GraphHit] = [_node_hit(anchor_id, str(anchor.get("name") or ""), {"structured_role": "anchor"})]
+    seen_nodes = {anchor_id}
 
-    def add_answer_hit(cand: dict[str, Any] | None, role: str) -> None:
+    def add_answer_hit(cand: dict[str, Any] | None, role: str, node_score: float = 0.95) -> None:
         if not cand:
             return
         cid = cand.get("id") or ""
         if cid and cid not in seen_nodes:
             seen_nodes.add(cid)
-            hits.append(_node_hit(cid, cand.get("name") or "", {"structured_role": role}, 0.95))
+            hits.append(_node_hit(cid, cand.get("name") or "", {"structured_role": role}, node_score))
         hits.append(_rel_hit(cand["edge"], 1.0))
 
     add_answer_hit(top_first, "selected_first")
+    for cand in first_confirmed:
+        add_answer_hit(cand, "confirmed_first", 0.7)
     add_answer_hit(top_second, "selected_second")
+    for cand in second_confirmed:
+        add_answer_hit(cand, "confirmed_second", 0.7)
 
-    answer_edges = [top_first["edge"]]
+    answer_edges: list[dict[str, Any]] = []
+    if top_first:
+        answer_edges.append(top_first["edge"])
     if top_second:
         answer_edges.append(top_second["edge"])
 
+    confirmed_edges = [c["edge"] for c in first_confirmed] + [c["edge"] for c in second_confirmed]
     structured = {
         "mode": "structured",
         "year": year,
@@ -1051,8 +1125,11 @@ def _execute_for_seed(
             "relation": resolved_second_relation.__dict__ if resolved_second_relation else None,
             "candidates": second_ranked,
             "selected": top_second,
+            "unranked_confirmed": second_unranked_confirmed,
         } if plan.kind == "two_hop_rank" else None,
         "answer_edges": answer_edges,
+        "confirmed_edges": confirmed_edges,
+        "abstained": not answer_edges and not confirmed_edges,
     }
     meta = {
         "mode": "structured",
