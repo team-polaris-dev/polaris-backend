@@ -63,32 +63,14 @@ def _anchor_corp_codes(graph_seeds: list[dict]) -> list[str]:
     return codes
 
 
-def graph_search_node(state: dict) -> dict:
-    """GraphRAG 단일 진입점. intent 로 Local/Global 을 분기하고 DRIFT 로 결합한다.
+def _assemble_local(out: dict) -> dict:
+    """search() 출력 → Local Search 결과 dict(신규 키 + legacy 셰임 키).
 
-    - global(매크로/업계): 커뮤니티 요약 query-time map-reduce → community_results.
-    - 그 외(ctx/local): 시드 매칭→멀티홉/PPR 순회(Local Search) → graph_facts 등.
-      추가로 로컬 시드 corp_code 를 앵커로 그 시드가 속한 군집의 map-reduce 부분답을
-      community_results 로 함께 반환한다(DRIFT — local+global 한 검색 스텝 융합).
-    둘 다 같은 GraphRAG 노드가 소유하므로 별도 플로우 노드를 두지 않는다.
+    Issue #17 이후 result_check/gen 이 legacy 키(graph_facts/paths/provenance)를 직접
+    보므로 셰임을 함께 emit 한다. ctx 경로와 global-앵커(DRIFT) 경로가 공유한다.
     """
-    # 글로벌은 Cypher 순회가 아니라 커뮤니티 요약을 읽어 종합하므로 분기.
-    if state.get("intent") == "global":
-        # global 은 ctx 를 건너뛰므로(core.graph) reconstructed_query 가 비어 있다.
-        # 이때 원문 질문으로 폴백해 커뮤니티 멤버명 매칭을 살린다.
-        query = state.get("reconstructed_query") or _last_human_text(state)
-        results = global_search(query)
-        print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
-        return {"community_results": results}
-
-    _preflight()
-    query = state.get("reconstructed_query") or ""
-    upstream = state.get("reconstructed_seeds") or []
-
-    out = search(query, upstream_seeds=upstream)
     legacy = adapt_to_legacy(out["graph_hits"])
-
-    result = {
+    return {
         # 신규
         "graph_hits": out["graph_hits"],
         "graph_seeds": out["graph_seeds"],
@@ -102,13 +84,57 @@ def graph_search_node(state: dict) -> dict:
         "graph_path_chunks": legacy["path_chunks"],
     }
 
-    # DRIFT: 로컬 앵커가 속한 군집의 map-reduce 부분답을 함께 실어 보낸다.
-    # 앵커가 없으면(엔티티 미해소) 군집을 붙이지 않는다 — 노이즈 0.
-    anchors = _anchor_corp_codes(out["graph_seeds"])
-    if anchors:
-        community_results = global_search(query, anchor_corp_codes=anchors)
-        if community_results:
-            print(f"🌐 [GraphRAG/DRIFT] 앵커 군집 {len(community_results)}개 결합")
-            result["community_results"] = community_results
 
+def _attach_communities(result: dict, query: str, out: dict) -> None:
+    """DRIFT: 로컬 앵커가 속한 군집의 map-reduce 부분답을 result 에 결합(in-place).
+
+    out["graph_seeds"] 의 corp_code 앵커가 속한 군집만 map-reduce 한다. 앵커가 없으면
+    (엔티티 미해소) 아무것도 붙이지 않는다 — 노이즈 0. ctx·global-앵커 경로 공유.
+    """
+    anchors = _anchor_corp_codes(out["graph_seeds"])
+    if not anchors:
+        return
+    community_results = global_search(query, anchor_corp_codes=anchors)
+    if community_results:
+        print(f"🌐 [GraphRAG/DRIFT] 앵커 군집 {len(community_results)}개 결합")
+        result["community_results"] = community_results
+
+
+def graph_search_node(state: dict) -> dict:
+    """GraphRAG 단일 진입점. intent 로 Local/Global 을 분기하고 DRIFT 로 결합한다.
+
+    - global(매크로/업계): 먼저 로컬 search() 로 corp_code 앵커 해소를 시도한다.
+      · 앵커가 잡히면(라우터는 global 로 봤지만 실은 구체 엔티티 질문) → ctx 와 동일한
+        DRIFT 융합(로컬 graph_facts + 앵커 군집 community_results)을 반환(대칭 DRIFT).
+      · 앵커가 없으면(순수 매크로) → 커뮤니티 요약 map-reduce 만(community_results).
+    - 그 외(ctx/local): 시드 매칭→멀티홉/PPR 순회(Local Search) → graph_facts 등 +
+      앵커 군집 DRIFT 결합.
+    둘 다 같은 GraphRAG 노드가 소유하므로 별도 플로우 노드를 두지 않는다.
+    """
+    if state.get("intent") == "global":
+        # global 은 ctx 를 건너뛰므로(core.graph) reconstructed_query 가 비어 있다.
+        # 이때 원문 질문으로 폴백해 시드 매칭·커뮤니티 멤버명 매칭을 살린다.
+        query = state.get("reconstructed_query") or _last_human_text(state)
+        _preflight()
+        # ctx 를 건너뛴 경로라 upstream_seeds 가 없다 — 질의 텍스트로만 시드 해소.
+        out = search(query)
+        anchors = _anchor_corp_codes(out["graph_seeds"])
+        if anchors:
+            # 대칭 DRIFT: 엔티티가 해소되면 로컬 사실 + 앵커 군집을 함께 반환.
+            result = _assemble_local(out)
+            _attach_communities(result, query, out)
+            print(f"🌐 [GraphRAG/DRIFT-global] 앵커 {len(anchors)}개 + 로컬 사실 결합")
+            return result
+        # 순수 매크로: 군집 요약 map-reduce 만.
+        results = global_search(query)
+        print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
+        return {"community_results": results}
+
+    _preflight()
+    query = state.get("reconstructed_query") or ""
+    upstream = state.get("reconstructed_seeds") or []
+
+    out = search(query, upstream_seeds=upstream)
+    result = _assemble_local(out)
+    _attach_communities(result, query, out)
     return result

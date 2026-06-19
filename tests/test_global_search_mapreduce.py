@@ -220,6 +220,12 @@ def test_graph_node_no_community_when_no_corp_code_anchor(monkeypatch):
 
 
 def test_graph_node_global_intent_uses_unanchored_search(monkeypatch):
+    # 대칭 DRIFT 후 global 도 search() 로 앵커 해소를 시도한다. corp_code 앵커가
+    # 안 잡히는 순수 매크로는 community-only(앵커 없이 global_search)로 남아야 한다.
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    seeds = [{"key_type": "er_name", "key_value": "org:반도체", "name": "반도체"}]  # corp_code 없음
+    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _fake_search_output(seeds))
+
     captured = {}
 
     def _fake_global(query, anchor_corp_codes=None):
@@ -230,6 +236,29 @@ def test_graph_node_global_intent_uses_unanchored_search(monkeypatch):
     monkeypatch.setattr(graph_node, "global_search", _fake_global)
 
     out = graph_node.graph_search_node({"intent": "global", "reconstructed_query": "반도체 업계 전반"})
-    assert set(out.keys()) == {"community_results"}  # 로컬 검색 미수행
+    assert set(out.keys()) == {"community_results"}  # 앵커 없음 → 로컬 사실 미부착
     assert out["community_results"][0]["code"] == "2"
-    assert captured["anchors"] is None  # global 은 앵커 없이
+    assert captured["anchors"] is None  # 순수 매크로는 앵커 없이
+
+
+def test_graph_node_global_intent_with_anchor_fuses_local(monkeypatch):
+    # 라우터가 global 로 봤지만 구체 엔티티(corp_code)가 해소되면 대칭 DRIFT:
+    # 로컬 graph_facts 와 앵커 군집 community_results 를 함께 반환한다.
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    seeds = [{"key_type": "corp_code", "key_value": "00126380", "name": "삼성전자"}]
+    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _fake_search_output(seeds))
+
+    captured = {}
+
+    def _fake_global(query, anchor_corp_codes=None):
+        captured["anchors"] = anchor_corp_codes
+        return [{"type": "community", "code": "0", "name": "삼성군집", "value": "부분답", "extra": {"score": 72}, "source": "community:0"}]
+
+    monkeypatch.setattr(graph_node, "global_search", _fake_global)
+
+    out = graph_node.graph_search_node({"intent": "global", "reconstructed_query": "삼성전자 계열 구조 전반"})
+
+    assert "graph_facts" in out and out["graph_facts"]      # 로컬 사실 존재(대칭 DRIFT)
+    assert "community_results" in out                        # 앵커 군집 결합
+    assert out["community_results"][0]["name"] == "삼성군집"
+    assert captured["anchors"] == ["00126380"]              # corp_code 앵커 전달
