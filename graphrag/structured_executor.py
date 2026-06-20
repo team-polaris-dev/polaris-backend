@@ -46,7 +46,11 @@ _RELATION_EVIDENCE_TERMS = {
     "RELATED_PARTY": ("특수관계", "관계기업", "관계회사", "관련회사", "계열"),
     "INVESTS_IN": ("투자", "지분", "관계기업", "공동기업", "주식"),
 }
-_TYPE_ATTESTED_RELS = {"RELATED_PARTY", "INVESTS_IN"}
+_TYPE_ATTESTED_RELS = {"RELATED_PARTY"}
+# 출자현황·대주주현황은 DART 공시 '표'에서 와서 서술형 청크 본문이 없다(rcept_no 출처만 보유).
+# 표의 rcept_no 출처 자체가 1차 근거이므로, 본문 청크/관계어를 요구하는 게이트 대신 출처 보유만
+# 확인하는 별도 게이트로 분리한다(_candidate_supported 참고).
+_SOURCE_ATTESTED_RELS = {"INVESTS_IN", "IS_MAJOR_SHAREHOLDER_OF"}
 
 # 엣지 근거 신뢰도 사다리(_score_edge_evidence). 출처+청크본문+양끝언급+관계어가 모두 있으면
 # 최상(FULL), 단계적으로 약해진다. config 로 빼지 않는다 — 게이트 임계(STRUCTURED_MIN_EVIDENCE
@@ -193,7 +197,7 @@ def _score_edge_evidence(edge: dict[str, Any], chunk_texts: dict[str, str]) -> d
         confidence = _EVIDENCE_CONF_NONE
         warnings.append("missing_source")
 
-    if rel_type in _TYPE_ATTESTED_RELS and confidence < _EVIDENCE_LEVEL_HIGH_MIN:
+    if rel_type in (_TYPE_ATTESTED_RELS | _SOURCE_ATTESTED_RELS) and confidence < _EVIDENCE_LEVEL_HIGH_MIN:
         warnings.append("weak_evidence_for_accounting_or_investment_relation")
 
     level = (
@@ -520,6 +524,10 @@ def _relation_type_attested(candidate: dict[str, Any]) -> bool:
 def _candidate_supported(candidate: dict[str, Any], rel_type: str) -> bool:
     if rel_type in _TYPE_ATTESTED_RELS:
         return _relation_type_attested(candidate)
+    if rel_type in _SOURCE_ATTESTED_RELS:
+        # 표 출처 관계: 청크 본문이 구조적으로 없어 conf 가 0.35(출처만)에 묶인다.
+        # 출처(rcept_no) 보유만으로 게이트를 통과시켜 매출 랭킹으로 넘긴다.
+        return _evidence_confidence(candidate) >= _EVIDENCE_CONF_SOURCE_ONLY
     return _evidence_confidence(candidate) >= _evidence_floor(rel_type)
 
 

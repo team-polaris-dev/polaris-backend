@@ -161,26 +161,45 @@ def test_select_supported_requires_relation_term_for_related_party():
     assert unranked == []
 
 
-def test_select_supported_requires_relation_term_for_investment():
+def test_select_supported_accepts_source_only_investment():
+    # 출자(INVESTS_IN)는 표 출처 관계 → 본문 청크 없이 출처만(conf 0.35) 있어도 게이트 통과,
+    # 매출 랭킹으로 1위 선정. (DART 출자현황 표는 서술형 청크가 구조적으로 없음.)
     ranked = [
         {
-            "id": "co_mentioned_big",
-            "name": "삼성전자",
-            "metric": {"value": 333000000000000.0},
-            "evidence": {"confidence": 0.8, "level": "high", "relation_term_found": False},
+            "id": "big_source_only",
+            "name": "삼성SDI",
+            "metric": {"value": 13000000000000.0},
+            "evidence": {"confidence": 0.35, "level": "low", "relation_term_found": False},
         },
         {
-            "id": "attested_smaller",
-            "name": "관계기업",
-            "metric": {"value": 1000000000.0},
-            "evidence": {"confidence": 0.95, "level": "high", "relation_term_found": True},
+            "id": "smaller_source_only",
+            "name": "동진쎄미켐",
+            "metric": {"value": 1000000000000.0},
+            "evidence": {"confidence": 0.35, "level": "low", "relation_term_found": False},
         },
     ]
 
     selected, unranked = _select_supported(ranked, "INVESTS_IN")
 
     assert selected is not None
-    assert selected["name"] == "관계기업"
+    assert selected["name"] == "삼성SDI"
+    assert unranked == []
+
+
+def test_select_supported_rejects_sourceless_investment():
+    # 출처조차 없으면(conf 0.1) 표 출처 관계라도 탈락 — 출처 보유가 최소 근거선.
+    ranked = [
+        {
+            "id": "no_source",
+            "name": "유령투자처",
+            "metric": {"value": 999.0},
+            "evidence": {"confidence": 0.1, "level": "low", "relation_term_found": False},
+        },
+    ]
+
+    selected, unranked = _select_supported(ranked, "INVESTS_IN")
+
+    assert selected is None
     assert unranked == []
 
 
@@ -201,20 +220,22 @@ def test_select_supported_keeps_numeric_floor_for_supply_relation():
     assert unranked == []
 
 
-def test_select_supported_keeps_numeric_floor_for_shareholder_relation():
+def test_select_supported_accepts_source_only_shareholder_relation():
+    # 대주주(IS_MAJOR_SHAREHOLDER_OF)도 표 출처 관계 → 출처만(conf 0.35)으로 게이트 통과.
+    # (대주주현황 표 역시 서술형 청크가 없어 conf 가 0.35 에 묶인다.)
     ranked = [
         {
             "id": "shareholder",
-            "name": "삼성생명",
-            "metric": {"value": 1000000000.0},
-            "evidence": {"confidence": 0.8, "level": "high", "relation_term_found": False},
+            "name": "삼성에스디에스",
+            "metric": {"value": 13000000000000.0},
+            "evidence": {"confidence": 0.35, "level": "low", "relation_term_found": False},
         },
     ]
 
     selected, unranked = _select_supported(ranked, "IS_MAJOR_SHAREHOLDER_OF")
 
     assert selected is not None
-    assert selected["name"] == "삼성생명"
+    assert selected["name"] == "삼성에스디에스"
     assert unranked == []
 
 
