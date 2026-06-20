@@ -70,8 +70,9 @@ class StructuredPlan:
         "two_hop_rank",
         "multi_anchor_branch_rank",
         "single_anchor_branch_rank",
+        "community_member_rank",
     ]
-    first_relation: RelationStep
+    first_relation: RelationStep | None
     first_rank: MetricRankStep
     second_relation: RelationStep | None = None
     second_rank: MetricRankStep | None = None
@@ -86,7 +87,7 @@ class StructuredPlan:
     def to_dict(self) -> dict:
         return {
             "kind": self.kind,
-            "first_relation": self.first_relation.__dict__,
+            "first_relation": self.first_relation.__dict__ if self.first_relation else None,
             "first_rank": self.first_rank.__dict__,
             "second_relation": self.second_relation.__dict__ if self.second_relation else None,
             "second_rank": self.second_rank.__dict__ if self.second_rank else None,

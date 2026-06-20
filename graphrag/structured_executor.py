@@ -12,6 +12,8 @@ from tool.graph_client import neo4j_driver
 from tool.rdb_client import mariadb_conn, parse_year
 
 from config.graphrag import (
+    INDUCED_EDGE_SCORE,
+    MAX_INDUCED_EDGES,
     STRUCTURED_CONFIRMED_RENDER_CAP,
     STRUCTURED_MIN_EVIDENCE,
     STRUCTURED_MIN_EVIDENCE_OPERATING,
@@ -836,6 +838,12 @@ def execute(plan: StructuredPlan, seeds: list[Seed], query: str) -> tuple[list[G
             if result:
                 return result
         return None
+    if plan.kind == "community_member_rank":
+        for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
+            result = _execute_community_member_rank(plan, org_seed, query)
+            if result:
+                return result
+        return None
     for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
         result = _execute_for_seed(plan, org_seed, query)
         if result:
@@ -1152,6 +1160,229 @@ def _execute_for_seed(
         "answer_edges": answer_edges,
         "confirmed_edges": confirmed_edges,
         "abstained": not answer_edges and not confirmed_edges,
+    }
+    meta = {
+        "mode": "structured",
+        "structured": structured,
+        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
+        "n_hits": len(hits),
+        "fallback_used": False,
+        "errors": [],
+    }
+    return hits, meta
+
+
+def _community_for_anchor(anchor: dict[str, Any]) -> dict[str, Any] | None:
+    """앵커가 속한 가장 큰 커뮤니티의 멤버 목록. 없거나 실패 시 None.
+
+    앵커는 corp_code 또는 er_name 으로 들어온다(매처가 약칭을 er_name 노드로 해소하는 경우
+    잦음). 커뮤니티 멤버는 corp_code 배열이라, 앵커 노드를 먼저 찾아 그 corp_code 로 군집을
+    역조회한다.
+    """
+    try:
+        match_clause, params = _anchor_match(anchor)
+    except ValueError:
+        return None
+    cypher = (
+        f"{match_clause} "
+        "WITH anchor.corp_code AS cc WHERE cc IS NOT NULL "
+        "MATCH (c:Community) WHERE cc IN c.members "
+        "RETURN c.members AS members, c.member_names AS member_names, "
+        "       c.cluster_id AS cluster_id, c.size AS size "
+        "ORDER BY c.size DESC LIMIT 1"
+    )
+    try:
+        with neo4j_driver.session() as session:
+            row = session.run(cypher, **params).single()
+    except Exception as exc:
+        print(f"⚠️ [structured_executor] community lookup failed: {exc!r}")
+        return None
+    if not row:
+        return None
+    members = [str(m) for m in (row.get("members") or []) if m]
+    if not members:
+        return None
+    return {
+        "members": members,
+        "member_names": [str(n) for n in (row.get("member_names") or [])],
+        "cluster_id": row.get("cluster_id"),
+        "size": int(row.get("size") or len(members)),
+    }
+
+
+def _member_network_edges(member_codes: list[str]) -> list[dict[str, Any]]:
+    """군집 멤버 집합 *내부*의 회사↔회사 활성 망 엣지. 헤어볼 방지로 cap.
+
+    근거(evidence)는 붙이지 않는다 — traverse/induced 경로와 동일하게 구조화 적재 관계는
+    무근거로 패널 게이트(_path_from_hit)를 통과하고, 투자/특수관계는 텍스트(facts)로만 남는다.
+    """
+    codes = [c for c in dict.fromkeys(member_codes) if c]
+    if len(codes) < 2:
+        return []
+    cypher = f"""
+MATCH (a:Organization)-[r]->(b:Organization)
+WHERE a.corp_code IN $codes AND b.corp_code IN $codes
+  AND a <> b
+  AND type(r) IN $network_rel_types
+  AND coalesce(r.valid_to, '') = ''
+  AND r.qc_disabled_at IS NULL
+WITH a, b, r,
+     {_org_id_expr('a')} AS from_id,
+     {_org_id_expr('b')} AS to_id
+RETURN type(r) AS rel_type, from_id, a.name AS from_name,
+       to_id, b.name AS to_name, r.rcept_no AS source, r.chunk_id AS chunk_id
+ORDER BY from_id ASC, to_id ASC, rel_type ASC
+LIMIT $cap
+"""
+    try:
+        with neo4j_driver.session() as session:
+            rows = [
+                r.data()
+                for r in session.run(
+                    cypher,
+                    codes=codes,
+                    network_rel_types=list(NETWORK_REL_TYPES),
+                    cap=MAX_INDUCED_EDGES,
+                )
+            ]
+    except Exception as exc:
+        print(f"⚠️ [structured_executor] member network query failed: {exc!r}")
+        return []
+    edges: list[dict[str, Any]] = []
+    for row in rows:
+        from_id = str(row.get("from_id") or "")
+        to_id = str(row.get("to_id") or "")
+        rel_type = str(row.get("rel_type") or "")
+        if not from_id or not to_id or not rel_type or from_id == to_id:
+            continue
+        edges.append({
+            "rel_type": rel_type,
+            "from_id": from_id,
+            "from_name": str(row.get("from_name") or ""),
+            "to_id": to_id,
+            "to_name": str(row.get("to_name") or ""),
+            "role": "",
+            "source": str(row.get("source") or ""),
+            "chunk_id": str(row.get("chunk_id") or ""),
+        })
+    return edges
+
+
+def _execute_community_member_rank(
+    plan: StructuredPlan,
+    org_seed: Seed,
+    query: str,
+) -> tuple[list[GraphHit], dict] | None:
+    """그룹/계열 군집 멤버를 노드 지표(매출 등)로 줄세워 1위를 답하고 군집 관계망을 시각화."""
+    year = parse_year(query)
+    anchor = _anchor_from_seed(org_seed)
+
+    community = _community_for_anchor(anchor)
+    if not community:
+        return None
+    members = community["members"]
+
+    metric_id = plan.first_rank.metric_id
+    metric_rows = _fetch_metric_values(members, metric_id, year)
+    if not metric_rows:
+        return None
+
+    # corp_code → 표시명 (군집 멤버명 우선, 지표 행 corp_name 으로 보강)
+    name_by_code: dict[str, str] = {}
+    for code, nm in zip(members, community.get("member_names") or []):
+        if code and nm:
+            name_by_code[str(code)] = str(nm)
+    for row in metric_rows:
+        code = str(row.get("corp_code") or "")
+        nm = str(row.get("corp_name") or "")
+        if code and nm:
+            name_by_code[code] = nm
+
+    # 랭킹(이미 value DESC). 결정성: 동점이면 corp_code asc.
+    ranked: list[dict[str, Any]] = []
+    for row in metric_rows:
+        try:
+            value = float(row.get("value"))
+        except (TypeError, ValueError):
+            continue
+        code = str(row.get("corp_code") or "")
+        ranked.append({
+            "corp_code": code,
+            "name": name_by_code.get(code, str(row.get("corp_name") or code)),
+            "value": value,
+            "year": row.get("bsns_year"),
+            "unit": row.get("unit") or "KRW",
+            "source": str(row.get("rcept_no") or ""),
+        })
+    if not ranked:
+        return None
+    ranked.sort(key=lambda m: (-m["value"], m["corp_code"]))
+    winner = ranked[0]
+
+    edges = _member_network_edges(members)
+
+    hits: list[GraphHit] = []
+    # (a) 1위 재무수치 — render._fmt_graph 가 account_id/value/bsns_year 로 읽어 수치를 노출
+    hits.append({
+        "id": f"fin:{metric_id}:{winner['corp_code']}",
+        "label": "fin_metric",
+        "name": winner["name"],
+        "attrs": {
+            "account_id": metric_id,
+            "value": winner["value"],
+            "bsns_year": winner["year"],
+            "unit": winner["unit"],
+            "corp_code": winner["corp_code"],
+            "metric_label": _METRIC_LABEL.get(metric_id, metric_id),
+            "rank": 1,
+        },
+        "score": _NODE_SCORE_HIGH,
+        "source": winner["source"],
+        "seed_origin": "structured",
+    })
+
+    # (b) 관계망에 등장하는 멤버 노드 (고립 노드 방지: 엣지 끝점 + 1위만)
+    endpoint_ids = {e["from_id"] for e in edges} | {e["to_id"] for e in edges}
+    endpoint_ids.add(winner["corp_code"])
+    seen_nodes: set[str] = set()
+    for code in [winner["corp_code"], *members]:
+        if code not in endpoint_ids or code in seen_nodes:
+            continue
+        seen_nodes.add(code)
+        role = "selected_member" if code == winner["corp_code"] else "community_member"
+        score = _NODE_SCORE_HIGH if code == winner["corp_code"] else _NODE_SCORE_LOW
+        hits.append(_node_hit(code, name_by_code.get(code, code), {"structured_role": role}, score))
+
+    # (c) 군집 내부 관계망 엣지
+    seen_rels: set[str] = set()
+    for edge in edges:
+        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
+        if rel_id in seen_rels:
+            continue
+        seen_rels.add(rel_id)
+        hits.append(_rel_hit(edge, INDUCED_EDGE_SCORE))
+
+    structured = {
+        "mode": "structured",
+        "kind": "community_member_rank",
+        "year": year,
+        "metric_label": _METRIC_LABEL.get(metric_id, metric_id),
+        "plan": plan.to_dict(),
+        "anchor": anchor,
+        "community": {
+            "cluster_id": community.get("cluster_id"),
+            "size": community.get("size"),
+            "member_count": len(members),
+        },
+        "members": ranked,
+        "selected": winner,
+        "answer_edges": [],
+        "abstained": False,
+        "rankable": True,
+        "quality_notes": [
+            "앵커가 속한 군집의 멤버를 노드 지표(연결재무 CFS/연간)로 줄세웠다",
+            "1위는 fin_metric hit, 군집 관계망은 회사↔회사 망 엣지로 시각화한다",
+        ],
     }
     meta = {
         "mode": "structured",

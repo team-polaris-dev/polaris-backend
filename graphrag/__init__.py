@@ -5,6 +5,6 @@
                               local  = graph_facts / paths / provenance
                               global = community_results (커뮤니티 요약)
 """
-from graphrag.node import graph_search_node
+from graphrag.node import effective_query, graph_search_node
 
-__all__ = ["graph_search_node"]
+__all__ = ["effective_query", "graph_search_node"]

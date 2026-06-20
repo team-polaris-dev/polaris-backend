@@ -7,6 +7,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from core.state import AgentState
 from config.llm import llm
 from core.serialize import _humanize_rel, _ACCOUNT_KR, _fmt_krw
+from graphrag import effective_query
 
 
 def _truncate(text: str, limit: int = 1000) -> str:
@@ -248,7 +249,9 @@ def generate_report_node(state: AgentState):
 
     prefs    = state.get("user_preferences", {})
     tone     = prefs.get("tone", "전문적이고 신뢰감 있는")
-    question = state.get("reconstructed_query") or ""
+    # 그래프 노드와 동일한 결정적 질의 — 재구성이 그룹 범위어(계열사)를 특정 관계어
+    # (종속회사)로 좁히면 원문을 써, 본문이 그래프(1위=그룹 전체 최댓값)와 어긋나지 않게.
+    question = effective_query(state)
     if not question:
         for msg in reversed(state.get("messages", []) or []):
             if getattr(msg, "type", "") == "human":

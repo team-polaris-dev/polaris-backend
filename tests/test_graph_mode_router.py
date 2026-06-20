@@ -284,3 +284,46 @@ def test_node_macro_without_anchor_routes_to_community(monkeypatch):
     out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "반도체 업계 전반 큰 그림"})
     assert set(out.keys()) == {"community_results"}
     assert out["community_results"][0]["code"] == "1"
+
+
+# ── effective_query: 재구성이 그룹 군집 의도를 좁히면 원문 채택 (graph+gen 공유) ──
+
+class _HumanMsg:
+    """_last_human_text 가 보는 최소 메시지(type=='human', .content)."""
+    type = "human"
+
+    def __init__(self, content: str):
+        self.content = content
+
+
+def test_graph_query_reverts_when_reconstruction_narrows_group_scope():
+    # 재구성이 "삼성 계열사"(군집 랭킹)를 "종속회사"(single_hop)로 좁히면 원문 채택.
+    state = {
+        "messages": [_HumanMsg("삼성 계열사 중 매출 가장 높은 곳은?")],
+        "reconstructed_query": "삼성전자의 종속회사 중 매출액이 가장 높은 회사는 어디입니까?",
+    }
+    assert graph_node.effective_query(state) == "삼성 계열사 중 매출 가장 높은 곳은?"
+
+
+def test_graph_query_keeps_reconstruction_when_group_intent_preserved():
+    # 재구성이 군집 랭킹 의도를 유지하면(둘 다 community_member_rank) 재구성 채택.
+    state = {
+        "messages": [_HumanMsg("삼성 계열사 중 매출 가장 높은 곳은?")],
+        "reconstructed_query": "삼성 그룹 계열사 중 매출액이 가장 높은 회사는?",
+    }
+    assert graph_node.effective_query(state) == "삼성 그룹 계열사 중 매출액이 가장 높은 회사는?"
+
+
+def test_graph_query_keeps_reconstruction_for_genuine_subsidiary():
+    # 원문이 애초에 자회사 랭킹(single_hop)이면 좁힘이 아니므로 재구성 그대로.
+    state = {
+        "messages": [_HumanMsg("삼성전자 자회사 중 매출 1위는?")],
+        "reconstructed_query": "삼성전자(주)의 자회사 중 매출액이 가장 높은 회사는?",
+    }
+    assert graph_node.effective_query(state) == "삼성전자(주)의 자회사 중 매출액이 가장 높은 회사는?"
+
+
+def test_graph_query_returns_reconstruction_when_no_original():
+    # human 메시지 없음 → 재구성 그대로(폴백 경로 안전).
+    state = {"messages": [], "reconstructed_query": "삼성전자 협력사"}
+    assert graph_node.effective_query(state) == "삼성전자 협력사"

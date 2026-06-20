@@ -17,8 +17,13 @@ from graphrag.schema import GraphHit, GraphSearchOutput, Seed
 from graphrag.structured_executor import execute as execute_structured
 from graphrag.traverse import expand, expand_ppr, fallback_for
 
-# 결정적 플래너가 확정한 멀티/단일 앵커 branch-rank 는 LLM 플래너로 덮어쓰지 않고 그대로 쓴다.
-DETERMINISTIC_PRIORITY_KINDS = {"multi_anchor_branch_rank", "single_anchor_branch_rank"}
+# 결정적 플래너가 확정한 멀티/단일 앵커 branch-rank 와 그룹 군집 멤버 랭킹은 LLM 플래너로
+# 덮어쓰지 않고 그대로 쓴다 — 그룹 범위 탐지는 결정적이라 LLM 재분류가 불필요·해로움.
+DETERMINISTIC_PRIORITY_KINDS = {
+    "multi_anchor_branch_rank",
+    "single_anchor_branch_rank",
+    "community_member_rank",
+}
 
 
 def _structured_abstain_output(

@@ -145,6 +145,28 @@ def _silent_output(seeds: list[dict]) -> dict:
     return _assemble_local(out)
 
 
+def effective_query(state: dict) -> str:
+    """의도 보존 질의. 보통은 재구성 질의지만, 재구성이 그룹 범위어(계열사 등)를
+    특정 관계어(종속회사 등)로 좁혀 그룹 군집 랭킹(community_member_rank) 의도를 잃은
+    경우엔 원문을 쓴다. 판정은 결정적 플래너가 한다 — 원문은 군집 랭킹인데 재구성은
+    아니면 재구성이 의도를 좁힌 것. 대명사 해소는 reconstructed_seeds(upstream)가
+    매처에 따로 전달돼 보존되므로 원문을 써도 앵커는 유지된다.
+
+    graph 노드(여기)와 gen 노드(render.generate_report_node)가 공유한다 — 그래프
+    시각화와 답변 본문이 같은 질의를 봐 '계열사→종속회사' 축소가 한쪽만 새지 않도록.
+    """
+    reconstructed = state.get("reconstructed_query") or ""
+    original = _last_human_text(state)
+    if not original or original == reconstructed:
+        return reconstructed
+    orig_plan = planner.plan(original)
+    if orig_plan and orig_plan.kind == "community_member_rank":
+        recon_plan = planner.plan(reconstructed)
+        if not recon_plan or recon_plan.kind != "community_member_rank":
+            return original
+    return reconstructed
+
+
 def _first_org_seed(graph_seeds: list[dict]) -> dict | None:
     return next((s for s in (graph_seeds or []) if s.get("label") == "organization"), None)
 
@@ -214,7 +236,7 @@ def graph_search_node(state: dict) -> dict:
         print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
         return {"community_results": results}
 
-    query = state.get("reconstructed_query") or ""
+    query = effective_query(state)
     upstream = state.get("reconstructed_seeds") or []
     has_metric = planner._metric_id(query) is not None
 

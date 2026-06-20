@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from config.relations import RANK_TERMS
+from config.relations import GROUP_SCOPE_TERMS, RANK_TERMS
 from graphrag.plan_schema import BranchRankStep, MetricRankStep, RelationStep, StructuredPlan
 
 
@@ -200,6 +200,24 @@ def plan(query: str) -> StructuredPlan | None:
     branch_slots = _relation_branch_slots(q, metric_id)
     first = _first_relation(q)
     if not first and not branch_slots:
+        # "삼성 계열사 중 매출 1위" — 한 회사의 이웃이 아니라 앵커가 속한 그룹 군집
+        # 전체를 노드 지표로 줄세우는 질문. 구체적 관계어가 없고 그룹 범위어만 있을 때.
+        if _has_any(q, GROUP_SCOPE_TERMS):
+            return StructuredPlan(
+                kind="community_member_rank",
+                first_relation=None,
+                first_rank=MetricRankStep(metric_id, alias="top_member"),  # type: ignore[arg-type]
+                raw_reason="; ".join([
+                    "그룹/계열 군집 멤버 노드 지표 랭킹 질문",
+                    metric_reason,
+                    "앵커가 속한 커뮤니티 멤버를 노드 지표로 줄세움",
+                ]),
+                steps=[
+                    {"op": "community_members", "from": "anchor"},
+                    {"op": "join_metric", "metric": metric_id, "target": "community_members"},
+                    {"op": "argmax", "by": metric_id, "as": "top_member"},
+                ],
+            )
         return None
     first_step, first_reason = first or (branch_slots[0].relation, "관계 유형 branch에서 첫 관계 도출")
 

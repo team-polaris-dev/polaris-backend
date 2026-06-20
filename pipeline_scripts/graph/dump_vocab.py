@@ -80,16 +80,19 @@ FIN_ACCOUNTS = {
 }
 
 # 관계 술어 (C): 한글 구어 → 관계 타입
+# 주의: 그룹 범위어(계열사·관계사 등 config.relations.GROUP_SCOPE_TERMS)는 여기 넣지 않는다.
+# 특정 관계(IS_SUBSIDIARY_OF/RELATED_PARTY)로 치환되면 재구성 LLM 이 "삼성 계열사"를
+# "삼성 종속회사"로 좁혀 그룹 군집 랭킹(community_member_rank)을 무너뜨린다.
 RELATION_PREDICATES = {
     "EXECUTIVE_OF": ["임원", "등기임원", "대표이사", "사내이사", "사외이사", "경영진", "ceo", "대표"],
     "IS_MAJOR_SHAREHOLDER_OF": ["주주", "주요주주", "대주주", "최대주주", "지분보유", "주식보유", "지분"],
-    "IS_SUBSIDIARY_OF": ["자회사", "종속회사", "종속기업", "계열사", "모회사", "지배회사"],
+    "IS_SUBSIDIARY_OF": ["자회사", "종속회사", "종속기업", "모회사", "지배회사"],
     "INVESTS_IN": ["출자", "투자", "지분투자", "관계기업", "피투자"],
     "HAS_METRIC": ["재무", "재무제표", "실적", "재무지표"],
     "SUPPLIES_TO": ["공급", "납품", "벤더", "협력사", "공급망", "거래처", "매입처", "매출처"],
     "PRODUCES": ["제조", "생산", "제품", "생산제품"],
     "USES_TECH": ["기술사용", "보유기술", "핵심기술", "기술"],
-    "RELATED_PARTY": ["특수관계자", "특수관계", "관계사"],
+    "RELATED_PARTY": ["특수관계자", "특수관계"],
     "INTERLOCKING_DIRECTORATE": ["임원겸직", "겸직", "겸임"],
 }
 
