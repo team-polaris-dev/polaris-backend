@@ -55,13 +55,51 @@ INGEST_EDGE_TYPES: frozenset[str] = frozenset({
     "PRODUCES", "USES_TECH", "SUPPLIES_TO", "RELATED_PARTY", "hasObject",
 })
 
-# 랭킹 의도 키워드 SSOT. 예전엔 planner._RANK 와 llm_planner._RANK_TERMS 에 같은 8단어가
+# 랭킹 의도 키워드 SSOT. 예전엔 planner._RANK 와 llm_planner._RANK_TERMS 에 같은 단어가
 # 중복 정의돼 한쪽만 고치면 어긋났다. 여기서 한 번 정의하고 양쪽이 import 한다.
-RANK_TERMS: tuple[str, ...] = ("가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가")
+RANK_TERMS: tuple[str, ...] = (
+    "가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가", "최대", "최다",
+)
+
+# "최대주주/대주주" 의 '최대'·'대'는 랭킹 의도가 아니라 지분구조 관계어다. RANK_TERMS 에
+# "최대"를 넣으면 "삼성전자 최대주주는?" 같은 관계 탐색 질문이 랭킹으로 오분류된다. 랭킹
+# 판정 시 이 복합어 안의 매칭은 제외한다(복합어 우선 길이 내림차순으로 제거 후 잔여로 판정).
+_RANK_NONINTENT_COMPOUNDS: tuple[str, ...] = ("최대 주주", "최대주주", "대주주")
+
+
+def has_rank_intent(query: str) -> bool:
+    """질의에 랭킹 의도(가장/최대/1위 …)가 있는가. '최대주주' 같은 복합어는 랭킹이 아님.
+
+    planner.plan 과 llm_planner._looks_structured 가 공유한다. 단순 `term in query` 가 아니라
+    이 함수를 거쳐야 '최대주주'의 '최대'가 랭킹으로 새지 않는다.
+    """
+    q = " ".join((query or "").split())
+    if not q:
+        return False
+    for compound in sorted(_RANK_NONINTENT_COMPOUNDS, key=len, reverse=True):
+        q = q.replace(compound, " ")
+    return any(t in q for t in RANK_TERMS)
+
 
 # 그룹/계열 범위 키워드 SSOT. "삼성 계열사 중 매출 1위"처럼 한 회사의 이웃이 아니라 그룹
 # 군집(커뮤니티) 전체를 노드 지표로 줄세우는 질문을 식별한다. planner.plan 이 import 한다.
 GROUP_SCOPE_TERMS: tuple[str, ...] = ("계열사", "계열회사", "그룹사", "그룹", "계열", "관계사")
+
+# 앵커 없는(또는 앵커가 업종어에 우연히 퍼지매칭된) 매크로/업계 sensemaking 질문 cue SSOT.
+# llm_planner._prefilter_mode 가 이 신호를 has_anchor 보다 먼저 보고 MACRO 로 보낸다 —
+# "반도체 업종 공급망 전반" 의 '반도체'가 회사명에 매칭돼 EXPLORE 로 가로채이던 버그 차단.
+MACRO_TERMS: tuple[str, ...] = (
+    "업계", "업종", "산업", "시장", "전반", "트렌드", "동향", "큰 그림", "큰그림",
+    "생태계", "흐름", "지형", "판도", "대기업",
+)
+
+# 재무 지표어 SSOT. 엔티티 링킹에서 이 단어들은 '회사명'이 아니라 '랭킹 차원'이다.
+# entity_fulltext 에 매출채권/수출매출 같은 Product 노드가 있어 "매출"이 회사 대신 잡혀 시드
+# 슬롯을 잠식하던 오염을 막기 위해, 매처가 풀텍스트 질의에서 이 토큰(독립 토큰)만 제거한다.
+# _metric_id 어휘와 정렬. (회사명에 든 '자산운용' 등은 토큰 단위 제거라 보존된다.)
+METRIC_TERMS: tuple[str, ...] = (
+    "매출액", "매출", "수익", "영업이익", "순이익", "당기순이익", "자산", "부채", "자본",
+)
 
 # 질문 키워드 → 앞세울 관계 유형(검색 focus). search._relation_focus 가 사용한다.
 # "주주" 질문이면 지분망만, "공급망"이면 공급망만 보여주도록 관계 hit 을 스코프한다.

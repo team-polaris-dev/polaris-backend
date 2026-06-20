@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from config.relations import has_rank_intent
 from graphrag import llm_planner as lp
 from graphrag import node as graph_node
 from graphrag.llm_planner import GraphMode
@@ -48,6 +49,59 @@ def test_prefilter_structured_without_metric_is_relation_only():
     assert (
         lp._prefilter_mode("가장 큰 공급처", has_anchor=True, has_metric=False)
         is GraphMode.RELATION_ONLY
+    )
+
+
+# ── #1 MACRO 가 퍼지 앵커보다 우선(업종어 회사명 매칭으로 가로채이던 버그) ──────
+
+def test_prefilter_macro_cue_beats_fuzzy_anchor():
+    # "반도체 업종 공급망 전반" — '반도체'가 회사명에 퍼지매칭돼 has_anchor 가 켜져도
+    # 매크로 cue('업종','전반')가 우선 → MACRO (예전엔 RELATION_EXPLORE 로 샜다).
+    assert (
+        lp._prefilter_mode("반도체 업종 공급망 전반", has_anchor=True, has_metric=False)
+        is GraphMode.MACRO
+    )
+
+
+def test_prefilter_no_macro_cue_with_anchor_stays_explore():
+    # 매크로 cue 없는 관계 질문 + 앵커 → 여전히 EXPLORE(회귀 없음).
+    assert (
+        lp._prefilter_mode("삼성전자 협력사", has_anchor=True, has_metric=False)
+        is GraphMode.RELATION_EXPLORE
+    )
+
+
+# ── #2 '최대'/'최다' 랭크어 + '최대주주' 복합어 가드 ─────────────────────────
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("가장 큰 곳", True),
+        ("매출 최대 기업", True),
+        ("최다 거래처", True),
+        ("삼성전자 최대주주는?", False),   # 복합어 — 랭킹 아님
+        ("최대 주주 알려줘", False),       # 띄어쓴 복합어
+        ("대주주 현황", False),
+        ("삼성전자 협력사", False),        # 랭크어 없음
+    ],
+)
+def test_has_rank_intent_handles_choedaejuju_compound(query, expected):
+    assert has_rank_intent(query) is expected
+
+
+def test_prefilter_choedae_supplier_degrades_to_relation_only():
+    # #2 핵심: "최대 공급처" 가 이제 랭크+관계로 잡혀 degrade(예전엔 EXPLORE 로 샜다).
+    assert (
+        lp._prefilter_mode("동진쎄미켐 최대 공급처", has_anchor=True, has_metric=False)
+        is GraphMode.RELATION_ONLY
+    )
+
+
+def test_prefilter_choedaejuju_is_explore_not_only():
+    # '최대주주' 는 랭킹이 아니라 지분구조 탐색 → EXPLORE(억지 degrade 회귀 방지).
+    assert (
+        lp._prefilter_mode("삼성전자 최대주주는?", has_anchor=True, has_metric=False)
+        is GraphMode.RELATION_EXPLORE
     )
 
 
@@ -284,6 +338,65 @@ def test_node_macro_without_anchor_routes_to_community(monkeypatch):
     out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "반도체 업계 전반 큰 그림"})
     assert set(out.keys()) == {"community_results"}
     assert out["community_results"][0]["code"] == "1"
+
+
+def test_node_macro_with_fuzzy_anchor_still_routes_to_community(monkeypatch):
+    # #1 핵심: corp_code 앵커가 잡혔지만 회사명이 질의에 없으면(업종어 퍼지매칭) 명시 호명이
+    # 아니므로 MACRO 유지 → community map-reduce. 예전엔 앵커가 있으면 EXPLORE 로 샜다.
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    seeds = [{"key_type": "corp_code", "key_value": "00126380",
+              "label": "organization", "name": "삼성디스플레이"}]
+    monkeypatch.setattr(
+        graph_node, "search",
+        lambda q, upstream_seeds=None: {
+            "graph_hits": [], "graph_seeds": seeds,
+            "graph_meta": {"n_seeds": 1, "n_hits": 0, "fallback_used": False, "errors": []},
+        },
+    )
+    monkeypatch.setattr(
+        graph_node, "global_search",
+        lambda q, anchor_corp_codes=None: [
+            {"type": "community", "code": "9", "name": "g", "value": "v", "extra": {}, "source": "community:9"}
+        ],
+    )
+    out = graph_node.graph_search_node(
+        {"intent": "ctx", "reconstructed_query": "디스플레이 업종 전반 큰 그림"}
+    )
+    assert set(out.keys()) == {"community_results"}
+    assert out["community_results"][0]["code"] == "9"
+
+
+def test_node_macro_with_explicit_company_keeps_drift(monkeypatch):
+    # 명시 호명("삼성전자")이면 매크로 cue 가 있어도 그 회사 관계망 + DRIFT 를 보존한다.
+    # 구분 신호: _attach_communities 경유는 global_search 에 corp_code 앵커를 넘긴다(매크로
+    # 조기반환은 앵커 없이 호출). captured anchors 로 DRIFT 경로를 탔음을 확인.
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    seeds = [{"key_type": "corp_code", "key_value": "00126380",
+              "label": "organization", "name": "삼성전자"}]
+    monkeypatch.setattr(
+        graph_node, "search",
+        lambda q, upstream_seeds=None: {
+            "graph_hits": [{"id": "00126380", "label": "organization", "name": "삼성전자",
+                            "attrs": {}, "score": 1.0}],
+            "graph_seeds": seeds,
+            "graph_meta": {"n_seeds": 1, "n_hits": 1, "fallback_used": False, "errors": []},
+        },
+    )
+    captured = {}
+
+    def _fake_global(query, anchor_corp_codes=None):
+        captured["anchors"] = anchor_corp_codes
+        return [{"type": "community", "code": "0", "name": "삼성군집", "value": "부분답",
+                 "extra": {"score": 70}, "source": "community:0"}]
+
+    monkeypatch.setattr(graph_node, "global_search", _fake_global)
+
+    out = graph_node.graph_search_node(
+        {"intent": "ctx", "reconstructed_query": "삼성전자 시장 전반 큰 그림"}
+    )
+    assert "graph_facts" in out and out["graph_facts"]   # 명시 호명 → 로컬 관계망 보존
+    assert "community_results" in out                      # DRIFT 결합
+    assert captured["anchors"] == ["00126380"]            # _attach_communities 경유(앵커 전달)
 
 
 # ── effective_query: 재구성이 그룹 군집 의도를 좁히면 원문 채택 (graph+gen 공유) ──

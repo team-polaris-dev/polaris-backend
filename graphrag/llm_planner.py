@@ -11,7 +11,7 @@ import os
 from enum import Enum
 from typing import Any
 
-from config.relations import RANK_TERMS
+from config.relations import MACRO_TERMS, RANK_TERMS, has_rank_intent
 from graphrag.plan_schema import (
     BranchKind,
     BranchRankStep,
@@ -71,11 +71,9 @@ _ATTRIBUTE_ONLY_TERMS = (
     "주가", "시가총액", "시총", "직원수", "종업원", "임직원", "영업이익률",
     "설립", "본사", "소재지", "배당", "주식수",
 )
-# 앵커 없는 매크로/업계 질문 cue. MACRO 분기는 has_anchor=False 일 때만 발화.
-_MACRO_TERMS = (
-    "업계", "산업", "시장", "전반", "트렌드", "동향", "큰 그림", "큰그림",
-    "생태계", "흐름", "지형", "판도", "대기업",
-)
+# 매크로/업계 질문 cue (config.relations SSOT). 업종어가 회사명에 퍼지매칭돼 has_anchor 가
+# 켜지는 경우에도 MACRO 가 has_anchor 보다 먼저 발화하도록 _prefilter_mode 가 순서를 잡는다.
+_MACRO_TERMS = MACRO_TERMS
 
 
 class GraphMode(str, Enum):
@@ -99,7 +97,7 @@ def _has_any(text: str, terms: tuple[str, ...]) -> bool:
 
 def _looks_structured(query: str) -> bool:
     q = " ".join((query or "").split())
-    return bool(q and _has_any(q, _RANK_TERMS) and _has_any(q, _RELATION_TERMS))
+    return bool(q and has_rank_intent(q) and _has_any(q, _RELATION_TERMS))
 
 
 def _is_silent(query: str) -> bool:
@@ -294,8 +292,13 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
 def _prefilter_mode(query: str, *, has_anchor: bool, has_metric: bool) -> GraphMode | None:
     """명백한 질문은 결정적으로 모드 확정. 애매하면 None(=LLM 에 위임).
 
-    순서: SILENT(속성전용) → 구조화(랭크+관계) → EXPLORE(관계만+앵커) → MACRO(앵커없음+매크로cue).
+    순서: SILENT(속성전용) → 구조화(랭크+관계) → MACRO(매크로cue) → EXPLORE(앵커) → 위임/EXPLORE.
     구조화면 has_metric 으로 RANK(노드지표 랭킹·가능) vs ONLY(금액랭킹류·degrade) 분리.
+
+    MACRO 를 has_anchor 보다 먼저 보는 이유: "반도체 업종 공급망 전반" 의 '반도체'가 회사명에
+    퍼지매칭돼 has_anchor 가 켜지면 EXPLORE 로 새 버려 global_search 가 안 탔다(MACRO 사문화).
+    명시 매크로 cue 가 있으면 퍼지 앵커보다 우선한다. 사용자가 회사를 *명시 호명*했을 때의
+    DRIFT 보존은 노드가 `explicit_company` 로 최종 판정한다(여기선 cue 우선만 결정).
     """
     q = " ".join((query or "").split())
     if not q:
@@ -304,12 +307,12 @@ def _prefilter_mode(query: str, *, has_anchor: bool, has_metric: bool) -> GraphM
         return GraphMode.SILENT
     if _looks_structured(q):
         return GraphMode.RELATION_RANK if has_metric else GraphMode.RELATION_ONLY
+    if _has_any(q, _MACRO_TERMS):
+        return GraphMode.MACRO
     # 앵커가 해소된 질문은 그 회사의 관계망을 보여주는 게 안전한 기본값. 랭킹·속성 신호가
     # 없으면 explore 로 확정 — LLM 은 엔티티가 안 잡힌 관계질문에만 부른다.
     if has_anchor:
         return GraphMode.RELATION_EXPLORE
-    if _has_any(q, _MACRO_TERMS):
-        return GraphMode.MACRO
     if _has_any(q, _RELATION_TERMS):
         return None  # 관계를 묻지만 엔티티 미해소 → 모드를 LLM 에 위임
     return GraphMode.RELATION_EXPLORE  # 신호 없음 → 노드가 빈 로컬로 degrade(시드 0)

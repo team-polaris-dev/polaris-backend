@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 
+from config.entities import normalize_corp_name as _norm
 from tool.graph_client import neo4j_driver
 from graphrag import planner
 from graphrag.llm_planner import GraphMode, _is_silent, plan_with_mode
@@ -171,6 +172,25 @@ def _first_org_seed(graph_seeds: list[dict]) -> dict | None:
     return next((s for s in (graph_seeds or []) if s.get("label") == "organization"), None)
 
 
+def _explicit_company_mention(query: str, graph_seeds: list[dict]) -> bool:
+    """사용자가 회사를 *명시 호명*했는가 — 해소된 org 시드 이름이 질의에 그대로 포함되는가.
+
+    matcher._select 의 'strong' 판정과 같은 규칙(정규화 이름이 질의의 부분문자열). 업종어가
+    회사명에 우연히 퍼지매칭된 경우엔 이름이 질의에 안 들어 있어 False → MACRO 가 유지된다.
+    명시 호명이면 매크로 cue 가 있어도 그 회사 관계망(+DRIFT)을 보여준다.
+    """
+    qn = _norm(query)
+    if not qn:
+        return False
+    for sd in graph_seeds or []:
+        if sd.get("label") != "organization":
+            continue
+        nm = _norm(sd.get("name") or "")
+        if nm and nm in qn:
+            return True
+    return False
+
+
 def _is_rankless(out: dict) -> bool:
     """줄세울 결과가 없는 상태인가 — 구조화 abstain 또는 앵커 스텁만 남은 경우."""
     meta = out.get("graph_meta") or {}
@@ -245,12 +265,14 @@ def graph_search_node(state: dict) -> dict:
         return _silent_output(_safe_match(query, upstream))
 
     out = search(query, upstream_seeds=upstream)
-    anchors = _anchor_corp_codes(out["graph_seeds"])
     has_anchor = bool(out["graph_seeds"])
+    explicit = _explicit_company_mention(query, out["graph_seeds"])
     mode, _ = plan_with_mode(query, has_anchor=has_anchor, has_metric=has_metric)
 
-    # 앵커 미해소 매크로 질문(ctx 인데 실은 업계 큰그림) → 커뮤니티 map-reduce.
-    if mode is GraphMode.MACRO and not anchors:
+    # 매크로 질문(업계 큰그림) → 커뮤니티 map-reduce. 업종어가 회사명에 퍼지매칭돼 corp_code
+    # 앵커가 잡혀도, 사용자가 회사를 명시 호명하지 않았으면 매크로로 본다(MACRO 사문화 차단).
+    # 명시 호명(explicit)이면 아래로 흘러 그 회사 관계망 + DRIFT 를 보존한다.
+    if mode is GraphMode.MACRO and not explicit:
         results = global_search(query)
         print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
         return {"community_results": results}
