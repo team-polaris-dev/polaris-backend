@@ -145,7 +145,11 @@ def _path_from_hit(hit: GraphHit) -> list[str] | None:
     rel_type = attrs.get("rel_type") or ""
     if rel_type not in _NETWORK_REL_TYPES:
         return None
-    if rel_type in _TYPE_ATTESTED_RELS and not attrs.get("evidence_relation_term_found"):
+    if (
+        rel_type in _TYPE_ATTESTED_RELS
+        and "evidence_relation_term_found" in attrs
+        and not attrs.get("evidence_relation_term_found")
+    ):
         return None
     evidence_confidence = attrs.get("evidence_confidence")
     if evidence_confidence is not None:

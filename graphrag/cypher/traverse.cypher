@@ -164,6 +164,7 @@ WHERE
   AND
   (CASE $b_key_type WHEN 'corp_code' THEN b.corp_code = $b_key_value
                     ELSE b.er_name = $b_key_value END)
+  AND a <> b
 MATCH path = shortestPath((a)-[*..3]-(b))
 RETURN
   [n IN nodes(path) | coalesce(n.name, n.corp_code, n.er_name)] AS nodes,

@@ -133,6 +133,49 @@ def test_related_party_with_attested_relation_term_is_rendered_as_path() -> None
     assert legacy["path_sources"] == ["20240314001382"]
 
 
+def test_attested_rel_without_evidence_key_is_rendered_as_path() -> None:
+    """탐색(traversal/PPR) 경로 hit 은 evidence_relation_term_found 키 자체가 없다.
+
+    구조화 경로만 이 키를 붙이고, 붙였는데 False 면 '근거 미확인'이라 떨군다. 키가
+    아예 없으면(=탐색 경로) 망 엣지로 그린다 — 키 부재 ≠ 근거 실패.
+    """
+    hits = [
+        {
+            "id": "rel:INVESTS_IN:001:002",
+            "label": "relationship",
+            "name": "삼성전자(주) → 삼성SDS",
+            "attrs": {
+                "rel_type": "INVESTS_IN",
+                "from_id": "001",
+                "from_name": "삼성전자(주)",
+                "to_id": "002",
+                "to_name": "삼성SDS",
+            },
+            "score": 0.8,
+        },
+        {
+            "id": "rel:RELATED_PARTY:001:003",
+            "label": "relationship",
+            "name": "삼성전자(주) → 삼성물산",
+            "attrs": {
+                "rel_type": "RELATED_PARTY",
+                "from_id": "001",
+                "from_name": "삼성전자(주)",
+                "to_id": "003",
+                "to_name": "삼성물산",
+            },
+            "score": 0.7,
+        },
+    ]
+
+    legacy = adapt_to_legacy(hits)
+
+    assert legacy["paths"] == [
+        ["삼성전자(주)", "INVESTS_IN", "삼성SDS"],
+        ["삼성전자(주)", "RELATED_PARTY", "삼성물산"],
+    ]
+
+
 def test_empty_hits_yield_empty_keys_without_error() -> None:
     """빈 hits — KeyError 없이 빈 키 반환."""
     legacy = adapt_to_legacy([])

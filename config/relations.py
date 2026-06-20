@@ -59,6 +59,10 @@ INGEST_EDGE_TYPES: frozenset[str] = frozenset({
 # 중복 정의돼 한쪽만 고치면 어긋났다. 여기서 한 번 정의하고 양쪽이 import 한다.
 RANK_TERMS: tuple[str, ...] = ("가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가")
 
+# 그룹/계열 범위 키워드 SSOT. "삼성 계열사 중 매출 1위"처럼 한 회사의 이웃이 아니라 그룹
+# 군집(커뮤니티) 전체를 노드 지표로 줄세우는 질문을 식별한다. planner.plan 이 import 한다.
+GROUP_SCOPE_TERMS: tuple[str, ...] = ("계열사", "계열회사", "그룹사", "그룹", "계열", "관계사")
+
 # 질문 키워드 → 앞세울 관계 유형(검색 focus). search._relation_focus 가 사용한다.
 # "주주" 질문이면 지분망만, "공급망"이면 공급망만 보여주도록 관계 hit 을 스코프한다.
 FOCUS_KEYWORD_GROUPS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
@@ -70,6 +74,7 @@ FOCUS_KEYWORD_GROUPS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
      ("SUPPLIES_TO",)),
     (("투자",), ("INVESTS_IN",)),
     (("특수관계", "계열거래"), ("RELATED_PARTY",)),
+    (("겸직", "겸임"), ("INTERLOCKING_DIRECTORATE",)),
     (("제품", "생산", "만드", "품목"), ("PRODUCES",)),
     (("기술", "공정"), ("USES_TECH",)),
     (("임원", "대표", "경영진", "이사", "CEO"), ("EXECUTIVE_OF",)),
