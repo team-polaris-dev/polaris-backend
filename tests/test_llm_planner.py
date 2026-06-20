@@ -37,6 +37,36 @@ def test_llm_plan_json_rejects_unknown_relation():
     assert coerce_plan(data, "질문") is None
 
 
+def test_llm_plan_json_is_coerced_to_multi_anchor_rank_plan():
+    # 재구성이 '동시에/둘 다'를 지워 키워드가 없어도, LLM 이 두 앵커 공통 거래상대 1위로
+    # 분류하면 coerce 가 실행 가능한 multi_anchor_rank 플랜으로 만든다.
+    data = {
+        "supported": True,
+        "mode": "relation_rank",
+        "kind": "multi_anchor_rank",
+        "first_relation": {"rel_type": "SUPPLIES_TO", "direction": "incoming"},
+        "rank_metric": "ifrs-full_Revenue",
+        "common_anchor_min": 2,
+        "reason": "삼성전자와 SK하이닉스 공통 공급사 중 매출 1위",
+    }
+
+    out = coerce_plan(
+        data,
+        "삼성전자와 에스케이하이닉스에 제품을 공급하는 회사 중 매출액이 가장 높은 회사는?",
+    )
+
+    assert out is not None
+    assert out.planner == "llm"
+    assert out.kind == "multi_anchor_rank"
+    assert out.common_anchor_min == 2
+    assert out.first_relation.rel_type == "SUPPLIES_TO"
+    assert out.first_relation.direction == "incoming"
+    # SUPPLIES_TO incoming → 결정적 경로와 동일한 운영 거래 게이트로 강제(LLM 미지정시).
+    assert out.first_candidate_policy == "operating_counterparty"
+    assert not out.branch_ranks
+    assert out.steps[0]["op"] == "intersect_anchors"
+
+
 def test_llm_plan_json_is_coerced_to_multi_anchor_branch_plan():
     data = {
         "supported": True,

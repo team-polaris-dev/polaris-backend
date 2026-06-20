@@ -178,7 +178,9 @@ def _make_steps(
 
     steps: list[dict] = [
         {
-            "op": "intersect_anchors" if kind == "multi_anchor_branch_rank" else "traverse",
+            "op": "intersect_anchors"
+            if kind in {"multi_anchor_branch_rank", "multi_anchor_rank"}
+            else "traverse",
             "relation": first.rel_type,
             "direction": first.direction,
             "as": first.alias,
@@ -230,7 +232,7 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
         return None
 
     kind = str(data.get("kind") or "").strip()
-    if kind not in {"single_hop_rank", "two_hop_rank", "multi_anchor_branch_rank", "single_anchor_branch_rank"}:
+    if kind not in {"single_hop_rank", "two_hop_rank", "multi_anchor_rank", "multi_anchor_branch_rank", "single_anchor_branch_rank"}:
         return None
 
     metric_id = _metric_id(data, query)
@@ -267,6 +269,11 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
     first_policy = str(data.get("first_candidate_policy") or "default")
     if first_policy not in _FIRST_POLICIES:
         first_policy = "default"
+    # 공통 공급사 교집합 단일 1위는 결정적 multi_anchor_rank 와 동일하게 운영 거래 게이트를 쓴다
+    # (SUPPLIES_TO incoming → operating_counterparty). 실행기 _rank_candidates 가 같은 근거
+    # 바닥값을 적용해야 LLM·결정적 경로가 같은 후보를 통과시킨다.
+    if kind == "multi_anchor_rank" and first.rel_type == "SUPPLIES_TO" and first.direction == "incoming":
+        first_policy = "operating_counterparty"
 
     exclude_anchor = data.get("exclude_original_anchor_from_second")
     if exclude_anchor is None:
@@ -280,7 +287,7 @@ def coerce_plan(data: dict[str, Any], query: str) -> StructuredPlan | None:
         second_relation=second,
         second_rank=MetricRankStep(metric_id, alias="top_" + second.role) if second else None,
         branch_ranks=branches,
-        common_anchor_min=int(data.get("common_anchor_min") or (2 if kind == "multi_anchor_branch_rank" else 1)),
+        common_anchor_min=int(data.get("common_anchor_min") or (2 if kind in {"multi_anchor_branch_rank", "multi_anchor_rank"} else 1)),
         first_candidate_policy=first_policy,  # type: ignore[arg-type]
         exclude_original_anchor_from_second=bool(exclude_anchor),
         planner="llm",
@@ -421,7 +428,7 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 {{
   "supported": true 또는 false,
   "mode": "macro|relation_rank|relation_explore|relation_only|silent",
-  "kind": "single_hop_rank" 또는 "two_hop_rank" 또는 "multi_anchor_branch_rank" 또는 "single_anchor_branch_rank",
+  "kind": "single_hop_rank" 또는 "two_hop_rank" 또는 "multi_anchor_rank" 또는 "multi_anchor_branch_rank" 또는 "single_anchor_branch_rank",
   "first_relation": {{
     "rel_type": "SUPPLIES_TO|RELATED_PARTY|IS_MAJOR_SHAREHOLDER_OF|IS_SUBSIDIARY_OF|INVESTS_IN",
     "direction": "incoming|outgoing|undirected|auto"
@@ -452,6 +459,8 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 - 거래금액·점유율처럼 노드 지표가 아닌 크기로 줄세우라는 질문은 데이터에 없으므로 mode=relation_only(억지 1위 금지).
 - 랭킹/최댓값/1위 질문이 아니면 supported=false.
 - 두 번째로 '그 회사/해당 기업의 관련 회사 중'처럼 이어지면 two_hop_rank.
+- 기준 회사가 둘 이상이고(예: 'A와 B에 공급하는', 'A와 B가 거래하는', 'A와 B 공통/둘 다/동시에'), 그 둘이 공유하는 거래 상대(공급사/협력사 등) 중 단일 지표 1위만 물으면 multi_anchor_rank. 관계 유형별 분기 비교가 없으면 여기다. 핵심은 표현이 아니라 의미: 기업이 둘 명시되고 그 교집합 거래상대를 줄세우면 multi_anchor_rank다(키워드가 없어도). 예: '삼성전자와 에스케이하이닉스에 제품을 공급하는 회사 중 매출액이 가장 높은 회사' → kind=multi_anchor_rank, first_relation=SUPPLIES_TO incoming, common_anchor_min=2.
+- 반대로 기준 회사가 하나뿐이면(예: 'SK하이닉스에 공급하는 회사 중 매출 1위') multi_anchor_rank가 아니라 single_hop_rank다.
 - 'A와 B 둘 다/공통 협력사'를 먼저 찾고, 그 회사의 매출처/특수관계자/투자 관계를 각각 비교하라고 하면 multi_anchor_branch_rank.
 - 한 기준 회사에 대해 공급/특수관계/투자 등 관계 유형별 1위와 근거를 비교하라고 하면 single_anchor_branch_rank.
 - single_anchor_branch_rank의 branch_relations에는 질문에 나온 관계만 넣는다. 질문에 없는 investment/related_party/supplier를 보충하지 않는다.

@@ -1030,6 +1030,19 @@ def _execute_multi_anchor_rank(
         for edge in top_first.get("anchor_edges") or [top_first["edge"]]:
             add_rel(edge)
             answer_edges.append(edge)
+        # 1위만 노드로 내보내면 보고서가 "유일한 공통 공급사"로 오판한다. 근거·지표 게이트를
+        # 통과한 나머지 교집합 후보도 관계망에 노출해 "N곳 중 1위"로 비교 서술하게 한다.
+        # 답·1위 선정은 그대로 — 렌더링만 확장(상위 N개로 hairball 방지).
+        runner_ups = [
+            c for c in ranked
+            if c is not top_first
+            and _candidate_supported(c, plan.first_relation.rel_type)
+            and c.get("metric", {}).get("value") is not None
+        ]
+        for cand in runner_ups[:STRUCTURED_CONFIRMED_RENDER_CAP]:
+            add_node(str(cand.get("id") or ""), str(cand.get("name") or ""), "common_supplier", 0.85)
+            for edge in cand.get("anchor_edges") or [cand["edge"]]:
+                add_rel(edge)
     else:
         for cand in confirmed:
             add_node(str(cand.get("id") or ""), str(cand.get("name") or ""), "confirmed_common_supplier", 0.7)
