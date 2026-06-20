@@ -8,8 +8,10 @@ from __future__ import annotations
 import time
 from typing import Iterable
 
-from config.graphrag import PPR_ENABLED
+from config.graphrag import PPR_ENABLED, TEXT2CYPHER_ENABLED
 from config.relations import FOCUS_KEYWORD_GROUPS as _FOCUS_KEYWORDS
+from graphrag.cypher_executor import run as run_cypher
+from graphrag.cypher_generator import generate as generate_cypher
 from graphrag.llm_planner import plan as plan_structured_llm
 from graphrag.matcher import match
 from graphrag.planner import plan as plan_structured
@@ -101,6 +103,45 @@ def _apply_focus(hits: list[GraphHit], focus: set[str]) -> list[GraphHit]:
     return hits
 
 
+def _try_text2cypher(
+    query: str, seeds: list[Seed], errors: list[str], started: float
+) -> GraphSearchOutput | None:
+    """스키마 가드 text-to-Cypher 우선 시도(플래그 on, organization 앵커 존재 시).
+
+    생성·실행 어느 단계든 None/예외면 None 을 돌려 호출자가 기존 planner 경로로
+    폴백한다(회귀 0). 성공 시 구조화 조기반환과 동일한 모양으로 패키징한다.
+    """
+    if not TEXT2CYPHER_ENABLED:
+        return None
+    org_seeds = [s for s in seeds if s.get("label") == "organization"]
+    if not org_seeds:
+        return None
+    try:
+        generated = generate_cypher(query, [dict(s) for s in org_seeds])
+    except Exception as e:
+        errors.append(f"cypher_generator: {e}")
+        return None
+    if generated is None:
+        return None
+    try:
+        result = run_cypher(generated, [dict(s) for s in org_seeds], query)
+    except Exception as e:
+        errors.append(f"cypher_executor: {e}")
+        return None
+    if not result:
+        return None
+    hits, structured_meta = result
+    elapsed = (time.perf_counter() - started) * 1000.0
+    structured_meta["latency_ms"] = round(elapsed, 1)
+    structured_meta["n_seeds"] = len(seeds)
+    structured_meta["errors"] = errors
+    return {
+        "graph_hits": hits,
+        "graph_seeds": [dict(s) for s in seeds],
+        "graph_meta": structured_meta,
+    }
+
+
 def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSearchOutput:
     """단일 호출 검색.
 
@@ -121,6 +162,11 @@ def search(query: str, upstream_seeds: Iterable[str] | None = None) -> GraphSear
     fallback_used = False
 
     if seeds:
+        # text-to-Cypher 우선 시도. 실패/abstain 이면 기존 planner 경로로 폴백(회귀 0).
+        t2c = _try_text2cypher(query, seeds, errors, started)
+        if t2c is not None:
+            return t2c
+
         deterministic_plan = plan_structured(query)
         structured_plan = deterministic_plan
         if not deterministic_plan or deterministic_plan.kind not in DETERMINISTIC_PRIORITY_KINDS:
