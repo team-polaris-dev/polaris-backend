@@ -146,24 +146,32 @@ def _silent_output(seeds: list[dict]) -> dict:
     return _assemble_local(out)
 
 
+# 재구성(LLM)이 표준어 치환·축소로 지워버리면 안 되는 구조화 의도. 원문이 이 kind 로
+# 잡히는데 재구성 후 같은 kind 를 잃으면, 재구성이 의도를 깬 것이라 원문을 쓴다.
+#  - community_member_rank: 그룹 범위어(계열사 등)를 특정 관계어(종속회사)로 좁히는 축소.
+#  - two_hop_list: "최대주주가 지배하는"을 "주요주주로 있는"으로 표준화하며 트리거어를
+#    잃고 의미까지 뒤집히는 축소(앵커의 지배주주→형제 나열 의도 상실).
+_RECONSTRUCT_PRESERVE_KINDS = {"community_member_rank", "two_hop_list"}
+
+
 def effective_query(state: dict) -> str:
-    """의도 보존 질의. 보통은 재구성 질의지만, 재구성이 그룹 범위어(계열사 등)를
-    특정 관계어(종속회사 등)로 좁혀 그룹 군집 랭킹(community_member_rank) 의도를 잃은
-    경우엔 원문을 쓴다. 판정은 결정적 플래너가 한다 — 원문은 군집 랭킹인데 재구성은
-    아니면 재구성이 의도를 좁힌 것. 대명사 해소는 reconstructed_seeds(upstream)가
-    매처에 따로 전달돼 보존되므로 원문을 써도 앵커는 유지된다.
+    """의도 보존 질의. 보통은 재구성 질의지만, 재구성이 구조화 의도
+    (_RECONSTRUCT_PRESERVE_KINDS)를 표준어 치환·축소로 지운 경우엔 원문을 쓴다. 판정은
+    결정적 플래너가 한다 — 원문은 해당 kind 인데 재구성은 아니면 재구성이 의도를 깬 것.
+    대명사 해소는 reconstructed_seeds(upstream)가 매처에 따로 전달돼 보존되므로 원문을
+    써도 앵커는 유지된다.
 
     graph 노드(여기)와 gen 노드(render.generate_report_node)가 공유한다 — 그래프
-    시각화와 답변 본문이 같은 질의를 봐 '계열사→종속회사' 축소가 한쪽만 새지 않도록.
+    시각화와 답변 본문이 같은 질의를 봐 의도 축소가 한쪽만 새지 않도록.
     """
     reconstructed = state.get("reconstructed_query") or ""
     original = _last_human_text(state)
     if not original or original == reconstructed:
         return reconstructed
     orig_plan = planner.plan(original)
-    if orig_plan and orig_plan.kind == "community_member_rank":
+    if orig_plan and orig_plan.kind in _RECONSTRUCT_PRESERVE_KINDS:
         recon_plan = planner.plan(reconstructed)
-        if not recon_plan or recon_plan.kind != "community_member_rank":
+        if not recon_plan or recon_plan.kind != orig_plan.kind:
             return original
     return reconstructed
 
@@ -247,11 +255,17 @@ def graph_search_node(state: dict) -> dict:
         query = state.get("reconstructed_query") or _last_human_text(state)
         out = search(query)
         anchors = _anchor_corp_codes(out["graph_seeds"])
-        if anchors:
+        # 업종어가 회사명에 퍼지매칭돼 corp_code 앵커가 잡혀도(예: "반도체"→한미반도체),
+        # 사용자가 회사를 명시 호명하지 않았으면 DRIFT 가 아니라 순수 매크로로 본다 —
+        # 비-global 경로(아래 MACRO 분기)와 같은 explicit-signal-over-noise 규칙.
+        # 명시 호명이라도 그 앵커가 어느 군집에도 없어 DRIFT 가 비면 순수 매크로로 폴백한다
+        # (community_results 가 비면 result_check 가 답을 막으므로 빈 답변 방지).
+        if anchors and _explicit_company_mention(query, out["graph_seeds"]):
             result = _assemble_local(out)
             _attach_communities(result, query, out)
-            print(f"🌐 [GraphRAG/DRIFT-global] 앵커 {len(anchors)}개 + 로컬 사실 결합")
-            return result
+            if result.get("community_results"):
+                print(f"🌐 [GraphRAG/DRIFT-global] 앵커 {len(anchors)}개 + 로컬 사실 결합")
+                return result
         results = global_search(query)
         print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
         return {"community_results": results}

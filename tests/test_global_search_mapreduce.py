@@ -242,10 +242,10 @@ def test_graph_node_global_intent_uses_unanchored_search(monkeypatch):
 
 
 def test_graph_node_global_intent_with_anchor_fuses_local(monkeypatch):
-    # 라우터가 global 로 봤지만 구체 엔티티(corp_code)가 해소되면 대칭 DRIFT:
+    # 라우터가 global 로 봤고 사용자가 회사를 *명시 호명*(질의에 이름 포함)했으면 대칭 DRIFT:
     # 로컬 graph_facts 와 앵커 군집 community_results 를 함께 반환한다.
     monkeypatch.setattr(graph_node, "_preflight", lambda: None)
-    seeds = [{"key_type": "corp_code", "key_value": "00126380", "name": "삼성전자"}]
+    seeds = [{"key_type": "corp_code", "key_value": "00126380", "name": "삼성전자", "label": "organization"}]
     monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _fake_search_output(seeds))
 
     captured = {}
@@ -262,3 +262,28 @@ def test_graph_node_global_intent_with_anchor_fuses_local(monkeypatch):
     assert "community_results" in out                        # 앵커 군집 결합
     assert out["community_results"][0]["name"] == "삼성군집"
     assert captured["anchors"] == ["00126380"]              # corp_code 앵커 전달
+
+
+def test_graph_node_global_intent_fuzzy_anchor_stays_macro(monkeypatch):
+    # 업종어가 회사명에 퍼지매칭돼 corp_code 앵커가 잡혀도(예: "반도체"→한미반도체),
+    # 사용자가 그 회사를 명시 호명하지 않았으면 DRIFT 가 아니라 순수 매크로로 가야 한다.
+    # (회귀: 퍼지 앵커가 어느 군집에도 없으면 DRIFT 가 community_results 를 비워
+    #  global 답변이 통째로 막히던 버그.)
+    monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    # 질의("반도체 업종 공급망 요약")에 ' 한미반도체' 라는 이름은 들어있지 않다 → 비명시.
+    seeds = [{"key_type": "corp_code", "key_value": "00161383", "name": "한미반도체(주)", "label": "organization"}]
+    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _fake_search_output(seeds))
+
+    captured = {}
+
+    def _fake_global(query, anchor_corp_codes=None):
+        captured["anchors"] = anchor_corp_codes
+        return [{"type": "community", "code": "0", "name": "반도체생태계", "value": "부분답", "extra": {}, "source": "community:0"}]
+
+    monkeypatch.setattr(graph_node, "global_search", _fake_global)
+
+    out = graph_node.graph_search_node({"intent": "global", "reconstructed_query": "반도체 업종 공급망 요약"})
+
+    assert set(out.keys()) == {"community_results"}   # 순수 매크로 → 로컬 사실 미부착
+    assert out["community_results"][0]["name"] == "반도체생태계"
+    assert captured["anchors"] is None                # 퍼지 앵커는 DRIFT 필터로 안 씀
