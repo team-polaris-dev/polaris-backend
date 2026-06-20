@@ -844,6 +844,12 @@ def execute(plan: StructuredPlan, seeds: list[Seed], query: str) -> tuple[list[G
             if result:
                 return result
         return None
+    if plan.kind == "two_hop_list":
+        for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
+            result = _execute_two_hop_list(plan, org_seed, query)
+            if result:
+                return result
+        return None
     for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
         result = _execute_for_seed(plan, org_seed, query)
         if result:
@@ -1160,6 +1166,157 @@ def _execute_for_seed(
         "answer_edges": answer_edges,
         "confirmed_edges": confirmed_edges,
         "abstained": not answer_edges and not confirmed_edges,
+    }
+    meta = {
+        "mode": "structured",
+        "structured": structured,
+        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
+        "n_hits": len(hits),
+        "fallback_used": False,
+        "errors": [],
+    }
+    return hits, meta
+
+
+def _two_hop_list_rows(
+    anchor: dict[str, Any],
+    bridge_rel: str,
+    *,
+    listed_only: bool,
+) -> list[dict[str, Any]]:
+    """(anchor)<-[bridge_rel]-(bridge)-[bridge_rel]->(sibling) 형제 행. 결정성 정렬(이름 asc).
+
+    공통 지배주주(bridge)를 거쳐 앵커의 형제 노드를 잇는다. listed_only 면 stock_code 가
+    있는 상장 형제만. bridge_rel 은 plan.first_relation.rel_type(제약 enum)로, 알려진 관계만
+    허용해 Cypher 보간을 안전하게 막는다(_relation_candidates 와 동일 패턴).
+    """
+    if bridge_rel not in _GOVERNANCE_RELS and bridge_rel not in NETWORK_REL_TYPES:
+        return []
+    match, params = _anchor_match(anchor)
+    listed_clause = "AND sib.stock_code IS NOT NULL" if listed_only else ""
+    cypher = f"""
+{match}
+MATCH (anchor)<-[r1:{bridge_rel}]-(bridge:Organization)-[r2:{bridge_rel}]->(sib:Organization)
+WHERE sib <> anchor AND bridge <> anchor AND bridge <> sib
+  AND coalesce(r1.valid_to, '') = '' AND r1.qc_disabled_at IS NULL
+  AND coalesce(r2.valid_to, '') = '' AND r2.qc_disabled_at IS NULL
+  AND NOT coalesce(sib.name, '') IN ['계','소계','합계','-','주','']
+  {listed_clause}
+WITH DISTINCT anchor, bridge, sib, r1, r2,
+     {_org_id_expr('bridge')} AS bridge_id,
+     {_org_id_expr('sib')} AS sib_id
+RETURN bridge_id, bridge.name AS bridge_name,
+       sib_id AS b_id, sib.name AS b_name, sib.stock_code AS stock_code,
+       r1.rcept_no AS anchor_source, r1.chunk_id AS anchor_chunk_id,
+       r2.rcept_no AS source, r2.chunk_id AS chunk_id
+ORDER BY b_name ASC, b_id ASC, bridge_id ASC
+LIMIT 200
+"""
+    try:
+        with neo4j_driver.session() as session:
+            return [r.data() for r in session.run(cypher, **params)]
+    except Exception as exc:
+        print(f"⚠️ [structured_executor] two_hop_list query failed: {exc!r}")
+        return []
+
+
+def _execute_two_hop_list(
+    plan: StructuredPlan,
+    org_seed: Seed,
+    query: str,
+) -> tuple[list[GraphHit], dict] | None:
+    """공통 지배주주(bridge)를 거쳐 앵커의 형제 계열사를 나열한다(지표 없는 2-hop).
+
+    패턴: (anchor)<-[r1:REL]-(bridge)-[r2:REL]->(sibling). REL=plan.first_relation.rel_type
+    (보통 IS_MAJOR_SHAREHOLDER_OF). listed_only 면 stock_code 보유 상장사만. 형제 0이면
+    None 반환 → search 가 abstain 으로 graceful degrade. 결정성: 형제 이름 asc(쿼리 정렬).
+    """
+    bridge_rel = plan.first_relation.rel_type if plan.first_relation else "IS_MAJOR_SHAREHOLDER_OF"
+    anchor = _anchor_from_seed(org_seed)
+    rows = _two_hop_list_rows(anchor, bridge_rel, listed_only=plan.listed_only)
+    if not rows:
+        return None
+
+    hits: list[GraphHit] = []
+    seen_nodes: set[str] = set()
+    seen_rels: set[str] = set()
+    siblings: list[dict[str, Any]] = []
+
+    def add_node(id_: str, name: str, role: str, score: float, attrs: dict[str, Any] | None = None) -> None:
+        if not id_ or id_ in seen_nodes:
+            return
+        seen_nodes.add(id_)
+        node_attrs: dict[str, Any] = {"structured_role": role}
+        if attrs:
+            node_attrs.update(attrs)
+        hits.append(_node_hit(id_, name, node_attrs, score))
+
+    def add_rel(edge: dict[str, Any]) -> None:
+        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
+        if rel_id in seen_rels:
+            return
+        seen_rels.add(rel_id)
+        hits.append(_rel_hit(edge, _NODE_SCORE_MEDIUM))
+
+    anchor_id = str(anchor.get("id") or "")
+    anchor_name = str(anchor.get("name") or "")
+    add_node(anchor_id, anchor_name, "anchor", _NODE_SCORE_HIGH)
+
+    seen_siblings: set[str] = set()
+    for row in rows:
+        bridge_id = str(row.get("bridge_id") or "")
+        bridge_name = str(row.get("bridge_name") or "")
+        sib_id = str(row.get("b_id") or "")
+        sib_name = str(row.get("b_name") or "")
+        if not sib_id or sib_id in seen_siblings:
+            continue
+        seen_siblings.add(sib_id)
+        stock_code = row.get("stock_code")
+        add_node(bridge_id, bridge_name, "controlling_shareholder", _NODE_SCORE_MEDIUM)
+        add_node(
+            sib_id, sib_name, "sibling", _NODE_SCORE_MEDIUM,
+            {"stock_code": stock_code} if stock_code else None,
+        )
+        # bridge → anchor (앵커가 이 지배주주의 지배를 받는다는 근거)
+        add_rel({
+            "rel_type": bridge_rel,
+            "from_id": bridge_id, "from_name": bridge_name,
+            "to_id": anchor_id, "to_name": anchor_name,
+            "role": "", "source": str(row.get("anchor_source") or ""),
+            "chunk_id": str(row.get("anchor_chunk_id") or ""),
+        })
+        # bridge → sibling (같은 지배주주가 지배하는 형제 계열사)
+        add_rel({
+            "rel_type": bridge_rel,
+            "from_id": bridge_id, "from_name": bridge_name,
+            "to_id": sib_id, "to_name": sib_name,
+            "role": "", "source": str(row.get("source") or ""),
+            "chunk_id": str(row.get("chunk_id") or ""),
+        })
+        siblings.append({
+            "id": sib_id,
+            "name": sib_name,
+            "stock_code": stock_code,
+            "bridge": {"id": bridge_id, "name": bridge_name},
+        })
+
+    if not siblings:
+        return None
+
+    structured = {
+        "mode": "structured",
+        "kind": "two_hop_list",
+        "plan": plan.to_dict(),
+        "anchor": anchor,
+        "bridge_relation": bridge_rel,
+        "listed_only": plan.listed_only,
+        "siblings": siblings,
+        "answer_edges": [],
+        "abstained": False,
+        "quality_notes": [
+            "앵커의 지배주주(bridge)를 거쳐 형제 계열사를 나열한다(지표 없는 2-hop 나열)",
+            "listed_only 면 stock_code 가 있는 상장 계열사만 포함한다",
+        ],
     }
     meta = {
         "mode": "structured",

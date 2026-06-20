@@ -68,18 +68,22 @@ class StructuredPlan:
     kind: Literal[
         "single_hop_rank",
         "two_hop_rank",
+        "two_hop_list",
         "multi_anchor_branch_rank",
         "single_anchor_branch_rank",
         "community_member_rank",
     ]
     first_relation: RelationStep | None
-    first_rank: MetricRankStep
+    # 랭킹 kind 는 항상 채운다. two_hop_list(지표 없는 나열)는 None 이다.
+    first_rank: MetricRankStep | None = None
     second_relation: RelationStep | None = None
     second_rank: MetricRankStep | None = None
     branch_ranks: list[BranchRankStep] = field(default_factory=list)
     common_anchor_min: int = 1
     first_candidate_policy: FirstCandidatePolicy = "default"
     exclude_original_anchor_from_second: bool = False
+    # two_hop_list 전용: 형제 노드를 상장사(stock_code 보유)로만 제한할지.
+    listed_only: bool = False
     planner: Literal["deterministic", "llm"] = "deterministic"
     raw_reason: str = ""
     steps: list[dict] = field(default_factory=list)
@@ -88,7 +92,7 @@ class StructuredPlan:
         return {
             "kind": self.kind,
             "first_relation": self.first_relation.__dict__ if self.first_relation else None,
-            "first_rank": self.first_rank.__dict__,
+            "first_rank": self.first_rank.__dict__ if self.first_rank else None,
             "second_relation": self.second_relation.__dict__ if self.second_relation else None,
             "second_rank": self.second_rank.__dict__ if self.second_rank else None,
             "branch_ranks": [
@@ -102,6 +106,7 @@ class StructuredPlan:
             "common_anchor_min": self.common_anchor_min,
             "first_candidate_policy": self.first_candidate_policy,
             "exclude_original_anchor_from_second": self.exclude_original_anchor_from_second,
+            "listed_only": self.listed_only,
             "planner": self.planner,
             "raw_reason": self.raw_reason,
             "steps": self.steps,

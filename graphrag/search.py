@@ -23,6 +23,7 @@ DETERMINISTIC_PRIORITY_KINDS = {
     "multi_anchor_branch_rank",
     "single_anchor_branch_rank",
     "community_member_rank",
+    "two_hop_list",
 }
 
 

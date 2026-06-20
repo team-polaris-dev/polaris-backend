@@ -25,6 +25,12 @@ _RELATED_BRANCH = ("특수관계", "관련 회사", "관계자", "관계기업")
 _INVESTMENT_BRANCH = ("투자 관계", "투자관계", "투자", "출자 관계", "출자관계", "출자")
 _RELATION_TYPE_COMPARE = ("관계 유형", "관계유형", "관계 유형별", "관계유형별", "관계 타입", "관계타입")
 
+# two_hop_list(지표 없는 형제 계열사 나열) 감지어. 공통 지배주주(bridge)를 거쳐 앵커의 형제
+# 계열사를 나열한다 — "삼성생명 최대주주가 지배하는 다른 상장 계열사" 류.
+_CONTROLLING_SHAREHOLDER = ("최대주주", "최대 주주", "대주주", "지배주주", "지배 주주")
+_SIBLING_CONTROL = ("지배하는", "지배 하는", "거느리는", "보유한", "소유한", "지배중", "지배 중")
+_SIBLING_TARGET = ("계열사", "계열 회사", "관계사", "형제", "다른 회사", "다른 상장")
+
 
 def _has_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(t in text for t in terms)
@@ -185,11 +191,57 @@ def _first_candidate_policy(step: RelationStep) -> str:
     return "default"
 
 
+def _wants_listed_only(query: str) -> bool:
+    """'상장' 계열사만 원하는가. '비상장'은 반대 의도라 제외."""
+    return "상장" in query and "비상장" not in query
+
+
+def _is_two_hop_list_question(query: str) -> bool:
+    """'A사 최대주주가 지배하는 다른 (상장) 계열사' 류 — 지표 없는 2-hop 형제사 나열.
+
+    공통 지배주주(bridge)를 거쳐 앵커의 형제 계열사를 나열한다. 지배주주 단어 + (지배/보유
+    동사 또는 계열사/형제 대상)이 함께 있어야 한다. "삼성생명 최대주주는 누구"처럼 지배주주만
+    묻는 단일 조회는 동사·대상이 없어 제외(→ explore).
+    """
+    if not _has_any(query, _CONTROLLING_SHAREHOLDER):
+        return False
+    return _has_any(query, _SIBLING_CONTROL) or _has_any(query, _SIBLING_TARGET)
+
+
+def _two_hop_list_plan(query: str) -> StructuredPlan:
+    """(anchor)←[최대주주]─(bridge)─[최대주주]→(형제) 2-hop 나열 plan. 지표 없음(first_rank None)."""
+    listed_only = _wants_listed_only(query)
+    bridge = RelationStep("IS_MAJOR_SHAREHOLDER_OF", "incoming", "shareholders", "shareholder")
+    return StructuredPlan(
+        kind="two_hop_list",
+        first_relation=bridge,
+        first_rank=None,
+        listed_only=listed_only,
+        raw_reason="; ".join([
+            "최대주주(지배주주) 공유 형제 계열사 나열 질문",
+            "앵커←최대주주→다른 계열사 2-hop 브리지",
+            "상장사만 필터" if listed_only else "상장 여부 미필터",
+        ]),
+        steps=[
+            {"op": "traverse", "from": "anchor", "relation": "IS_MAJOR_SHAREHOLDER_OF",
+             "direction": "incoming", "as": "controlling_shareholder"},
+            {"op": "traverse", "from": "controlling_shareholder", "relation": "IS_MAJOR_SHAREHOLDER_OF",
+             "direction": "outgoing", "as": "siblings"},
+            {"op": "list", "target": "siblings", "listed_only": listed_only},
+        ],
+    )
+
+
 def plan(query: str) -> StructuredPlan | None:
     """Return a supported structured plan or None for local/PPR fallback."""
     q = " ".join((query or "").split())
     if not q:
         return None
+
+    # 지표 없는 2-hop 형제 계열사 나열. 랭크 의도가 있으면(매출 1위 등) 기존 랭킹 경로가
+    # 처리하므로 여기선 제외 — 나열과 랭킹이 겹칠 때 랭킹을 우선 보존한다.
+    if _is_two_hop_list_question(q) and not has_rank_intent(q):
+        return _two_hop_list_plan(q)
 
     metric = _metric_id(q)
     if not metric or not has_rank_intent(q):
