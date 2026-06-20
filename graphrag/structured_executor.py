@@ -832,6 +832,8 @@ def execute(plan: StructuredPlan, seeds: list[Seed], query: str) -> tuple[list[G
         return None
     if plan.kind == "multi_anchor_branch_rank":
         return _execute_multi_anchor_branch_rank(plan, org_seeds, query)
+    if plan.kind == "multi_anchor_rank":
+        return _execute_multi_anchor_rank(plan, org_seeds, query)
     if plan.kind == "single_anchor_branch_rank":
         for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
             result = _execute_single_anchor_branch_rank(plan, org_seed, query)
@@ -952,6 +954,112 @@ def _execute_multi_anchor_branch_rank(
             "common supplier candidates are intersected across anchors before ranking",
             "major_customer, related_party, and investment branches are executed independently",
             "edge evidence is scored from source/chunk availability and endpoint mentions",
+        ],
+    }
+    meta = {
+        "mode": "structured",
+        "structured": structured,
+        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
+        "n_hits": len(hits),
+        "fallback_used": False,
+        "errors": [],
+    }
+    return hits, meta
+
+
+def _execute_multi_anchor_rank(
+    plan: StructuredPlan,
+    org_seeds: list[Seed],
+    query: str,
+) -> tuple[list[GraphHit], dict] | None:
+    """공통 앵커 교집합 후보를 단일 지표로 줄세워 1위를 답한다(branch 없음).
+
+    multi_anchor_branch_rank 의 1차 단계(intersect+rank+select)만 재사용한다 — 분기 비교가
+    없는 "둘 다와 거래하는 소재사 중 매출 1위" 류를 위해 first 에서 멈춘다. 교집합 후보가
+    근거/지표 게이트를 못 넘으면 None → search 가 abstain 으로 graceful degrade.
+    """
+    year = parse_year(query)
+    min_anchors = max(2, plan.common_anchor_min)
+    anchor_seeds = _common_anchor_seeds(org_seeds, query, min_anchors)
+    if len(anchor_seeds) < min_anchors:
+        return None
+
+    anchors = [_anchor_from_seed(seed) for seed in anchor_seeds]
+    common_candidates = _intersect_common_candidates(anchors, plan.first_relation)
+    ranked = _rank_candidates(
+        common_candidates,
+        plan.first_rank.metric_id,
+        year,
+        policy=plan.first_candidate_policy,
+    )
+    top_first, unranked_confirmed = _select_supported(ranked, plan.first_relation.rel_type)
+    confirmed = (
+        _confirmed_render_candidates(unranked_confirmed, plan.first_relation, STRUCTURED_CONFIRMED_RENDER_CAP)
+        if not top_first
+        else []
+    )
+    if not top_first and not confirmed:
+        return None
+
+    hits: list[GraphHit] = []
+    seen_nodes: set[str] = set()
+    seen_rels: set[str] = set()
+
+    def add_node(id_: str, name: str, role: str, score: float = 1.0) -> None:
+        if not id_ or id_ in seen_nodes:
+            return
+        seen_nodes.add(id_)
+        hits.append(_node_hit(id_, name, {"structured_role": role}, score))
+
+    def add_rel(edge: dict[str, Any]) -> None:
+        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
+        if rel_id in seen_rels:
+            return
+        seen_rels.add(rel_id)
+        evidence = edge.get("evidence") or {}
+        score = _NODE_SCORE_HIGH if evidence.get("level") == "high" else _NODE_SCORE_MEDIUM if evidence.get("level") == "medium" else _NODE_SCORE_LOW
+        hits.append(_rel_hit(edge, score))
+
+    for anchor in anchors:
+        add_node(str(anchor.get("id") or ""), str(anchor.get("name") or ""), "common_anchor")
+
+    answer_edges: list[dict[str, Any]] = []
+    confirmed_edges: list[dict[str, Any]] = []
+    if top_first:
+        add_node(str(top_first.get("id") or ""), str(top_first.get("name") or ""), "selected_common_supplier", 0.98)
+        for edge in top_first.get("anchor_edges") or [top_first["edge"]]:
+            add_rel(edge)
+            answer_edges.append(edge)
+    else:
+        for cand in confirmed:
+            add_node(str(cand.get("id") or ""), str(cand.get("name") or ""), "confirmed_common_supplier", 0.7)
+            for edge in cand.get("anchor_edges") or [cand["edge"]]:
+                add_rel(edge)
+                confirmed_edges.append(edge)
+
+    structured = {
+        "mode": "structured",
+        "kind": "multi_anchor_rank",
+        "year": year,
+        "metric_label": _METRIC_LABEL.get(plan.first_rank.metric_id, plan.first_rank.metric_id),
+        "plan": plan.to_dict(),
+        "first_candidate_policy": plan.first_candidate_policy,
+        "anchors": anchors,
+        "first": {
+            "relation": plan.first_relation.__dict__,
+            "common_anchor_min": plan.common_anchor_min,
+            "candidates": ranked,
+            "selected": top_first,
+            "unranked_confirmed": unranked_confirmed,
+            "evidence_floor": _evidence_floor(plan.first_relation.rel_type),
+        },
+        "answer_edges": answer_edges,
+        "confirmed_edges": confirmed_edges,
+        "abstained": not answer_edges and not confirmed_edges,
+        "quality_notes": [
+            "공통 앵커 교집합 후보를 단일 지표로 줄세워 1위만 답한다(branch 비교 없음)",
+            "교집합·랭킹·근거게이트는 multi_anchor_branch_rank 의 1차 단계를 재사용한다",
+            "엣지 근거는 출처/청크/양끝 언급으로 점수화한다",
         ],
     }
     meta = {

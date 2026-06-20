@@ -12,13 +12,13 @@ from graphrag.plan_schema import BranchRankStep, MetricRankStep, RelationStep, S
 
 
 _SUPPLY_IN = (
-    "공급", "납품", "협력사", "거래처", "벤더", "공급사", "공급업체", "조달", "매입",
+    "공급", "납품", "협력사", "거래처", "거래하는", "벤더", "공급사", "공급업체", "조달", "매입",
     "납품받", "제품을 공급", "부품을 공급", "장비를 공급", "소재를 공급",
 )
 _SUPPLY_OUT = ("고객", "고객사", "매출처", "납품처", "구매처", "사가는", "판매", "판매하는", "공급처")
 _RELATED = ("특수관계", "관련된 회사", "관련 회사", "관계자", "계열거래", "관계기업")
 _SECOND_HOP = ("그 회사", "해당 기업", "해당 회사", "그회사", "관련된 회사중", "특수관계자 중")
-_COMMON_ANCHOR = ("둘 다", "모두", "공통", "양사", "둘다")
+_COMMON_ANCHOR = ("둘 다", "모두", "공통", "양사", "둘다", "동시에", "동시", "양쪽")
 _BRANCH_COMPARE = ("각각", "비교", "관계 타입", "관계타입", "근거")
 _CUSTOMER_BRANCH = ("주요 매출처", "매출처", "고객", "납품처")
 _RELATED_BRANCH = ("특수관계", "관련 회사", "관계자", "관계기업")
@@ -106,6 +106,21 @@ def _is_multi_anchor_branch_question(query: str) -> bool:
         and _has_any(query, _RELATED)
         and _has_any(query, _INVESTMENT_BRANCH)
         and _has_any(query, _BRANCH_COMPARE)
+    )
+
+
+def _is_multi_anchor_rank_question(query: str) -> bool:
+    """공통 거래상대를 단일 지표로 1위만 뽑는 질문(branch 비교 없음).
+
+    "삼성전자와 SK하이닉스가 동시에 거래하는 소재 회사 중 매출 1위" 류 — 둘 이상 앵커가
+    공통으로 가진 관계 상대를 metric 으로 줄세운다. branch 비교어(각각/비교/근거·관계 유형별)가
+    있으면 multi_anchor_branch_rank 가 가져가므로 여기선 제외한다. 관계어·랭킹 의도·앵커 다중성은
+    호출부(plan)에서 first_relation·metric·_COMMON_ANCHOR 로 이미 보장된다.
+    """
+    return (
+        _has_any(query, _COMMON_ANCHOR)
+        and not _has_any(query, _BRANCH_COMPARE)
+        and not _has_any(query, _RELATION_TYPE_COMPARE)
     )
 
 
@@ -343,6 +358,35 @@ def plan(query: str) -> StructuredPlan | None:
                 first_reason,
                 metric_reason,
                 "매출처/특수관계자/투자 관계를 별도 branch로 비교",
+            ]),
+            steps=steps,
+        )
+
+    if _is_multi_anchor_rank_question(q):
+        # 공통 앵커 교집합 → 단일 지표 랭킹 1위. branch 비교가 없는 단일 답 질문이라
+        # multi_anchor_branch_rank 의 1차(intersect+rank) 단계만 재사용한다.
+        steps = [
+            {
+                "op": "intersect_anchors",
+                "relation": first_step.rel_type,
+                "direction": first_step.direction,
+                "min_anchors": 2,
+                "as": first_step.alias,
+            },
+            {"op": "join_metric", "metric": metric_id, "target": first_step.alias},
+            {"op": "argmax", "by": metric_id, "as": "top_" + first_step.role},
+        ]
+        return StructuredPlan(
+            kind="multi_anchor_rank",
+            first_relation=first_step,
+            first_rank=MetricRankStep(metric_id, alias="top_" + first_step.role),  # type: ignore[arg-type]
+            common_anchor_min=2,
+            first_candidate_policy=_first_candidate_policy(first_step),
+            raw_reason="; ".join([
+                "공통 앵커 교집합 거래상대 단일 지표 랭킹 질문",
+                first_reason,
+                metric_reason,
+                "branch 비교 없이 공통 후보를 지표로 줄세워 1위만 답한다",
             ]),
             steps=steps,
         )

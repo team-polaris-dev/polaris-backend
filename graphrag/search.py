@@ -23,6 +23,7 @@ from graphrag.traverse import expand, expand_ppr, fallback_for
 # 덮어쓰지 않고 그대로 쓴다 — 그룹 범위 탐지는 결정적이라 LLM 재분류가 불필요·해로움.
 DETERMINISTIC_PRIORITY_KINDS = {
     "multi_anchor_branch_rank",
+    "multi_anchor_rank",
     "single_anchor_branch_rank",
     "community_member_rank",
     "two_hop_list",

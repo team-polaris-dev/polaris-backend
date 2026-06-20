@@ -70,6 +70,7 @@ class StructuredPlan:
         "two_hop_rank",
         "two_hop_list",
         "multi_anchor_branch_rank",
+        "multi_anchor_rank",
         "single_anchor_branch_rank",
         "community_member_rank",
     ]
