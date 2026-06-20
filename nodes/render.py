@@ -111,7 +111,8 @@ def _fmt_graph(
                 fin[(year, aid)] = amt
 
         # ── 관계 엣지 (주주/자회사/투자) ────────────────
-        elif t in ("shareholder", "subsidiary", "investment"):
+        elif t in ("shareholder", "subsidiary", "investment",
+           "supply", "related_party", "interlocking_directorate"):
             rel_type  = str(extra.get("rel_type") or t)
             from_name = str(extra.get("from_name") or "")
             to_name   = str(extra.get("to_name") or "")
