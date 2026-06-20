@@ -171,3 +171,55 @@ def test_zero_rows_returns_none(monkeypatch):
     monkeypatch.setattr(cypher_executor, "_run_cypher", lambda cypher, params: [])
     monkeypatch.setattr(cypher_executor, "_fetch_chunk_texts", lambda ids: {})
     assert cypher_executor.run(_GENERATED, _ANCHORS, "삼성생명 형제 계열사") is None
+
+
+_SUPPLY_ANCHORS = [{"corp_code": "00164779", "name": "SK하이닉스"}]
+_SUPPLY_GENERATED = GeneratedCypher(
+    cypher=(
+        "MATCH (supplier:Organization)-[r:SUPPLIES_TO]->(anchor:Organization) "
+        "WHERE anchor.corp_code IN $anchors "
+        "RETURN supplier.corp_code AS from_id, supplier.name AS from_name, "
+        "anchor.corp_code AS to_id, anchor.name AS to_name, type(r) AS rel_type "
+        "LIMIT 50"
+    ),
+    params={},
+    reason="SK하이닉스 공급사",
+)
+
+
+def _supply_rows(_cypher, _params):
+    return [
+        # supplier(소재A) → anchor(SK하이닉스): 앵커가 to → role=supplier
+        {"from_id": "00111111", "from_name": "소재A",
+         "to_id": "00164779", "to_name": "SK하이닉스",
+         "rel_type": "SUPPLIES_TO", "source": "S1", "chunk_id": ""},
+        # anchor(SK하이닉스) → buyer(고객B): 앵커가 from → role=buyer
+        {"from_id": "00164779", "from_name": "SK하이닉스",
+         "to_id": "00222222", "to_name": "고객B",
+         "rel_type": "SUPPLIES_TO", "source": "S2", "chunk_id": ""},
+    ]
+
+
+def test_supply_role_filled_from_anchor_direction(monkeypatch):
+    # LLM 이 row.role 을 안 내보내도 앵커 기준 방향으로 supplier/buyer 결정적으로 보강.
+    monkeypatch.setattr(cypher_executor, "_run_cypher", _supply_rows)
+    monkeypatch.setattr(cypher_executor, "_fetch_chunk_texts", lambda ids: {})
+    hits, _ = cypher_executor.run(_SUPPLY_GENERATED, _SUPPLY_ANCHORS, "SK하이닉스 공급망")
+
+    rels = [h for h in hits if h["label"] == "relationship"]
+    by_pair = {(h["attrs"]["from_name"], h["attrs"]["to_name"]): h["attrs"].get("role") for h in rels}
+    assert by_pair[("소재A", "SK하이닉스")] == "supplier"
+    assert by_pair[("SK하이닉스", "고객B")] == "buyer"
+
+
+def test_supply_role_only_supplies_to_relation(monkeypatch):
+    # SUPPLIES_TO 외 관계는 빈 role 유지(원본 보존). 다른 관계까지 라벨링하지 않는다.
+    monkeypatch.setattr(cypher_executor, "_run_cypher", lambda c, p: [
+        {"from_id": "00111111", "from_name": "주주A",
+         "to_id": "00164779", "to_name": "SK하이닉스",
+         "rel_type": "IS_MAJOR_SHAREHOLDER_OF", "source": "X", "chunk_id": ""},
+    ])
+    monkeypatch.setattr(cypher_executor, "_fetch_chunk_texts", lambda ids: {})
+    hits, _ = cypher_executor.run(_SUPPLY_GENERATED, _SUPPLY_ANCHORS, "SK하이닉스 주주")
+    rels = [h for h in hits if h["label"] == "relationship"]
+    assert rels and rels[0]["attrs"].get("role") == ""

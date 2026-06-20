@@ -65,6 +65,29 @@ def _node_score(role: str) -> float:
     return _NODE_SCORE_ANCHOR if role == "anchor" else _NODE_SCORE_OTHER
 
 
+def _supply_role(
+    rel_type: str,
+    from_id: str,
+    to_id: str,
+    anchor_codes: set[str],
+    raw: Any,
+) -> str:
+    """SUPPLIES_TO 엣지에 한해 앵커 기준 방향 라벨(supplier/buyer)을 결정적으로 채운다.
+
+    traverse._run_supply_chain 의 계약 미러: 앵커가 to 면 from 이 공급사(supplier),
+    앵커가 from 이면 to 가 매출처(buyer). LLM 이 row.role 을 안 내보내도 패널 렌더링이
+    이 라벨로 방향성을 그리므로 결정적으로 보강한다. 다른 관계 타입은 원본 값 보존.
+    """
+    raw_role = str(raw or "")
+    if rel_type != "SUPPLIES_TO":
+        return raw_role
+    if to_id in anchor_codes:
+        return "supplier"
+    if from_id in anchor_codes:
+        return "buyer"
+    return raw_role
+
+
 def run(
     generated: GeneratedCypher,
     anchors: list[dict],
@@ -104,6 +127,7 @@ def run(
             attrs["stock_code"] = stock_code
         node_buf.append(((name or "", id_), _node_hit(id_, name, attrs, _node_score(role))))
 
+    anchor_set = set(anchor_codes)
     for row in rows:
         from_id = str(row.get("from_id") or "")
         from_name = str(row.get("from_name") or "")
@@ -124,7 +148,7 @@ def run(
             "rel_type": rel_type,
             "from_id": from_id, "from_name": from_name,
             "to_id": to_id, "to_name": to_name,
-            "role": str(row.get("role") or ""),
+            "role": _supply_role(rel_type, from_id, to_id, anchor_set, row.get("role")),
             "source": str(row.get("source") or ""),
             "chunk_id": str(row.get("chunk_id") or ""),
         }
