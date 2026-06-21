@@ -10,8 +10,8 @@ import logging
 from config.entities import normalize_corp_name as _norm
 from tool.graph_client import neo4j_driver
 from graphrag import planner
-from graphrag.llm_planner import GraphMode, _is_silent, plan_with_mode
 from graphrag.matcher import match
+from graphrag.router import classify
 from graphrag.schema import adapt_to_legacy
 from graphrag.search import search
 from graphrag.global_search import global_search
@@ -149,9 +149,9 @@ def _silent_output(seeds: list[dict]) -> dict:
 # 재구성(LLM)이 표준어 치환·축소로 지워버리면 안 되는 구조화 의도. 원문이 이 kind 로
 # 잡히는데 재구성 후 같은 kind 를 잃으면, 재구성이 의도를 깬 것이라 원문을 쓴다.
 #  - community_member_rank: 그룹 범위어(계열사 등)를 특정 관계어(종속회사)로 좁히는 축소.
-#  - two_hop_list: "최대주주가 지배하는"을 "주요주주로 있는"으로 표준화하며 트리거어를
-#    잃고 의미까지 뒤집히는 축소(앵커의 지배주주→형제 나열 의도 상실).
-_RECONSTRUCT_PRESERVE_KINDS = {"community_member_rank", "two_hop_list"}
+#  - multi_anchor_rank: 공통 앵커 cue(동시에/둘 다)를 재구성이 지우면 교집합 의도가
+#    사라져 단일 앵커 관계답으로 뒤집히는 축소.
+_RECONSTRUCT_PRESERVE_KINDS = {"community_member_rank", "multi_anchor_rank"}
 
 
 def effective_query(state: dict) -> str:
@@ -244,9 +244,9 @@ def graph_search_node(state: dict) -> dict:
       + 앵커 군집), 없으면 순수 매크로 map-reduce(community_results). (현행 보존)
     - 그 외(ctx/local): silent(순수 속성)→침묵, macro(앵커없는 매크로)→커뮤니티,
       relation_only(줄세울 지표 없음)→시드 관계망 + 'rankable=False' 신호로 degrade,
-      relation_rank/relation_explore→search() 가 이미 실행한 구조화/PPR 결과를 조립.
-    모드는 graphrag.llm_planner.plan_with_mode(결정적 프리필터 우선, 애매하면 LLM 1회)가 정한다.
-    별도 플로우 노드 없이 이 노드 안에서 분기한다.
+      relation_rank/relation_explore·구조화 kind→search() 가 이미 실행한 결과를 조립.
+    질문종류는 graphrag.router.classify(결정적 프리필터 우선, 애매하면 LLM 1회)가 한 번 판정해
+    search 와 공유한다 — 분류는 한 곳, 소비는 두 곳. 별도 플로우 노드 없이 이 노드 안에서 분기한다.
     """
     _preflight()
 
@@ -274,19 +274,20 @@ def graph_search_node(state: dict) -> dict:
     upstream = state.get("reconstructed_seeds") or []
     has_metric = planner._metric_id(query) is not None
 
+    # 질문종류 1회 판정(router). search 도 같은 route 를 받아 분류를 두 번 하지 않는다.
+    route = classify(query, has_metric=has_metric)
+
     # SILENT 선처리: PPR 펼치기 전에 차단(억지 관계망 방지). 앵커는 match() 로 가볍게 해소.
-    if _is_silent(query):
+    if route.type == "silent":
         return _silent_output(_safe_match(query, upstream))
 
-    out = search(query, upstream_seeds=upstream)
-    has_anchor = bool(out["graph_seeds"])
+    out = search(query, upstream_seeds=upstream, route=route)
     explicit = _explicit_company_mention(query, out["graph_seeds"])
-    mode, _ = plan_with_mode(query, has_anchor=has_anchor, has_metric=has_metric)
 
     # 매크로 질문(업계 큰그림) → 커뮤니티 map-reduce. 업종어가 회사명에 퍼지매칭돼 corp_code
     # 앵커가 잡혀도, 사용자가 회사를 명시 호명하지 않았으면 매크로로 본다(MACRO 사문화 차단).
     # 명시 호명(explicit)이면 아래로 흘러 그 회사 관계망 + DRIFT 를 보존한다.
-    if mode is GraphMode.MACRO and not explicit:
+    if route.type == "macro" and not explicit:
         results = global_search(query)
         print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
         return {"community_results": results}
@@ -295,7 +296,7 @@ def graph_search_node(state: dict) -> dict:
 
     # RELATION_ONLY: 줄세울 노드 지표가 없는 관계질문 → 억지 1위 금지.
     # 시드 관계망은 (PPR 로 이미 있거나) fallback_for 로 채우고, 신호는 graph_meta 에만 둔다.
-    if mode is GraphMode.RELATION_ONLY:
+    if route.type == "relation_only":
         if _is_rankless(out):
             seed = _first_org_seed(out["graph_seeds"])
             if seed:

@@ -70,6 +70,13 @@ _NODE_SCORE_MEDIUM = 0.75
 _NODE_SCORE_LOW = 0.55
 _ANSWER_HIT_DEFAULT_SCORE = 0.95   # add_answer_hit 기본(메트릭 랭킹 1위 등 명시 근거)
 
+# SUPPLIES_TO 질의 시점 노이즈 게이트(_passes_noise_gate). 적재 과정에서 SUPPLIES_TO 에는
+# corp_code 없는 외부/제품 노드와 운영 공급사가 아닌 금융기관(대주·인수단)이 섞인다. 엣지를
+# 지우지 않고 랭킹 후보에서만 비파괴적으로 빼 되돌릴 수 있게 한다. 운영 거래상대만 남긴다.
+_SUPPLY_NOISE_NAME_TERMS = (
+    "은행", "증권", "보험", "캐피탈", "저축은행", "카드사", "금융지주", "자산운용",
+)
+
 
 def _placeholders(n: int) -> str:
     return ", ".join(["%s"] * n)
@@ -802,96 +809,119 @@ def _run_branch_from_anchor(
     }
 
 
-def _run_branch(
-    top_first: dict[str, Any],
-    branch: BranchRankStep,
-    year: int | None,
-) -> dict[str, Any]:
-    return _run_branch_from_anchor(
-        _anchor_from_candidate(top_first),
-        branch,
-        year,
-        exclude_ids={str(top_first.get("id") or "")},
-    )
-
-
-def _best_supported_branch(branches: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
-    supported: list[dict[str, Any]] = []
-    for kind, branch in branches.items():
-        selected = branch.get("selected") or {}
-        evidence = selected.get("evidence") or selected.get("edge", {}).get("evidence") or {}
-        if selected:
-            supported.append({
-                "kind": kind,
-                "company": selected.get("name") or "",
-                "confidence": evidence.get("confidence", 0.0),
-                "level": evidence.get("level", "low"),
-                "warnings": evidence.get("warnings") or [],
-            })
-    if not supported:
-        return None
-    supported.sort(key=lambda b: float(b.get("confidence") or 0.0), reverse=True)
-    return supported[0]
-
-
 def execute(plan: StructuredPlan, seeds: list[Seed], query: str) -> tuple[list[GraphHit], dict] | None:
     org_seeds = [s for s in seeds if s.get("label") == "organization"]
     if not org_seeds:
         return None
-    if plan.kind == "multi_anchor_branch_rank":
-        return _execute_multi_anchor_branch_rank(plan, org_seeds, query)
+    if plan.kind == "multi_hop_chain":
+        return _execute_multi_hop_chain(plan, org_seeds, query)
     if plan.kind == "multi_anchor_rank":
         return _execute_multi_anchor_rank(plan, org_seeds, query)
-    if plan.kind == "single_anchor_branch_rank":
-        for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
-            result = _execute_single_anchor_branch_rank(plan, org_seed, query)
-            if result:
-                return result
-        return None
     if plan.kind == "community_member_rank":
         for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
             result = _execute_community_member_rank(plan, org_seed, query)
             if result:
                 return result
         return None
-    if plan.kind == "two_hop_list":
-        for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
-            result = _execute_two_hop_list(plan, org_seed, query)
-            if result:
-                return result
-        return None
-    for org_seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
-        result = _execute_for_seed(plan, org_seed, query)
-        if result:
-            return result
     return None
 
 
-def _execute_multi_anchor_branch_rank(
+def _chain_hop_node_score(depth: int) -> float:
+    """홉 깊이가 깊을수록 노드 확신 점수를 단계적으로 낮춘다(1홉≈high, 이후 감쇠)."""
+    return max(_NODE_SCORE_LOW, _NODE_SCORE_HIGH - 0.1 * depth)
+
+
+def _passes_noise_gate(candidate: dict[str, Any], rel_type: str) -> bool:
+    """SUPPLIES_TO 랭킹 진입 전 노이즈 후보를 비파괴적으로 거른다(질의 시점 게이트).
+
+    SUPPLIES_TO 외 관계는 영향 없음. SUPPLIES_TO 는 (1) corp_code 없는 외부/제품 노드,
+    (2) 금융기관(대주·인수단)을 제외한다 — 둘 다 운영 공급사가 아니며 매출 랭킹의 분모를
+    오염시킨다. 엣지를 삭제하지 않으므로 게이트만 끄면 원상복구된다.
+    """
+    if rel_type != "SUPPLIES_TO":
+        return True
+    if not candidate.get("corp_code"):
+        return False
+    name = str(candidate.get("name") or "")
+    return not any(term in name for term in _SUPPLY_NOISE_NAME_TERMS)
+
+
+def _gate_candidates(candidates: list[dict[str, Any]], rel_type: str) -> list[dict[str, Any]]:
+    return [c for c in candidates if _passes_noise_gate(c, rel_type)]
+
+
+def _candidate_is_fertile(
+    candidate: dict[str, Any],
+    next_hop: Any,
+    year: int | None,
+    *,
+    exclude_ids: set[str],
+) -> bool:
+    """이 후보를 다음 홉 앵커로 삼았을 때 이어질 후속 후보가 1개 이상 있는지 전방탐색한다.
+
+    막다른 길(예: 유일 상위가 지주사뿐이라 다음 홉이 끊기는 경우)을 피해, top_n 슬롯을
+    실제로 체인이 이어질 수 있는 후보로 채우기 위함이다. 노이즈·근거 게이트를 다음 홉과
+    동일하게 적용해, "전방에서도 채택 가능한가" 를 같은 기준으로 본다.
+    """
+    anchor = _anchor_from_candidate(candidate)
+    relation = _resolve_relation_for_anchor(anchor, next_hop.relation)
+    anchor_id = str(anchor.get("id") or "")
+    cands = _gate_candidates(
+        _relation_candidates(anchor, relation, exclude_ids=exclude_ids | {anchor_id}),
+        relation.rel_type,
+    )
+    if not cands:
+        return False
+    _attach_candidate_evidence(cands)
+    return any(_candidate_supported(c, relation.rel_type) for c in cands)
+
+
+def _select_hop_candidates(
+    ranked_supported: list[dict[str, Any]],
+    top_n: int,
+    *,
+    next_hop: Any | None,
+    year: int | None,
+    visited_ids: set[str],
+) -> list[dict[str, Any]]:
+    """메트릭 순서를 지키며 상위 top_n 을 고르되, 다음 홉이 남았으면 이어질 수 있는(fertile)
+    후보를 우선 채운다. fertile 가 모자라면 막다른 후보로 슬롯을 메워 커버리지를 그리디보다
+    줄이지 않는다(정직한 degrade). 마지막 홉이면 전방탐색 없이 그대로 상위 top_n.
+    """
+    cap = max(1, top_n)
+    if next_hop is None:
+        return ranked_supported[:cap]
+    fertile: list[dict[str, Any]] = []
+    infertile: list[dict[str, Any]] = []
+    for cand in ranked_supported:
+        if len(fertile) >= cap:
+            break
+        if _candidate_is_fertile(cand, next_hop, year, exclude_ids=visited_ids):
+            fertile.append(cand)
+        else:
+            infertile.append(cand)
+    selected = fertile[:cap]
+    if len(selected) < cap:
+        selected += infertile[: cap - len(selected)]
+    return selected
+
+
+def _execute_multi_hop_chain(
     plan: StructuredPlan,
     org_seeds: list[Seed],
     query: str,
 ) -> tuple[list[GraphHit], dict] | None:
+    """LLM 이 계획한 다중홉 랭킹 체인(cutline)을 한 walker 로 실행한다.
+
+    각 홉마다 현재 frontier 의 모든 앵커에서 hop.relation 후보를 뽑아 hop.rank 지표로
+    줄세우고 근거 게이트를 통과한 상위 top_n 을 답으로 채택한다. 채택된 후보가 다음 홉의
+    frontier(앵커)가 되어 "수혜의 수혜" 를 임의 깊이로 잇는다 — 단일 2홉 top-1 랭킹의
+    한계를 top_n·N홉으로 일반화한다. 한 홉도 답을 못 내면 None → search 가
+    abstain 으로 graceful degrade.
+    """
+    if not plan.hops:
+        return None
     year = parse_year(query)
-    anchor_seeds = _common_anchor_seeds(org_seeds, query, max(2, plan.common_anchor_min))
-    if len(anchor_seeds) < max(2, plan.common_anchor_min):
-        return None
-
-    anchors = [_anchor_from_seed(seed) for seed in anchor_seeds]
-    common_candidates = _intersect_common_candidates(anchors, plan.first_relation)
-    first_ranked = _rank_candidates(
-        common_candidates,
-        plan.first_rank.metric_id,
-        year,
-        policy=plan.first_candidate_policy,
-    )
-    top_first, first_unranked_confirmed = _select_supported(first_ranked, plan.first_relation.rel_type)
-    if not top_first:
-        return None
-
-    branches: dict[str, dict[str, Any]] = {}
-    for branch in plan.branch_ranks:
-        branches[branch.kind] = _run_branch(top_first, branch, year)
 
     hits: list[GraphHit] = []
     seen_nodes: set[str] = set()
@@ -912,62 +942,94 @@ def _execute_multi_anchor_branch_rank(
         score = _NODE_SCORE_HIGH if evidence.get("level") == "high" else _NODE_SCORE_MEDIUM if evidence.get("level") == "medium" else _NODE_SCORE_LOW
         hits.append(_rel_hit(edge, score))
 
-    for anchor in anchors:
-        add_node(str(anchor.get("id") or ""), str(anchor.get("name") or ""), "common_anchor")
-    add_node(str(top_first.get("id") or ""), str(top_first.get("name") or ""), "selected_common_supplier", 0.98)
-    for edge in top_first.get("anchor_edges") or [top_first["edge"]]:
-        add_rel(edge)
+    # 초기 frontier = 질문이 호명한 org 앵커들(순서: 질문 언급 우선).
+    visited_ids: set[str] = set()
+    frontier: list[dict[str, Any]] = []
+    for seed in sorted(org_seeds, key=lambda s: _seed_order(s, query)):
+        anchor = _anchor_from_seed(seed)
+        aid = str(anchor.get("id") or "")
+        if not aid or aid in visited_ids:
+            continue
+        add_node(aid, str(anchor.get("name") or ""), "anchor", _NODE_SCORE_HIGH)
+        visited_ids.add(aid)
+        frontier.append(anchor)
+    if not frontier:
+        return None
 
-    branch_anchor_id = str(top_first.get("id") or "")
-    confirmed_edges: list[dict[str, Any]] = []
-    for kind, branch in branches.items():
-        relation = RelationStep(**branch["relation"])
-        selected = branch.get("selected")
-        if selected:
-            add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
-            add_rel(selected["edge"])
-        for cand in _confirmed_render_candidates(
-            branch.get("unranked_confirmed") or [], relation, STRUCTURED_CONFIRMED_RENDER_CAP, branch_anchor_id,
-        ):
-            add_node(str(cand.get("id") or ""), str(cand.get("name") or ""), "confirmed_" + kind, 0.7)
-            add_rel(cand["edge"])
-            confirmed_edges.append(cand["edge"])
+    answer_edges: list[dict[str, Any]] = []
+    hop_results: list[dict[str, Any]] = []
+    degraded = False
+    for depth, hop in enumerate(plan.hops):
+        next_hop = plan.hops[depth + 1] if depth + 1 < len(plan.hops) else None
+        next_frontier: list[dict[str, Any]] = []
+        selected_in_hop: set[str] = set()
+        selected_names: list[str] = []
+        for anchor in frontier:
+            relation = _resolve_relation_for_anchor(anchor, hop.relation)
+            anchor_id = str(anchor.get("id") or "")
+            candidates = _gate_candidates(
+                _relation_candidates(anchor, relation, exclude_ids=visited_ids | {anchor_id}),
+                relation.rel_type,
+            )
+            if not candidates:
+                continue
+            _attach_candidate_evidence(candidates)
+            ranked = _rank_candidates(candidates, hop.rank.metric_id, year, policy=hop.policy)
+            supported = [c for c in ranked if _candidate_supported(c, relation.rel_type)]
+            chosen = _select_hop_candidates(
+                supported, hop.top_n, next_hop=next_hop, year=year, visited_ids=visited_ids,
+            )
+            if len(chosen) < max(1, hop.top_n):
+                degraded = True
+            for cand in chosen:
+                cid = str(cand.get("id") or "")
+                if not cid or cid in selected_in_hop:
+                    continue
+                selected_in_hop.add(cid)
+                add_node(cid, str(cand.get("name") or ""), f"hop{depth + 1}_selected", _chain_hop_node_score(depth + 1))
+                add_rel(cand["edge"])
+                answer_edges.append(cand["edge"])
+                selected_names.append(str(cand.get("name") or ""))
+                if cid not in visited_ids:
+                    next_frontier.append(_anchor_from_candidate(cand))
+        for anchor in next_frontier:
+            visited_ids.add(str(anchor.get("id") or ""))
+        hop_results.append({
+            "depth": depth + 1,
+            "relation": hop.relation.__dict__,
+            "metric": hop.rank.metric_id,
+            "metric_label": _METRIC_LABEL.get(hop.rank.metric_id, hop.rank.metric_id),
+            "top_n": hop.top_n,
+            "selected": selected_names,
+        })
+        frontier = next_frontier
+        if not frontier:
+            break
 
-    answer_edges = list(top_first.get("anchor_edges") or [top_first["edge"]])
-    for branch in branches.values():
-        selected = branch.get("selected")
-        if selected:
-            answer_edges.append(selected["edge"])
+    if not answer_edges:
+        return None
 
     structured = {
         "mode": "structured",
+        "kind": "multi_hop_chain",
         "year": year,
-        "metric_label": _METRIC_LABEL.get(plan.first_rank.metric_id, plan.first_rank.metric_id),
         "plan": plan.to_dict(),
-        "first_candidate_policy": plan.first_candidate_policy,
-        "anchors": anchors,
-        "first": {
-            "relation": plan.first_relation.__dict__,
-            "common_anchor_min": plan.common_anchor_min,
-            "candidates": first_ranked,
-            "selected": top_first,
-            "unranked_confirmed": first_unranked_confirmed,
-            "evidence_floor": _evidence_floor(plan.first_relation.rel_type),
-        },
-        "branches": branches,
-        "best_supported_branch": _best_supported_branch(branches),
+        "hops": hop_results,
         "answer_edges": answer_edges,
-        "confirmed_edges": confirmed_edges,
+        "abstained": False,
+        "degraded": degraded,
         "quality_notes": [
-            "common supplier candidates are intersected across anchors before ranking",
-            "major_customer, related_party, and investment branches are executed independently",
-            "edge evidence is scored from source/chunk availability and endpoint mentions",
+            "각 홉에서 관계 후보를 노이즈 게이트로 거른 뒤 지표로 줄세워 상위 top_n 을 다음 홉 앵커로 넘긴다",
+            "비종단 홉은 전방탐색으로 이어질 수 있는(fertile) 후보를 우선 채워 막다른 길을 피한다",
+            "SUPPLIES_TO 는 corp_code 없는 외부·제품 노드와 금융기관을 랭킹에서 비파괴적으로 제외한다",
+            "엣지 근거는 출처/청크/양끝 언급으로 점수화한다",
+            *(["데이터가 모자라 일부 홉이 top_n 미만으로 채워졌다(없는 관계를 지어내지 않음)"] if degraded else []),
         ],
     }
     meta = {
         "mode": "structured",
         "structured": structured,
-        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
+        "patterns_run": ["structured_plan", "multi_hop_chain"],
         "n_hits": len(hits),
         "fallback_used": False,
         "errors": [],
@@ -980,11 +1042,12 @@ def _execute_multi_anchor_rank(
     org_seeds: list[Seed],
     query: str,
 ) -> tuple[list[GraphHit], dict] | None:
-    """공통 앵커 교집합 후보를 단일 지표로 줄세워 1위를 답한다(branch 없음).
+    """공통 앵커 교집합 후보를 단일 지표로 줄세워 1위를 답한다.
 
-    multi_anchor_branch_rank 의 1차 단계(intersect+rank+select)만 재사용한다 — 분기 비교가
-    없는 "둘 다와 거래하는 소재사 중 매출 1위" 류를 위해 first 에서 멈춘다. 교집합 후보가
-    근거/지표 게이트를 못 넘으면 None → search 가 abstain 으로 graceful degrade.
+    "둘 다와 거래하는 소재사 중 매출 1위" 류 — 둘 이상 앵커의 공통 거래상대를 교집합으로
+    구한 뒤 지표로 줄세워 first 에서 멈춘다. 교집합 정확성이 핵심이라 text2cypher 로 뭉개지
+    않고 결정적으로 보장한다. 교집합 후보가 근거/지표 게이트를 못 넘으면 None → search 가
+    abstain 으로 graceful degrade.
     """
     year = parse_year(query)
     min_anchors = max(2, plan.common_anchor_min)
@@ -1078,373 +1141,9 @@ def _execute_multi_anchor_rank(
         "confirmed_edges": confirmed_edges,
         "abstained": not answer_edges and not confirmed_edges,
         "quality_notes": [
-            "공통 앵커 교집합 후보를 단일 지표로 줄세워 1위만 답한다(branch 비교 없음)",
-            "교집합·랭킹·근거게이트는 multi_anchor_branch_rank 의 1차 단계를 재사용한다",
+            "공통 앵커 교집합 후보를 단일 지표로 줄세워 1위만 답한다",
+            "교집합·랭킹·근거게이트로 공통 거래상대를 결정적으로 확정한다",
             "엣지 근거는 출처/청크/양끝 언급으로 점수화한다",
-        ],
-    }
-    meta = {
-        "mode": "structured",
-        "structured": structured,
-        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
-        "n_hits": len(hits),
-        "fallback_used": False,
-        "errors": [],
-    }
-    return hits, meta
-
-
-def _execute_single_anchor_branch_rank(
-    plan: StructuredPlan,
-    org_seed: Seed,
-    query: str,
-) -> tuple[list[GraphHit], dict] | None:
-    year = parse_year(query)
-    anchor = _anchor_from_seed(org_seed)
-
-    branches: dict[str, dict[str, Any]] = {}
-    for branch in plan.branch_ranks:
-        branch_result = _run_branch_from_anchor(
-            anchor,
-            branch,
-            year,
-            exclude_ids={str(anchor.get("id") or "")},
-        )
-        branches[branch_result["kind"]] = branch_result
-
-    hits: list[GraphHit] = []
-    seen_nodes: set[str] = set()
-    seen_rels: set[str] = set()
-
-    def add_node(id_: str, name: str, role: str, score: float = 1.0) -> None:
-        if not id_ or id_ in seen_nodes:
-            return
-        seen_nodes.add(id_)
-        hits.append(_node_hit(id_, name, {"structured_role": role}, score))
-
-    def add_rel(edge: dict[str, Any]) -> None:
-        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
-        if rel_id in seen_rels:
-            return
-        seen_rels.add(rel_id)
-        evidence = edge.get("evidence") or {}
-        score = _NODE_SCORE_HIGH if evidence.get("level") == "high" else _NODE_SCORE_MEDIUM if evidence.get("level") == "medium" else _NODE_SCORE_LOW
-        hits.append(_rel_hit(edge, score))
-
-    add_node(str(anchor.get("id") or ""), str(anchor.get("name") or ""), "anchor")
-    anchor_id = str(anchor.get("id") or "")
-    answer_edges: list[dict[str, Any]] = []
-    confirmed_edges: list[dict[str, Any]] = []
-    for kind, branch in branches.items():
-        relation = RelationStep(**branch["relation"])
-        selected = branch.get("selected")
-        if selected and _edge_matches_relation(selected["edge"], relation, anchor_id):
-            add_node(str(selected.get("id") or ""), str(selected.get("name") or ""), "selected_" + kind, 0.92)
-            add_rel(selected["edge"])
-            answer_edges.append(selected["edge"])
-        for cand in _confirmed_render_candidates(
-            branch.get("unranked_confirmed") or [], relation, STRUCTURED_CONFIRMED_RENDER_CAP, anchor_id,
-        ):
-            add_node(str(cand.get("id") or ""), str(cand.get("name") or ""), "confirmed_" + kind, 0.7)
-            add_rel(cand["edge"])
-            confirmed_edges.append(cand["edge"])
-
-    abstained = not answer_edges and not confirmed_edges
-    if abstained:
-        abstain_reason = "no branch candidate passed relation, evidence, and metric gates"
-    elif not answer_edges:
-        abstain_reason = (
-            f"ranked answer unavailable (no comparable metric); "
-            f"{len(confirmed_edges)} confirmed relationships shown"
-        )
-    else:
-        abstain_reason = ""
-
-    structured = {
-        "mode": "structured",
-        "year": year,
-        "metric_label": _METRIC_LABEL.get(plan.first_rank.metric_id, plan.first_rank.metric_id),
-        "plan": plan.to_dict(),
-        "anchor": anchor,
-        "branches": branches,
-        "best_supported_branch": _best_supported_branch(branches),
-        "answer_edges": answer_edges,
-        "confirmed_edges": confirmed_edges,
-        "abstained": abstained,
-        "abstain_reason": abstain_reason,
-        "quality_notes": [
-            "supplier, related_party, and investment branches are executed independently from the same anchor",
-            "each branch is ranked by the same metric before answer assembly",
-            "edge evidence is scored from source/chunk availability and endpoint mentions",
-        ],
-    }
-    meta = {
-        "mode": "structured",
-        "structured": structured,
-        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
-        "n_hits": len(hits),
-        "fallback_used": False,
-        "errors": [],
-    }
-    return hits, meta
-
-
-def _execute_for_seed(
-    plan: StructuredPlan,
-    org_seed: Seed,
-    query: str,
-) -> tuple[list[GraphHit], dict] | None:
-    year = parse_year(query)
-    anchor = _anchor_from_seed(org_seed)
-
-    first_relation = _resolve_relation_for_anchor(anchor, plan.first_relation)
-    first_candidates = _relation_candidates(anchor, first_relation)
-    _attach_candidate_evidence(first_candidates)
-    first_policy = plan.first_candidate_policy
-    if first_relation.rel_type != "SUPPLIES_TO":
-        first_policy = "default"
-    first_ranked = _rank_candidates(
-        first_candidates,
-        plan.first_rank.metric_id,
-        year,
-        policy=first_policy,
-    )
-    top_first, first_unranked_confirmed = _select_supported(first_ranked, first_relation.rel_type)
-    anchor_id = str(anchor.get("id") or "")
-    first_confirmed = (
-        _confirmed_render_candidates(
-            first_unranked_confirmed, first_relation, STRUCTURED_CONFIRMED_RENDER_CAP, anchor_id,
-        )
-        if not top_first
-        else []
-    )
-    if not top_first and not first_confirmed:
-        return None
-
-    second_ranked: list[dict[str, Any]] = []
-    top_second: dict[str, Any] | None = None
-    second_unranked_confirmed: list[dict[str, Any]] = []
-    second_confirmed: list[dict[str, Any]] = []
-    resolved_second_relation: RelationStep | None = None
-    if top_first and plan.kind == "two_hop_rank" and plan.second_relation and plan.second_rank:
-        exclude = {top_first["id"]}
-        if anchor.get("id"):
-            exclude.add(str(anchor["id"]))
-        second_anchor = _anchor_from_candidate(top_first)
-        resolved_second_relation = _resolve_relation_for_anchor(second_anchor, plan.second_relation)
-        second_candidates = _relation_candidates(
-            second_anchor,
-            resolved_second_relation,
-            exclude_ids=exclude,
-        )
-        _attach_candidate_evidence(second_candidates)
-        second_ranked = _rank_candidates(second_candidates, plan.second_rank.metric_id, year)
-        top_second, second_unranked_confirmed = _select_supported(second_ranked, resolved_second_relation.rel_type)
-        if not top_second:
-            second_confirmed = _confirmed_render_candidates(
-                second_unranked_confirmed, resolved_second_relation,
-                STRUCTURED_CONFIRMED_RENDER_CAP, str(top_first.get("id") or ""),
-            )
-
-    hits: list[GraphHit] = [_node_hit(anchor_id, str(anchor.get("name") or ""), {"structured_role": "anchor"})]
-    seen_nodes = {anchor_id}
-
-    def add_answer_hit(cand: dict[str, Any] | None, role: str, node_score: float = _ANSWER_HIT_DEFAULT_SCORE) -> None:
-        if not cand:
-            return
-        cid = cand.get("id") or ""
-        if cid and cid not in seen_nodes:
-            seen_nodes.add(cid)
-            hits.append(_node_hit(cid, cand.get("name") or "", {"structured_role": role}, node_score))
-        hits.append(_rel_hit(cand["edge"], 1.0))
-
-    add_answer_hit(top_first, "selected_first")
-    for cand in first_confirmed:
-        add_answer_hit(cand, "confirmed_first", 0.7)
-    add_answer_hit(top_second, "selected_second")
-    for cand in second_confirmed:
-        add_answer_hit(cand, "confirmed_second", 0.7)
-
-    answer_edges: list[dict[str, Any]] = []
-    if top_first:
-        answer_edges.append(top_first["edge"])
-    if top_second:
-        answer_edges.append(top_second["edge"])
-
-    confirmed_edges = [c["edge"] for c in first_confirmed] + [c["edge"] for c in second_confirmed]
-    structured = {
-        "mode": "structured",
-        "year": year,
-        "metric_label": _METRIC_LABEL.get(plan.first_rank.metric_id, plan.first_rank.metric_id),
-        "plan": plan.to_dict(),
-        "first_candidate_policy": plan.first_candidate_policy,
-        "anchor": anchor,
-        "first": {
-            "relation": first_relation.__dict__,
-            "candidates": first_ranked,
-            "selected": top_first,
-            "unranked_confirmed": first_unranked_confirmed,
-            "evidence_floor": _evidence_floor(first_relation.rel_type),
-        },
-        "second": {
-            "relation": resolved_second_relation.__dict__ if resolved_second_relation else None,
-            "candidates": second_ranked,
-            "selected": top_second,
-            "unranked_confirmed": second_unranked_confirmed,
-        } if plan.kind == "two_hop_rank" else None,
-        "answer_edges": answer_edges,
-        "confirmed_edges": confirmed_edges,
-        "abstained": not answer_edges and not confirmed_edges,
-    }
-    meta = {
-        "mode": "structured",
-        "structured": structured,
-        "patterns_run": ["structured_plan", *[s.get("op", "") for s in plan.steps]],
-        "n_hits": len(hits),
-        "fallback_used": False,
-        "errors": [],
-    }
-    return hits, meta
-
-
-def _two_hop_list_rows(
-    anchor: dict[str, Any],
-    bridge_rel: str,
-    *,
-    listed_only: bool,
-) -> list[dict[str, Any]]:
-    """(anchor)<-[bridge_rel]-(bridge)-[bridge_rel]->(sibling) 형제 행. 결정성 정렬(이름 asc).
-
-    공통 지배주주(bridge)를 거쳐 앵커의 형제 노드를 잇는다. listed_only 면 stock_code 가
-    있는 상장 형제만. bridge_rel 은 plan.first_relation.rel_type(제약 enum)로, 알려진 관계만
-    허용해 Cypher 보간을 안전하게 막는다(_relation_candidates 와 동일 패턴).
-    """
-    if bridge_rel not in _GOVERNANCE_RELS and bridge_rel not in NETWORK_REL_TYPES:
-        return []
-    match, params = _anchor_match(anchor)
-    listed_clause = "AND sib.stock_code IS NOT NULL" if listed_only else ""
-    cypher = f"""
-{match}
-MATCH (anchor)<-[r1:{bridge_rel}]-(bridge:Organization)-[r2:{bridge_rel}]->(sib:Organization)
-WHERE sib <> anchor AND bridge <> anchor AND bridge <> sib
-  AND coalesce(r1.valid_to, '') = '' AND r1.qc_disabled_at IS NULL
-  AND coalesce(r2.valid_to, '') = '' AND r2.qc_disabled_at IS NULL
-  AND NOT coalesce(sib.name, '') IN ['계','소계','합계','-','주','']
-  {listed_clause}
-WITH DISTINCT anchor, bridge, sib, r1, r2,
-     {_org_id_expr('bridge')} AS bridge_id,
-     {_org_id_expr('sib')} AS sib_id
-RETURN bridge_id, bridge.name AS bridge_name,
-       sib_id AS b_id, sib.name AS b_name, sib.stock_code AS stock_code,
-       r1.rcept_no AS anchor_source, r1.chunk_id AS anchor_chunk_id,
-       r2.rcept_no AS source, r2.chunk_id AS chunk_id
-ORDER BY b_name ASC, b_id ASC, bridge_id ASC
-LIMIT 200
-"""
-    try:
-        with neo4j_driver.session() as session:
-            return [r.data() for r in session.run(cypher, **params)]
-    except Exception as exc:
-        print(f"⚠️ [structured_executor] two_hop_list query failed: {exc!r}")
-        return []
-
-
-def _execute_two_hop_list(
-    plan: StructuredPlan,
-    org_seed: Seed,
-    query: str,
-) -> tuple[list[GraphHit], dict] | None:
-    """공통 지배주주(bridge)를 거쳐 앵커의 형제 계열사를 나열한다(지표 없는 2-hop).
-
-    패턴: (anchor)<-[r1:REL]-(bridge)-[r2:REL]->(sibling). REL=plan.first_relation.rel_type
-    (보통 IS_MAJOR_SHAREHOLDER_OF). listed_only 면 stock_code 보유 상장사만. 형제 0이면
-    None 반환 → search 가 abstain 으로 graceful degrade. 결정성: 형제 이름 asc(쿼리 정렬).
-    """
-    bridge_rel = plan.first_relation.rel_type if plan.first_relation else "IS_MAJOR_SHAREHOLDER_OF"
-    anchor = _anchor_from_seed(org_seed)
-    rows = _two_hop_list_rows(anchor, bridge_rel, listed_only=plan.listed_only)
-    if not rows:
-        return None
-
-    hits: list[GraphHit] = []
-    seen_nodes: set[str] = set()
-    seen_rels: set[str] = set()
-    siblings: list[dict[str, Any]] = []
-
-    def add_node(id_: str, name: str, role: str, score: float, attrs: dict[str, Any] | None = None) -> None:
-        if not id_ or id_ in seen_nodes:
-            return
-        seen_nodes.add(id_)
-        node_attrs: dict[str, Any] = {"structured_role": role}
-        if attrs:
-            node_attrs.update(attrs)
-        hits.append(_node_hit(id_, name, node_attrs, score))
-
-    def add_rel(edge: dict[str, Any]) -> None:
-        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
-        if rel_id in seen_rels:
-            return
-        seen_rels.add(rel_id)
-        hits.append(_rel_hit(edge, _NODE_SCORE_MEDIUM))
-
-    anchor_id = str(anchor.get("id") or "")
-    anchor_name = str(anchor.get("name") or "")
-    add_node(anchor_id, anchor_name, "anchor", _NODE_SCORE_HIGH)
-
-    seen_siblings: set[str] = set()
-    for row in rows:
-        bridge_id = str(row.get("bridge_id") or "")
-        bridge_name = str(row.get("bridge_name") or "")
-        sib_id = str(row.get("b_id") or "")
-        sib_name = str(row.get("b_name") or "")
-        if not sib_id or sib_id in seen_siblings:
-            continue
-        seen_siblings.add(sib_id)
-        stock_code = row.get("stock_code")
-        add_node(bridge_id, bridge_name, "controlling_shareholder", _NODE_SCORE_MEDIUM)
-        add_node(
-            sib_id, sib_name, "sibling", _NODE_SCORE_MEDIUM,
-            {"stock_code": stock_code} if stock_code else None,
-        )
-        # bridge → anchor (앵커가 이 지배주주의 지배를 받는다는 근거)
-        add_rel({
-            "rel_type": bridge_rel,
-            "from_id": bridge_id, "from_name": bridge_name,
-            "to_id": anchor_id, "to_name": anchor_name,
-            "role": "", "source": str(row.get("anchor_source") or ""),
-            "chunk_id": str(row.get("anchor_chunk_id") or ""),
-        })
-        # bridge → sibling (같은 지배주주가 지배하는 형제 계열사)
-        add_rel({
-            "rel_type": bridge_rel,
-            "from_id": bridge_id, "from_name": bridge_name,
-            "to_id": sib_id, "to_name": sib_name,
-            "role": "", "source": str(row.get("source") or ""),
-            "chunk_id": str(row.get("chunk_id") or ""),
-        })
-        siblings.append({
-            "id": sib_id,
-            "name": sib_name,
-            "stock_code": stock_code,
-            "bridge": {"id": bridge_id, "name": bridge_name},
-        })
-
-    if not siblings:
-        return None
-
-    structured = {
-        "mode": "structured",
-        "kind": "two_hop_list",
-        "plan": plan.to_dict(),
-        "anchor": anchor,
-        "bridge_relation": bridge_rel,
-        "listed_only": plan.listed_only,
-        "siblings": siblings,
-        "answer_edges": [],
-        "abstained": False,
-        "quality_notes": [
-            "앵커의 지배주주(bridge)를 거쳐 형제 계열사를 나열한다(지표 없는 2-hop 나열)",
-            "listed_only 면 stock_code 가 있는 상장 계열사만 포함한다",
         ],
     }
     meta = {

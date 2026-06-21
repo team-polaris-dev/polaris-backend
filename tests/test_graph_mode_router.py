@@ -1,17 +1,19 @@
-"""GraphMode 라우터 + 노드 분기 (오프라인).
+"""graph_mode 키워드 분류(라우터 폴백 소스) + 노드 분기 (오프라인).
 
-llm_planner 의 결정적 프리필터(5모드)·fallback·LLM 검증과, graph 노드의 silent 봉인·
-relation_only degrade(시드 관계망 채우기) 를 monkeypatch 로 검증한다. 네트워크 0.
-프리필터로 해소되는 질의만 써서 LLM 미호출(결정성)을 함께 보장한다.
+graph_mode 의 결정적 프리필터(5모드)·fallback 키워드 분류와, graph 노드의 silent 봉인·
+relation_only degrade(시드 관계망 채우기)·macro DRIFT 분기를 monkeypatch 로 검증한다.
+네트워크 0 — 노드 분기는 graph_node.classify(통합 라우터) 를 모킹해 모드를 주입한다.
+LLM 1차 판정 자체는 test_router 가 검증한다(여기선 결정적 폴백·노드 소비만).
 """
 from __future__ import annotations
 
 import pytest
 
 from config.relations import has_rank_intent
-from graphrag import llm_planner as lp
+from graphrag import graph_mode as lp
 from graphrag import node as graph_node
-from graphrag.llm_planner import GraphMode
+from graphrag.graph_mode import GraphMode
+from graphrag.router import Route
 
 
 # ── 결정적 프리필터: 5모드 + 위임(None) + 노이즈 ───────────────────────────
@@ -124,78 +126,6 @@ def test_fallback_explore_when_no_anchor_no_cue():
     )
 
 
-# ── _coerce_mode: LLM 출력 검증 ────────────────────────────────────────────
-
-def test_coerce_mode_accepts_valid_enum():
-    data = {"supported": True, "mode": "relation_explore"}
-    assert (
-        lp._coerce_mode(data, "협력사 알려줘", has_anchor=True, has_metric=False)
-        is GraphMode.RELATION_EXPLORE
-    )
-
-
-def test_coerce_mode_unsupported_falls_back():
-    data = {"supported": False, "mode": "macro"}
-    # supported:false → 결정적 fallback. 앵커 있음 → EXPLORE.
-    assert (
-        lp._coerce_mode(data, "협력사 알려줘", has_anchor=True, has_metric=False)
-        is GraphMode.RELATION_EXPLORE
-    )
-
-
-def test_coerce_mode_invalid_enum_falls_back():
-    data = {"supported": True, "mode": "freeform_cypher"}
-    assert (
-        lp._coerce_mode(data, "업계 동향", has_anchor=False, has_metric=False)
-        is GraphMode.MACRO
-    )
-
-
-def test_coerce_mode_relation_rank_without_metric_degrades():
-    data = {"supported": True, "mode": "relation_rank"}
-    assert (
-        lp._coerce_mode(data, "동진쎄미켐 가장 큰 공급처", has_anchor=True, has_metric=False)
-        is GraphMode.RELATION_ONLY
-    )
-
-
-# ── plan_with_mode: LLM off / 다운 → degrade ───────────────────────────────
-
-def test_plan_with_mode_llm_off_uses_fallback(monkeypatch):
-    monkeypatch.setattr(lp, "_ENABLED", False)
-
-    def _must_not_call(_q):
-        raise AssertionError("LLM off 인데 호출됨")
-
-    monkeypatch.setattr(lp, "_invoke_llm", _must_not_call)
-    # 프리필터가 None 인 애매 질의도 LLM off → fallback(앵커 없음·cue 없음 → EXPLORE).
-    mode, plan = lp.plan_with_mode("협력사 알려줘", has_anchor=False, has_metric=False)
-    assert mode is GraphMode.RELATION_EXPLORE
-    assert plan is None
-
-
-def test_plan_with_mode_llm_down_degrades(monkeypatch):
-    monkeypatch.setattr(lp, "_ENABLED", True)
-
-    def _raise(_q):
-        raise RuntimeError("LLM 다운")
-
-    monkeypatch.setattr(lp, "_invoke_llm", _raise)
-    mode, plan = lp.plan_with_mode("협력사 알려줘", has_anchor=True, has_metric=False)
-    assert mode is GraphMode.RELATION_EXPLORE  # 앵커 있음 → 시드 관계망
-    assert plan is None
-
-
-def test_plan_with_mode_prefilter_skips_llm(monkeypatch):
-    def _must_not_call(_q):
-        raise AssertionError("프리필터로 해소됐는데 LLM 호출됨")
-
-    monkeypatch.setattr(lp, "_invoke_llm", _must_not_call)
-    mode, plan = lp.plan_with_mode("삼성전자 협력사", has_anchor=True, has_metric=False)
-    assert mode is GraphMode.RELATION_EXPLORE
-    assert plan is None
-
-
 # ── 노드: silent 봉인 ──────────────────────────────────────────────────────
 
 def test_node_silent_returns_anchor_stub(monkeypatch):
@@ -278,7 +208,11 @@ def _fallback_hits(_seed):
 
 def test_node_relation_only_fills_seed_network_and_signals(monkeypatch):
     monkeypatch.setattr(graph_node, "_preflight", lambda: None)
-    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _abstain_output())
+    monkeypatch.setattr(graph_node, "classify", lambda q, **k: Route("relation_only"))
+    monkeypatch.setattr(
+        graph_node, "search",
+        lambda q, upstream_seeds=None, route=None: _abstain_output(),
+    )
     monkeypatch.setattr(graph_node, "fallback_for", _fallback_hits)
 
     def _must_not_call(*a, **k):
@@ -313,7 +247,11 @@ def test_node_relation_explore_assembles_without_degrade(monkeypatch):
         "graph_seeds": seeds,
         "graph_meta": {"n_seeds": 1, "n_hits": 1, "fallback_used": False, "errors": []},
     }
-    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: out_search)
+    monkeypatch.setattr(graph_node, "classify", lambda q, **k: Route("relation_explore"))
+    monkeypatch.setattr(
+        graph_node, "search",
+        lambda q, upstream_seeds=None, route=None: out_search,
+    )
     out = graph_node.graph_search_node({"intent": "ctx", "reconstructed_query": "삼성전자 협력사"})
     assert "rankable" not in out["graph_meta"]
     assert len(out["graph_facts"]) == len(out["graph_hits"])
@@ -321,10 +259,11 @@ def test_node_relation_explore_assembles_without_degrade(monkeypatch):
 
 def test_node_macro_without_anchor_routes_to_community(monkeypatch):
     monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(graph_node, "classify", lambda q, **k: Route("macro"))
     # 앵커 미해소 매크로 → community map-reduce.
     monkeypatch.setattr(
         graph_node, "search",
-        lambda q, upstream_seeds=None: {
+        lambda q, upstream_seeds=None, route=None: {
             "graph_hits": [], "graph_seeds": [],
             "graph_meta": {"n_seeds": 0, "n_hits": 0, "fallback_used": False, "errors": []},
         },
@@ -344,11 +283,12 @@ def test_node_macro_with_fuzzy_anchor_still_routes_to_community(monkeypatch):
     # #1 핵심: corp_code 앵커가 잡혔지만 회사명이 질의에 없으면(업종어 퍼지매칭) 명시 호명이
     # 아니므로 MACRO 유지 → community map-reduce. 예전엔 앵커가 있으면 EXPLORE 로 샜다.
     monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(graph_node, "classify", lambda q, **k: Route("macro"))
     seeds = [{"key_type": "corp_code", "key_value": "00126380",
               "label": "organization", "name": "삼성디스플레이"}]
     monkeypatch.setattr(
         graph_node, "search",
-        lambda q, upstream_seeds=None: {
+        lambda q, upstream_seeds=None, route=None: {
             "graph_hits": [], "graph_seeds": seeds,
             "graph_meta": {"n_seeds": 1, "n_hits": 0, "fallback_used": False, "errors": []},
         },
@@ -371,11 +311,12 @@ def test_node_macro_with_explicit_company_keeps_drift(monkeypatch):
     # 구분 신호: _attach_communities 경유는 global_search 에 corp_code 앵커를 넘긴다(매크로
     # 조기반환은 앵커 없이 호출). captured anchors 로 DRIFT 경로를 탔음을 확인.
     monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(graph_node, "classify", lambda q, **k: Route("macro"))
     seeds = [{"key_type": "corp_code", "key_value": "00126380",
               "label": "organization", "name": "삼성전자"}]
     monkeypatch.setattr(
         graph_node, "search",
-        lambda q, upstream_seeds=None: {
+        lambda q, upstream_seeds=None, route=None: {
             "graph_hits": [{"id": "00126380", "label": "organization", "name": "삼성전자",
                             "attrs": {}, "score": 1.0}],
             "graph_seeds": seeds,

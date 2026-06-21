@@ -34,14 +34,12 @@ def test_group_scope_operating_income_question_picks_operating_metric():
     assert out.first_rank.metric_id == "dart_OperatingIncomeLoss"
 
 
-def test_subsidiary_revenue_question_stays_single_hop_not_community():
-    # 구체 관계어(자회사)가 있으면 한 회사의 이웃 랭킹(single_hop_rank) — 군집 경로 아님.
+def test_subsidiary_revenue_question_is_not_community():
+    # 구체 관계어(자회사)가 있으면 한 회사의 이웃 랭킹 → text2cypher 가 흡수(None 폴백).
+    # 핵심 가드: 그룹 군집 경로(community_member_rank)로 새지 않는다.
     out = plan("삼성전자 자회사 중 매출 1위")
 
-    assert out is not None
-    assert out.kind == "single_hop_rank"
-    assert out.first_relation is not None
-    assert out.first_relation.rel_type == "IS_SUBSIDIARY_OF"
+    assert out is None
 
 
 def test_group_scope_without_metric_is_not_structured():

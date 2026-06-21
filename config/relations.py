@@ -55,8 +55,8 @@ INGEST_EDGE_TYPES: frozenset[str] = frozenset({
     "PRODUCES", "USES_TECH", "SUPPLIES_TO", "RELATED_PARTY", "hasObject",
 })
 
-# 랭킹 의도 키워드 SSOT. 예전엔 planner._RANK 와 llm_planner._RANK_TERMS 에 같은 단어가
-# 중복 정의돼 한쪽만 고치면 어긋났다. 여기서 한 번 정의하고 양쪽이 import 한다.
+# 랭킹 의도 키워드 SSOT. 예전엔 여러 플래너에 같은 단어가 중복 정의돼 한쪽만 고치면
+# 어긋났다. 여기서 한 번 정의하고 소비처(planner.plan·cypher_executor SQL 랭킹)가 import 한다.
 RANK_TERMS: tuple[str, ...] = (
     "가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가", "최대", "최다",
 )
@@ -70,8 +70,8 @@ _RANK_NONINTENT_COMPOUNDS: tuple[str, ...] = ("최대 주주", "최대주주", "
 def has_rank_intent(query: str) -> bool:
     """질의에 랭킹 의도(가장/최대/1위 …)가 있는가. '최대주주' 같은 복합어는 랭킹이 아님.
 
-    planner.plan 과 llm_planner._looks_structured 가 공유한다. 단순 `term in query` 가 아니라
-    이 함수를 거쳐야 '최대주주'의 '최대'가 랭킹으로 새지 않는다.
+    planner.plan·graph_mode._looks_structured·cypher_executor SQL 랭킹이 공유한다. 단순
+    `term in query` 가 아니라 이 함수를 거쳐야 '최대주주'의 '최대'가 랭킹으로 새지 않는다.
     """
     q = " ".join((query or "").split())
     if not q:
@@ -81,12 +81,35 @@ def has_rank_intent(query: str) -> bool:
     return any(t in q for t in RANK_TERMS)
 
 
+# 랭킹 지표 SSOT. 질의 어휘 → fin_metric account_id. 순서가 우선순위(영업이익이 매출보다 먼저).
+# planner._metric_id / chain_planner._metric_id 의 질의 분기와 같은 어휘를 한곳에 모은다.
+_METRIC_BY_TERM: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("영업이익",), "dart_OperatingIncomeLoss"),
+    (("순이익", "당기순이익"), "ifrs-full_ProfitLoss"),
+    (("자산", "규모"), "ifrs-full_Assets"),
+    (("매출", "수익", "잘나가"), "ifrs-full_Revenue"),
+)
+
+
+def metric_for_query(query: str) -> str | None:
+    """질의 어휘에서 랭킹 지표(account_id) 해소. 없으면 None. RANK_TERMS 와 같은 SSOT 모듈.
+
+    has_rank_intent 가 '줄세울 의도'를, 이 함수가 '무엇으로 줄세울지'를 답한다. text2cypher
+    SQL 랭킹 후처리(cypher_executor.rank_results)와 결정적 planner 가 같은 어휘를 공유한다.
+    """
+    q = query or ""
+    for terms, metric_id in _METRIC_BY_TERM:
+        if any(t in q for t in terms):
+            return metric_id
+    return None
+
+
 # 그룹/계열 범위 키워드 SSOT. "삼성 계열사 중 매출 1위"처럼 한 회사의 이웃이 아니라 그룹
 # 군집(커뮤니티) 전체를 노드 지표로 줄세우는 질문을 식별한다. planner.plan 이 import 한다.
 GROUP_SCOPE_TERMS: tuple[str, ...] = ("계열사", "계열회사", "그룹사", "그룹", "계열", "관계사")
 
 # 앵커 없는(또는 앵커가 업종어에 우연히 퍼지매칭된) 매크로/업계 sensemaking 질문 cue SSOT.
-# llm_planner._prefilter_mode 가 이 신호를 has_anchor 보다 먼저 보고 MACRO 로 보낸다 —
+# graph_mode._prefilter_mode 가 이 신호를 has_anchor 보다 먼저 보고 MACRO 로 보낸다 —
 # "반도체 업종 공급망 전반" 의 '반도체'가 회사명에 매칭돼 EXPLORE 로 가로채이던 버그 차단.
 MACRO_TERMS: tuple[str, ...] = (
     "업계", "업종", "산업", "시장", "전반", "트렌드", "동향", "큰 그림", "큰그림",

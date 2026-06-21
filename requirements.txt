@@ -37,6 +37,7 @@ rank_bm25
 
 # 적재 파이프라인 + 챗봇 통계 관리자 콘솔
 neo4j             # db/status 그래프 카운트 (graphrag 도 사용)
+neo4j-graphrag    # 공식 Text2CypherRetriever (관계 검색 LLM→Cypher 생성+read-only EXPLAIN 가드)
 anthropic         # extract 단계의 Claude 분기 (provider=claude 일 때 pipeline_scripts 가 사용)
 psutil            # sweep_stale_jobs() 의 pid 생존 체크
 # (SSE 는 fastapi StreamingResponse 직접 사용 — 추가 패키지 불필요)

@@ -1,7 +1,10 @@
 """이벤트 단일판매계약 → SUPPLIES_TO `revenue_exposure_pct` 보강 (안전 정확매칭).
 
-dart_raw_index(endpoint='event:단일판매공급계약') 의 계약상대를, 그래프 노드를 보유한
-국내사로 **접미사 제거 후 정확일치**한 건만 매칭(자회사 오매칭 방지 — '삼성전자판매' 제외).
+dart_raw_index(endpoint='event:단일판매공급계약') 의 계약상대를, **그래프에 corp_code 노드를
+보유한 모든 회사**와 ER 정규화(config.entities.normalize_corp_name) 후 정확일치한 건만 매칭한다.
+정규화는 괄호주석·법인접미사(국·영문)·공백을 떼고 그룹 로마자(SK→에스케이)를 통일하므로,
+하드코딩한 3개 수요사 대신 그래프 전체를 수요사 후보로 쓰면서도 자회사 오매칭('삼성전자판매')은
+정확일치로 막는다. 한 정규형이 서로 다른 corp_code 둘에 걸리면 모호 → 양쪽 다 버린다(무추측).
 방향: 공시주체=공급사, 계약상대=수요사 → SUPPLIES_TO(공급사 → 수요사).
 같은 (공급사,수요사) 쌍에 여러 계약이면 매출대비% 최대값을 대표로.
 
@@ -22,23 +25,38 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "graph"))
 from db import mariadb_conn, neo4j_driver  # noqa: E402
+from config.entities import GENERIC_ORG_BLOCKLIST, normalize_corp_name  # noqa: E402
 
 ENDPOINT = "event:단일판매공급계약"
 
-# 그래프 노드 보유 국내사만 — canon(접미사·괄호·영문 제거) 정확일치 키
-KNOWN: dict[str, str] = {
-    "삼성전자": "00126380",
-    "하이닉스": "00164779",
-    "삼성디스플레이": "00912006",
-}
 
+def build_buyer_index(driver) -> dict[str, str]:
+    """그래프의 corp_code 보유 Organization 전체 → {정규형 이름: corp_code} 매칭 인덱스.
 
-def canon(name: str) -> str:
-    """괄호내용·회사접미사·영문/숫자/공백 제거 → 한글 핵심명."""
-    s = re.sub(r"\(.*?\)", "", name or "")
-    s = re.sub(r"주식회사|㈜|\(주\)", "", s)
-    s = re.sub(r"[A-Za-z0-9.,·\s]", "", s)
-    return s.strip()
+    name·er_name 둘 다 키로 등록(별칭 표기 흡수). 한 정규형이 서로 다른 corp_code 둘 이상에
+    걸리면 모호 키로 보고 제외한다 — 잘못된 엣지를 만드느니 그 후보를 포기(무추측).
+    """
+    q = (
+        "MATCH (o:Organization) "
+        "WHERE o.corp_code IS NOT NULL AND o.corp_code <> '' "
+        "RETURN o.corp_code AS cc, o.name AS name, o.er_name AS er"
+    )
+    idx: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    with driver.session() as s:
+        for rec in s.run(q):
+            cc = rec["cc"]
+            for raw in (rec["name"], rec["er"]):
+                key = normalize_corp_name(raw or "")
+                if not key or key in GENERIC_ORG_BLOCKLIST:
+                    continue
+                if key in idx and idx[key] != cc:
+                    ambiguous.add(key)
+                else:
+                    idx[key] = cc
+    for key in ambiguous:
+        idx.pop(key, None)
+    return idx
 
 
 def to_float(s: str | None) -> float | None:
@@ -68,7 +86,7 @@ def buyer_cogs(cur, buyer_cc: str, year: int) -> tuple[float, int] | None:
     return None
 
 
-def collect() -> dict[tuple[str, str], dict]:
+def collect(buyer_index: dict[str, str]) -> dict[tuple[str, str], dict]:
     """(공급사 corp_code, 수요사 corp_code) → 대표 계약(최대 매출대비%) + 양방향 COGS 비중."""
     conn = mariadb_conn()
     cur = conn.cursor()
@@ -83,7 +101,7 @@ def collect() -> dict[tuple[str, str], dict]:
             cells = json.loads(body).get("cells", {})
         except Exception:
             continue
-        buyer_cc = KNOWN.get(canon(cells.get("계약상대") or ""))
+        buyer_cc = buyer_index.get(normalize_corp_name(cells.get("계약상대") or ""))
         if not buyer_cc or buyer_cc == supplier_cc:  # 미매칭·self-loop 제외
             continue
         pct = to_float(cells.get("매출액대비"))
@@ -125,16 +143,20 @@ def main() -> int:
     ap.add_argument("--dry", action="store_true", help="미리보기(쓰기 안 함)")
     args = ap.parse_args()
 
-    pairs = collect()
+    d = neo4j_driver()
+    buyer_index = build_buyer_index(d)
+    print(f"수요사 후보(그래프 corp_code 노드) {len(buyer_index)}개")
+
+    pairs = collect(buyer_index)
     print(f"정확매칭 쌍 {len(pairs)}건")
     for (sup, buy), v in sorted(pairs.items(), key=lambda x: -(x[1]["pct"] or 0)):
         print(f"  {sup} → {buy}  매출대비={v['pct']}%  "
               f"수요사COGS중={v['cogs_share_pct']}%({v['cogs_year']})  {v['rcept_no']}")
     if args.dry:
         print("[dry] 그래프 쓰기 생략")
+        d.close()
         return 0
 
-    d = neo4j_driver()
     wrote = 0
     with d.session() as s:
         for (sup, buy), v in pairs.items():

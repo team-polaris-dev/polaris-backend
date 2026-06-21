@@ -62,29 +62,36 @@ class BranchRankStep:
 
 
 @dataclass(frozen=True)
+class HopStep:
+    """다중홉 랭킹 체인(cutline)의 한 단계.
+
+    relation 으로 현재 frontier 에서 한 홉 펼치고, rank 지표로 줄세워 상위 top_n 을
+    답으로 채택한다. 채택된 후보가 다음 홉의 앵커(frontier)가 된다. policy 는 후보
+    버킷팅(operating_counterparty 면 지배 허브 강등)을 고른다.
+    """
+
+    relation: RelationStep
+    rank: MetricRankStep
+    top_n: int = 3
+    policy: FirstCandidatePolicy = "default"
+
+
+@dataclass(frozen=True)
 class StructuredPlan:
     """A small executable plan for multi-hop ranking questions."""
 
     kind: Literal[
-        "single_hop_rank",
-        "two_hop_rank",
-        "two_hop_list",
-        "multi_anchor_branch_rank",
         "multi_anchor_rank",
-        "single_anchor_branch_rank",
         "community_member_rank",
+        "multi_hop_chain",
     ]
     first_relation: RelationStep | None
-    # 랭킹 kind 는 항상 채운다. two_hop_list(지표 없는 나열)는 None 이다.
+    # multi_anchor_rank·community_member_rank 는 채운다. multi_hop_chain 은 hops 로 대신해 None.
     first_rank: MetricRankStep | None = None
-    second_relation: RelationStep | None = None
-    second_rank: MetricRankStep | None = None
-    branch_ranks: list[BranchRankStep] = field(default_factory=list)
+    # multi_hop_chain 전용: 단계별 홉(관계+지표+top_n)을 순서대로. 다른 kind 는 빈 리스트.
+    hops: list[HopStep] = field(default_factory=list)
     common_anchor_min: int = 1
     first_candidate_policy: FirstCandidatePolicy = "default"
-    exclude_original_anchor_from_second: bool = False
-    # two_hop_list 전용: 형제 노드를 상장사(stock_code 보유)로만 제한할지.
-    listed_only: bool = False
     planner: Literal["deterministic", "llm"] = "deterministic"
     raw_reason: str = ""
     steps: list[dict] = field(default_factory=list)
@@ -94,20 +101,17 @@ class StructuredPlan:
             "kind": self.kind,
             "first_relation": self.first_relation.__dict__ if self.first_relation else None,
             "first_rank": self.first_rank.__dict__ if self.first_rank else None,
-            "second_relation": self.second_relation.__dict__ if self.second_relation else None,
-            "second_rank": self.second_rank.__dict__ if self.second_rank else None,
-            "branch_ranks": [
+            "hops": [
                 {
-                    "kind": b.kind,
-                    "relation": b.relation.__dict__,
-                    "rank": b.rank.__dict__,
+                    "relation": h.relation.__dict__,
+                    "rank": h.rank.__dict__,
+                    "top_n": h.top_n,
+                    "policy": h.policy,
                 }
-                for b in self.branch_ranks
+                for h in self.hops
             ],
             "common_anchor_min": self.common_anchor_min,
             "first_candidate_policy": self.first_candidate_policy,
-            "exclude_original_anchor_from_second": self.exclude_original_anchor_from_second,
-            "listed_only": self.listed_only,
             "planner": self.planner,
             "raw_reason": self.raw_reason,
             "steps": self.steps,

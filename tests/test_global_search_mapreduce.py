@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from graphrag import global_search as gs
 from graphrag import node as graph_node
+from graphrag.router import Route
 
 
 class _FakeMsg:
@@ -185,8 +186,12 @@ def _fake_search_output(seeds):
 
 def test_graph_node_drift_combines_local_and_community(monkeypatch):
     monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(graph_node, "classify", lambda q, **k: Route("relation_explore"))
     seeds = [{"key_type": "corp_code", "key_value": "00126380", "name": "삼성전자"}]
-    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _fake_search_output(seeds))
+    monkeypatch.setattr(
+        graph_node, "search",
+        lambda q, upstream_seeds=None, route=None: _fake_search_output(seeds),
+    )
 
     captured = {}
 
@@ -206,8 +211,12 @@ def test_graph_node_drift_combines_local_and_community(monkeypatch):
 
 def test_graph_node_no_community_when_no_corp_code_anchor(monkeypatch):
     monkeypatch.setattr(graph_node, "_preflight", lambda: None)
+    monkeypatch.setattr(graph_node, "classify", lambda q, **k: Route("relation_explore"))
     seeds = [{"key_type": "er_name", "key_value": "org:미해소", "name": "미해소사"}]
-    monkeypatch.setattr(graph_node, "search", lambda q, upstream_seeds=None: _fake_search_output(seeds))
+    monkeypatch.setattr(
+        graph_node, "search",
+        lambda q, upstream_seeds=None, route=None: _fake_search_output(seeds),
+    )
 
     def _must_not_call(*a, **k):
         raise AssertionError("앵커 없는데 global_search 호출됨")
