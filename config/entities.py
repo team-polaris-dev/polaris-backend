@@ -44,6 +44,10 @@ GENERIC_ORG_TERMS: tuple[str, ...] = tuple(_VOCAB["generic_org_terms"])
 # Neo4j 라벨 → 내부 taxonomy 라벨 (ppr.py / matcher.py 공용)
 LABEL_MAP: dict[str, str] = _VOCAB["label_map"]
 
+# 회사명 → corp_code 정확매칭 오버라이드. FULLTEXT CJK 가 'SK하이닉스'를 'SK(주)' 등으로
+# 과매칭하는 케이스를 막는 큐레이트 보조 경로(matcher._exact_alias_codes). 코드 하드코딩 대신 JSON.
+CORP_CODE_OVERRIDES: dict[str, str] = _VOCAB.get("corp_code_overrides", {})
+
 
 def normalize_corp_name(name: str) -> str:
     """ER 키용 정규화: 괄호주석·법인접미사·공백 제거 + 그룹 로마자 별칭 통일 후 소문자.

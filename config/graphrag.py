@@ -65,6 +65,11 @@ FIN_KEY_ACCOUNTS = [
     "ifrs-full_CashAndCashEquivalents",  # 현금및현금성자산
 ]
 
+# 구조화 재무 랭킹 SQL(structured_executor._fetch_metric_values)이 고를 DART 재무 슬라이스.
+# fs_div=CFS(연결재무제표), reprt_code=11011(사업보고서). 회사 비교 랭킹은 연결·연간 기준으로 고정.
+FIN_FS_DIV = os.environ.get("GRAPHRAG_FIN_FS_DIV", "CFS")
+FIN_REPRT_CODE = os.environ.get("GRAPHRAG_FIN_REPRT_CODE", "11011")
+
 # ── 패널 그래프 큐레이션 (core/serialize.py build_graph) ────────────
 # 답이 언급한 회사들의 부분그래프만 남겨 헤어볼을 막는다. 엣지가 적으면(빈 패널 방지)
 # 큐레이션을 건너뛴다.

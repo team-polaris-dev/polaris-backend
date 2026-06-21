@@ -6,12 +6,17 @@ neighborhood retrieval.
 """
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 from tool.graph_client import neo4j_driver
 from tool.rdb_client import mariadb_conn, parse_year
 
+from config.entities import normalize_corp_name
 from config.graphrag import (
+    FIN_FS_DIV,
+    FIN_REPRT_CODE,
     INDUCED_EDGE_SCORE,
     MAX_INDUCED_EDGES,
     STRUCTURED_CONFIRMED_RENDER_CAP,
@@ -20,19 +25,14 @@ from config.graphrag import (
 )
 from config.relations import (
     NETWORK_REL_TYPES,
+    RELATION_EVIDENCE_TERMS,
     SUPPLY_NOISE_NAME_TERMS,
     corp_name_variants,
+    metric_label_for,
 )
 from graphrag.plan_schema import BranchRankStep, MetricRankStep, RelationStep, StructuredPlan
 from graphrag.schema import GraphHit, Seed
 
-
-_METRIC_LABEL = {
-    "ifrs-full_Revenue": "매출액",
-    "dart_OperatingIncomeLoss": "영업이익",
-    "ifrs-full_ProfitLoss": "당기순이익",
-    "ifrs-full_Assets": "총자산",
-}
 
 _GOVERNANCE_RELS = {
     "INTERLOCKING_DIRECTORATE",
@@ -42,15 +42,19 @@ _GOVERNANCE_RELS = {
 }
 _HUB_DEGREE_SOFT_CAP = 25
 _HUB_DEGREE_HARD_CAP = 80
-_FIN_FS_DIV = "CFS"
-_FIN_REPRT_CODE = "11011"
-
-_RELATION_EVIDENCE_TERMS = {
-    "SUPPLIES_TO": ("공급", "납품", "매출처", "고객", "거래", "판매"),
-    "RELATED_PARTY": ("특수관계", "관계기업", "관계회사", "관련회사", "계열"),
-    "INVESTS_IN": ("투자", "지분", "관계기업", "공동기업", "주식"),
+# operating_counterparty 강등을 LLM 이 최종 판정한다(룰은 폴백). off·다운·문맥부재·비경합이면
+# 룰 그대로 — router 의 GRAPHRAG_LLM_PLANNER 와 같은 패턴.
+_FALSE = {"0", "false", "False", "no", "NO", "off", "OFF"}
+_LLM_RANK_POLICY = os.environ.get("GRAPHRAG_LLM_RANK_POLICY", "1") not in _FALSE
+# 룰이 '허브로 의심'해 강등하는 신호(LLM 재판정 대상). weak_edge_evidence 는 의미가 아니라
+# 근거품질 게이트라 제외한다 — 엣지 존재 자체가 불확실한 건 LLM 세상지식으로 못 메운다.
+_HUB_DEMOTE_REASONS = {
+    "governance_linked",
+    "related_party_linked",
+    "hard_hub_degree",
+    "soft_hub_degree",
 }
-_TYPE_ATTESTED_RELS = {"RELATED_PARTY"}
+_TERM_ATTESTED_RELS = {"RELATED_PARTY"}
 # 출자현황·대주주현황은 DART 공시 '표'에서 와서 서술형 청크 본문이 없다(rcept_no 출처만 보유).
 # 표의 rcept_no 출처 자체가 1차 근거이므로, 본문 청크/관계어를 요구하는 게이트 대신 출처 보유만
 # 확인하는 별도 게이트로 분리한다(_candidate_supported 참고).
@@ -95,7 +99,7 @@ def _fetch_metric_values(
         return []
 
     code_ph = _placeholders(len(codes))
-    params: list[Any] = [*codes, account_id, _FIN_FS_DIV, _FIN_REPRT_CODE]
+    params: list[Any] = [*codes, account_id, FIN_FS_DIV, FIN_REPRT_CODE]
 
     if year is not None:
         year_clause = "AND f.bsns_year = %s"
@@ -109,7 +113,7 @@ def _fetch_metric_values(
             "    AND f2.fs_div = %s AND f2.reprt_code = %s"
             ")"
         )
-        params.extend([_FIN_FS_DIV, _FIN_REPRT_CODE])
+        params.extend([FIN_FS_DIV, FIN_REPRT_CODE])
 
     sql = (
         "SELECT f.corp_code, "
@@ -179,7 +183,7 @@ def _score_edge_evidence(edge: dict[str, Any], chunk_texts: dict[str, str]) -> d
     has_chunk_text = bool(text)
     from_mentioned = bool(text_norm and _mentions_name(text_norm, str(edge.get("from_name") or "")))
     to_mentioned = bool(text_norm and _mentions_name(text_norm, str(edge.get("to_name") or "")))
-    relation_term = bool(text_norm and any(t in text for t in _RELATION_EVIDENCE_TERMS.get(rel_type, ())))
+    relation_term = bool(text_norm and any(t in text for t in RELATION_EVIDENCE_TERMS.get(rel_type, ())))
 
     if has_source and has_chunk_text and from_mentioned and to_mentioned and relation_term:
         confidence = _EVIDENCE_CONF_FULL
@@ -199,7 +203,7 @@ def _score_edge_evidence(edge: dict[str, Any], chunk_texts: dict[str, str]) -> d
         confidence = _EVIDENCE_CONF_NONE
         warnings.append("missing_source")
 
-    if rel_type in (_TYPE_ATTESTED_RELS | _SOURCE_ATTESTED_RELS) and confidence < _EVIDENCE_LEVEL_HIGH_MIN:
+    if rel_type in (_TERM_ATTESTED_RELS | _SOURCE_ATTESTED_RELS) and confidence < _EVIDENCE_LEVEL_HIGH_MIN:
         warnings.append("weak_evidence_for_accounting_or_investment_relation")
 
     level = (
@@ -303,6 +307,33 @@ def _rel_hit(edge: dict[str, Any], score: float = 0.9) -> GraphHit:
     return hit
 
 
+def _make_hit_sink(
+    hits: list[GraphHit], seen_nodes: set[str], seen_rels: set[str]
+) -> tuple[Any, Any]:
+    """공유 dedup 컬렉션에 노드/엣지 hit 를 비중복 누적하는 (add_node, add_rel) 쌍.
+
+    여러 실행 경로(체인·multi_anchor)가 동일한 누적 로직을 쓰므로 한 곳에서 만든다.
+    엣지 score 는 근거 level(high/medium/그외)로 결정한다.
+    """
+    def add_node(id_: str, name: str, role: str, score: float = 1.0) -> None:
+        if not id_ or id_ in seen_nodes:
+            return
+        seen_nodes.add(id_)
+        hits.append(_node_hit(id_, name, {"structured_role": role}, score))
+
+    def add_rel(edge: dict[str, Any]) -> None:
+        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
+        if rel_id in seen_rels:
+            return
+        seen_rels.add(rel_id)
+        evidence = edge.get("evidence") or {}
+        level = evidence.get("level")
+        score = _NODE_SCORE_HIGH if level == "high" else _NODE_SCORE_MEDIUM if level == "medium" else _NODE_SCORE_LOW
+        hits.append(_rel_hit(edge, score))
+
+    return add_node, add_rel
+
+
 def _clean_candidate(row: dict[str, Any], step: RelationStep) -> dict[str, Any]:
     return {
         "id": str(row.get("cand_id") or ""),
@@ -404,7 +435,20 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[float, dict[str, Any]]:
+def _candidate_policy_bucket(
+    candidate: dict[str, Any],
+    policy: str,
+    llm_verdict: str | None = None,
+) -> tuple[float, dict[str, Any]]:
+    """후보의 정책 버킷(미세 정렬용 점수)과 근거 플래그를 계산한다.
+
+    llm_verdict 는 operating_counterparty 정책에서만 의미가 있다. 룰의 허브 강등은 의미
+    판단이라 LLM 이 최종 판정자다(의미 판단은 LLM 몫):
+      - "operating": 룰의 지배구조·계열·허브 강등을 건너뛰고 운영상대 보너스를 준다.
+      - "hub": 룰 강등을 그대로 적용하되 LLM 이 확정했음을 근거에 남긴다.
+      - None: LLM 미개입 — 오늘의 룰 그대로(폴백). off·다운·문맥부재·비경합이 모두 여기.
+    근거품질(strong/medium/weak edge evidence)은 정책과 무관한 결정적 레이어라 항상 먼저 적용.
+    """
     anchor_rels = set(candidate.get("anchor_rels") or [])
     evidence = candidate.get("evidence") or candidate.get("edge", {}).get("evidence") or {}
     evidence_confidence = _as_float(evidence.get("confidence"))
@@ -416,6 +460,7 @@ def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[fl
         "evidence_confidence": evidence_confidence,
         "evidence_level": evidence.get("level") or "",
         "evidence_relation_term_found": bool(evidence.get("relation_term_found")),
+        "llm_verdict": llm_verdict or "",
     }
     score = 0.0
     reasons: list[str] = []
@@ -435,23 +480,31 @@ def _candidate_policy_bucket(candidate: dict[str, Any], policy: str) -> tuple[fl
         reasons.append("relation_term_found")
 
     if policy == "operating_counterparty":
-        if flags["governance_linked"]:
-            score -= 2.0
-            reasons.append("governance_linked")
-        if flags["related_party_linked"]:
-            score -= 1.0
-            reasons.append("related_party_linked")
-
-        if graph_degree >= _HUB_DEGREE_HARD_CAP:
-            score -= 1.0
-            reasons.append("hard_hub_degree")
-        elif graph_degree >= _HUB_DEGREE_SOFT_CAP:
-            score -= 0.5
-            reasons.append("soft_hub_degree")
-
-        if not flags["governance_linked"] and not flags["related_party_linked"]:
+        if llm_verdict == "operating":
+            # LLM 이 '실제 영업 거래상대'로 확정 → 허브 강등 건너뛰고 운영상대 보너스만.
             score += 0.5
-            reasons.append("pure_operating_counterparty")
+            reasons.append("llm_operating")
+        else:
+            if flags["governance_linked"]:
+                score -= 2.0
+                reasons.append("governance_linked")
+            if flags["related_party_linked"]:
+                score -= 1.0
+                reasons.append("related_party_linked")
+
+            if graph_degree >= _HUB_DEGREE_HARD_CAP:
+                score -= 1.0
+                reasons.append("hard_hub_degree")
+            elif graph_degree >= _HUB_DEGREE_SOFT_CAP:
+                score -= 0.5
+                reasons.append("soft_hub_degree")
+
+            if not flags["governance_linked"] and not flags["related_party_linked"]:
+                score += 0.5
+                reasons.append("pure_operating_counterparty")
+
+            if llm_verdict == "hub":
+                reasons.append("llm_hub")
 
     flags["score"] = score
     flags["reasons"] = reasons
@@ -464,7 +517,15 @@ def _rank_candidates(
     year: int | None,
     *,
     policy: str = "default",
+    anchors: list[str] | None = None,
+    relation_label: str | None = None,
+    question: str | None = None,
 ) -> list[dict[str, Any]]:
+    """후보를 지표로 줄세운다. operating_counterparty 정책이면 LLM 이 허브 강등을 최종 판정.
+
+    anchors/relation_label/question 은 LLM 재판정용 문맥이다. 문맥이 없으면(예: 단위 테스트
+    가 _rank_candidates 를 직접 호출) LLM 단계 자체가 안 돌아 오늘의 룰과 동일하게 작동한다.
+    """
     codes = [c["corp_code"] for c in candidates if c.get("corp_code")]
     metric_rows = _fetch_metric_values(codes, metric_id, year)
     by_code: dict[str, dict[str, Any]] = {str(r.get("corp_code")): r for r in metric_rows}
@@ -482,7 +543,7 @@ def _rank_candidates(
                 metric_value = None
             item["metric"] = {
                 "account_id": str(row.get("account_id") or metric_id),
-                "label": _METRIC_LABEL.get(metric_id, metric_id),
+                "label": metric_label_for(metric_id),
                 "value": metric_value,
                 "raw_value": str(row.get("value") or ""),
                 "year": row.get("bsns_year"),
@@ -492,7 +553,7 @@ def _rank_candidates(
         else:
             item["metric"] = {
                 "account_id": metric_id,
-                "label": _METRIC_LABEL.get(metric_id, metric_id),
+                "label": metric_label_for(metric_id),
                 "value": None,
                 "raw_value": "",
                 "year": year,
@@ -500,6 +561,19 @@ def _rank_candidates(
                 "source": "",
             }
         ranked.append(item)
+
+    if policy == "operating_counterparty" and _LLM_RANK_POLICY and anchors:
+        verdicts = _adjudicate_demotions(ranked, anchors, relation_label, question)
+        if verdicts:
+            # LLM 이 회사명을 살짝 다르게 돌려줄 수 있어(주식회사 누락 등) 정규화로도 매칭한다.
+            norm_verdicts = {normalize_corp_name(k): v for k, v in verdicts.items()}
+            for item in ranked:
+                name = str(item.get("name") or "")
+                verdict = verdicts.get(name) or norm_verdicts.get(normalize_corp_name(name))
+                if verdict not in ("operating", "hub"):
+                    continue
+                bucket, flags = _candidate_policy_bucket(item, policy, llm_verdict=verdict)
+                item["policy"] = {"name": policy, "bucket": bucket, **flags}
 
     # 정렬키 우선순위(질문이 "매출 상위"면 매출이 주 정렬키여야 한다):
     #  1) bucket>=0 — 페널티 받은 후보(허브·operating 정책의 지배구조 계열사)는 한 단계
@@ -522,6 +596,92 @@ def _rank_candidates(
     return ranked
 
 
+_RANK_POLICY_SYSTEM_PROMPT = """너는 한국 기업의 거래관계를 판정하는 분류기다.
+앵커 회사들과, 룰이 '지배구조·계열 허브로 의심된다'며 매출 랭킹에서 강등한 후보 회사 목록을 준다.
+각 후보가 둘 중 무엇인지 회사명·업종 상식에 근거해 판정하라:
+- operating: 실제 영업 거래상대. 앵커에 제품·소재·부품·장비를 납품/판매하거나 서비스를 제공하는
+  회사(예: 반도체 소재·부품·후공정 장비 제조사).
+- hub: 단순 지배구조·계열·투자(지분) 관계로만 엮인 회사. 실제 영업 공급/납품 성격이 약하다.
+판단 근거가 애매하면 보수적으로 operating 을 고른다(실제 공급사를 잘못 강등하지 않도록).
+오직 JSON 만 출력한다: {"verdicts": [{"name": "회사명", "verdict": "operating|hub"}]}"""
+
+
+def _as_rank_dict(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        return json.loads(raw)
+    content = getattr(raw, "content", None)
+    if isinstance(content, str):
+        return json.loads(content)
+    raise ValueError("rank policy response is not JSON")
+
+
+def _invoke_rank_llm(
+    anchors: list[str],
+    relation_label: str | None,
+    question: str | None,
+    contested: list[dict[str, Any]],
+) -> dict[str, str]:
+    from config.llm import json_llm  # noqa: PLC0415
+    from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
+
+    payload = {
+        "anchors": [a for a in anchors if a],
+        "relation": relation_label or "",
+        "question": question or "",
+        "candidates": [str(c.get("name") or "") for c in contested if c.get("name")],
+    }
+    raw = json_llm.invoke([
+        SystemMessage(content=_RANK_POLICY_SYSTEM_PROMPT),
+        HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+    ])
+    data = _as_rank_dict(raw)
+    out: dict[str, str] = {}
+    for entry in data.get("verdicts", []) or []:
+        name = str(entry.get("name") or "")
+        verdict = str(entry.get("verdict") or "").lower()
+        if name and verdict in ("operating", "hub"):
+            out[name] = verdict
+    return out
+
+
+def _adjudicate_demotions(
+    ranked: list[dict[str, Any]],
+    anchors: list[str],
+    relation_label: str | None,
+    question: str | None,
+) -> dict[str, str]:
+    """답을 바꾸는 '경합 강등'만 골라 LLM 에 1회 묻는다(없으면 미호출 → 룰과 동일).
+
+    경합 강등 = 룰이 허브 신호로 강등(bucket<0)했지만 매출이 비강등 1위를 넘는 후보. 이런
+    후보가 없으면 강등이 답을 안 바꾸므로 LLM 을 부르지 않는다(비용 0·결과 동일). LLM 실패·
+    타임아웃은 빈 dict 로 흡수 → 룰 폴백(배포 안정성 보존).
+    """
+    contested: list[dict[str, Any]] = []
+    best_clean = float("-inf")
+    for item in ranked:
+        pol = item.get("policy", {})
+        bucket = pol.get("bucket", 0) or 0
+        reasons = set(pol.get("reasons", []) or [])
+        mval = item.get("metric", {}).get("value")
+        if bucket < 0 and (reasons & _HUB_DEMOTE_REASONS) and mval is not None:
+            contested.append(item)
+        elif bucket >= 0 and mval is not None:
+            best_clean = max(best_clean, mval)
+
+    contested = [
+        c for c in contested
+        if (c.get("metric", {}).get("value") or float("-inf")) > best_clean
+    ]
+    if not contested:
+        return {}
+    try:
+        return _invoke_rank_llm(anchors, relation_label, question, contested)
+    except Exception:
+        return {}
+
+
 def _evidence_confidence(candidate: dict[str, Any]) -> float:
     evidence = candidate.get("evidence") or candidate.get("edge", {}).get("evidence") or {}
     return _as_float(evidence.get("confidence"))
@@ -533,7 +693,7 @@ def _relation_type_attested(candidate: dict[str, Any]) -> bool:
 
 
 def _candidate_supported(candidate: dict[str, Any], rel_type: str) -> bool:
-    if rel_type in _TYPE_ATTESTED_RELS:
+    if rel_type in _TERM_ATTESTED_RELS:
         return _relation_type_attested(candidate)
     if rel_type in _SOURCE_ATTESTED_RELS:
         # 표 출처 관계: 청크 본문이 구조적으로 없어 conf 가 0.35(출처만)에 묶인다.
@@ -677,17 +837,10 @@ def _anchor_from_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _norm_name(value: str) -> str:
-    out = (value or "").lower()
-    for token in ("주식회사", "(주)", "㈜", " ", "\t", "\n"):
-        out = out.replace(token, "")
-    return out
-
-
 def _seed_order(seed: Seed, query: str) -> tuple[int, int, float]:
-    qn = _norm_name(query)
-    name = _norm_name(str(seed.get("name") or ""))
-    key = _norm_name(str(seed.get("key_value") or ""))
+    qn = normalize_corp_name(query)
+    name = normalize_corp_name(str(seed.get("name") or ""))
+    key = normalize_corp_name(str(seed.get("key_value") or ""))
     mentioned = bool((name and name in qn) or (key and key in qn))
     origin_rank = 0 if seed.get("origin") == "upstream" else 1
     return (0 if mentioned else 1, origin_rank, -float(seed.get("score") or 0.0))
@@ -799,7 +952,14 @@ def _run_branch_from_anchor(
         cand["edge"]["branch_kind"] = branch.kind
     _attach_candidate_evidence(candidates)
     policy = "operating_counterparty" if branch.kind in {"supplier", "major_customer"} else "default"
-    ranked = _rank_candidates(candidates, branch.rank.metric_id, year, policy=policy)
+    ranked = _rank_candidates(
+        candidates,
+        branch.rank.metric_id,
+        year,
+        policy=policy,
+        anchors=[str(anchor.get("name") or "")],
+        relation_label=branch.kind,
+    )
     selected, unranked_confirmed = _select_supported(ranked, branch.relation.rel_type)
     return {
         "kind": branch.kind,
@@ -961,20 +1121,7 @@ def _execute_multi_hop_chain(
     seen_nodes: set[str] = set()
     seen_rels: set[str] = set()
 
-    def add_node(id_: str, name: str, role: str, score: float = 1.0) -> None:
-        if not id_ or id_ in seen_nodes:
-            return
-        seen_nodes.add(id_)
-        hits.append(_node_hit(id_, name, {"structured_role": role}, score))
-
-    def add_rel(edge: dict[str, Any]) -> None:
-        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
-        if rel_id in seen_rels:
-            return
-        seen_rels.add(rel_id)
-        evidence = edge.get("evidence") or {}
-        score = _NODE_SCORE_HIGH if evidence.get("level") == "high" else _NODE_SCORE_MEDIUM if evidence.get("level") == "medium" else _NODE_SCORE_LOW
-        hits.append(_rel_hit(edge, score))
+    add_node, add_rel = _make_hit_sink(hits, seen_nodes, seen_rels)
 
     # 초기 frontier = 질문이 호명한 org 앵커들(순서: 질문 언급 우선).
     visited_ids: set[str] = set()
@@ -1003,7 +1150,15 @@ def _execute_multi_hop_chain(
             if not candidates:
                 continue
             _attach_candidate_evidence(candidates)
-            ranked = _rank_candidates(candidates, hop.rank.metric_id, year, policy=hop.policy)
+            ranked = _rank_candidates(
+                candidates,
+                hop.rank.metric_id,
+                year,
+                policy=hop.policy,
+                anchors=[str(anchor.get("name") or "")],
+                relation_label=hop.relation.rel_type,
+                question=query,
+            )
             supported = [c for c in ranked if _candidate_supported(c, _candidate_rel_type(c))]
             chosen = _select_hop_candidates(
                 supported, hop.top_n, next_hop=next_hop, year=year, visited_ids=visited_ids,
@@ -1028,7 +1183,7 @@ def _execute_multi_hop_chain(
             "relation": hop.relation.__dict__,
             "relations": [r.__dict__ for r in hop.rel_steps()],
             "metric": hop.rank.metric_id,
-            "metric_label": _METRIC_LABEL.get(hop.rank.metric_id, hop.rank.metric_id),
+            "metric_label": metric_label_for(hop.rank.metric_id),
             "top_n": hop.top_n,
             "selected": selected_names,
         })
@@ -1092,6 +1247,9 @@ def _execute_multi_anchor_rank(
         plan.first_rank.metric_id,
         year,
         policy=plan.first_candidate_policy,
+        anchors=[str(a.get("name") or "") for a in anchors],
+        relation_label=plan.first_relation.rel_type,
+        question=query,
     )
     top_first, unranked_confirmed = _select_supported(ranked, plan.first_relation.rel_type)
     confirmed = (
@@ -1106,20 +1264,7 @@ def _execute_multi_anchor_rank(
     seen_nodes: set[str] = set()
     seen_rels: set[str] = set()
 
-    def add_node(id_: str, name: str, role: str, score: float = 1.0) -> None:
-        if not id_ or id_ in seen_nodes:
-            return
-        seen_nodes.add(id_)
-        hits.append(_node_hit(id_, name, {"structured_role": role}, score))
-
-    def add_rel(edge: dict[str, Any]) -> None:
-        rel_id = f"rel:{edge['rel_type']}:{edge['from_id']}:{edge['to_id']}"
-        if rel_id in seen_rels:
-            return
-        seen_rels.add(rel_id)
-        evidence = edge.get("evidence") or {}
-        score = _NODE_SCORE_HIGH if evidence.get("level") == "high" else _NODE_SCORE_MEDIUM if evidence.get("level") == "medium" else _NODE_SCORE_LOW
-        hits.append(_rel_hit(edge, score))
+    add_node, add_rel = _make_hit_sink(hits, seen_nodes, seen_rels)
 
     for anchor in anchors:
         add_node(str(anchor.get("id") or ""), str(anchor.get("name") or ""), "common_anchor")
@@ -1155,7 +1300,7 @@ def _execute_multi_anchor_rank(
         "mode": "structured",
         "kind": "multi_anchor_rank",
         "year": year,
-        "metric_label": _METRIC_LABEL.get(plan.first_rank.metric_id, plan.first_rank.metric_id),
+        "metric_label": metric_label_for(plan.first_rank.metric_id),
         "plan": plan.to_dict(),
         "first_candidate_policy": plan.first_candidate_policy,
         "anchors": anchors,
@@ -1348,7 +1493,7 @@ def _execute_community_member_rank(
             "bsns_year": winner["year"],
             "unit": winner["unit"],
             "corp_code": winner["corp_code"],
-            "metric_label": _METRIC_LABEL.get(metric_id, metric_id),
+            "metric_label": metric_label_for(metric_id),
             "rank": 1,
         },
         "score": _NODE_SCORE_HIGH,
@@ -1381,7 +1526,7 @@ def _execute_community_member_rank(
         "mode": "structured",
         "kind": "community_member_rank",
         "year": year,
-        "metric_label": _METRIC_LABEL.get(metric_id, metric_id),
+        "metric_label": metric_label_for(metric_id),
         "plan": plan.to_dict(),
         "anchor": anchor,
         "community": {

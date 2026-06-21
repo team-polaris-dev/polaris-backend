@@ -25,6 +25,7 @@
       "legacy_type": "investment",
       "is_network": true,
       "aliases": ["투자", "출자", "지분투자", "투자관계", "출자관계"],
+      "evidence_terms": ["투자", "지분", "관계기업", "공동기업", "주식"],
       "desc": "투자/출자 관계."
     },
     {
@@ -34,6 +35,7 @@
       "legacy_type": "supply",
       "is_network": true,
       "aliases": ["공급", "납품", "협력사", "벤더", "거래처", "조달", "매입", "고객", "고객사", "매출처", "납품처", "공급망"],
+      "evidence_terms": ["공급", "납품", "매출처", "고객", "거래", "판매"],
       "desc": "공급/납품 관계. incoming=후보가 기준 회사에 공급(공급사), outgoing=기준 회사가 후보에 공급(고객/매출처), 애매하면 auto."
     },
     {
@@ -70,6 +72,7 @@
       "legacy_type": "related_party",
       "is_network": true,
       "aliases": ["특수관계", "특수관계자", "관련 회사", "관계기업", "계열거래"],
+      "evidence_terms": ["특수관계", "관계기업", "관계회사", "관련회사", "계열"],
       "desc": "특수관계자/관련 회사. 방향은 보통 undirected."
     },
     {
@@ -107,8 +110,8 @@
   ],
   "metric_labels": {
     "dart_OperatingIncomeLoss": "영업이익",
-    "ifrs-full_ProfitLoss": "순이익",
-    "ifrs-full_Assets": "자산",
+    "ifrs-full_ProfitLoss": "당기순이익",
+    "ifrs-full_Assets": "총자산",
     "ifrs-full_Revenue": "매출액"
   },
   "supply_noise_name_terms": ["은행", "증권", "보험", "캐피탈", "저축은행", "카드사", "금융지주", "자산운용"],

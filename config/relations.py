@@ -57,6 +57,12 @@ REL_TO_LEGACY_TYPE: dict[str, str] = {r.type: r.legacy_type for r in RELATIONS}
 NETWORK_REL_TYPES: frozenset[str] = frozenset(r.type for r in RELATIONS if r.is_network)
 DOMAIN_RELS: list[str] = [r.type for r in RELATIONS]  # PPR/관련성 전파 대상(전체 도메인 관계)
 
+# 관계 근거어 — 엣지 근거 청크 본문에 이 단어가 있으면 관계가 텍스트로 입증됐다고 본다
+# (structured_executor._score_edge_evidence). aliases(질의어)와 별개 어휘 — 청크 본문 매칭용.
+RELATION_EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
+    r["type"]: tuple(r["evidence_terms"]) for r in _VOCAB["relations"] if r.get("evidence_terms")
+}
+
 # 비정형 추출(extract_helpers)이 만드는 엣지 타입. 정형 관계(지분·지배·투자·임원·겸직)는
 # 구조화 로더가 따로 적재하므로 추출 허용 목록에는 빠진다. chunk→object 출처 엣지 hasObject 포함.
 INGEST_EDGE_TYPES: frozenset[str] = frozenset(_VOCAB["ingest_edge_types"])

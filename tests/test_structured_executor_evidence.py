@@ -105,6 +105,113 @@ def test_operating_counterparty_policy_demotes_governance_hub(monkeypatch):
     assert "pure_operating_counterparty" in operating_ranked[0]["policy"]["reasons"]
 
 
+def _operating_candidates():
+    # 솔브레인: 룰이 related_party 로 강등하지만 매출은 더 큰 '실제 공급사'(LLM-as-judge 가
+    # '과강등'으로 본 사례). 에스에프에이: 강등 없는 저매출 후보.
+    return [
+        {
+            "id": "solbrain",
+            "corp_code": "001",
+            "name": "솔브레인 주식회사",
+            "anchor_rels": ["RELATED_PARTY"],
+            "graph_degree": 10,
+            "edge": {},
+            "evidence": {"confidence": 0.55, "level": "medium", "relation_term_found": True},
+        },
+        {
+            "id": "sfa",
+            "corp_code": "002",
+            "name": "(주)에스에프에이반도체",
+            "anchor_rels": [],
+            "graph_degree": 4,
+            "edge": {},
+            "evidence": {"confidence": 0.55, "level": "medium", "relation_term_found": True},
+        },
+    ]
+
+
+def _operating_metric_values(corp_codes, account_id="ifrs-full_Revenue", year=None):
+    return [
+        {"corp_code": "001", "account_id": account_id, "value": "923381966875", "bsns_year": 2025},
+        {"corp_code": "002", "account_id": account_id, "value": "367389147993", "bsns_year": 2025},
+    ]
+
+
+def test_operating_counterparty_llm_override_lifts_real_supplier(monkeypatch):
+    candidates = _operating_candidates()
+    monkeypatch.setattr(structured_executor, "_fetch_metric_values", _operating_metric_values)
+    monkeypatch.setattr(structured_executor, "_LLM_RANK_POLICY", True)
+    monkeypatch.setattr(
+        structured_executor,
+        "_invoke_rank_llm",
+        lambda anchors, relation_label, question, contested: {"솔브레인 주식회사": "operating"},
+    )
+
+    # 룰만으로는 솔브레인이 강등돼 매출 낮은 에스에프에이가 1위.
+    rule_ranked = structured_executor._rank_candidates(
+        candidates, "ifrs-full_Revenue", 2025, policy="operating_counterparty",
+    )
+    assert rule_ranked[0]["name"] == "(주)에스에프에이반도체"
+
+    # 앵커 문맥이 주어지면 LLM 이 '실제 공급사'로 판정 → 강등 해제 → 매출 1위 복귀.
+    llm_ranked = structured_executor._rank_candidates(
+        candidates,
+        "ifrs-full_Revenue",
+        2025,
+        policy="operating_counterparty",
+        anchors=["삼성전자(주)", "삼성SDI(주)"],
+        relation_label="SUPPLIES_TO",
+        question="삼성전자와 삼성SDI가 둘 다 거래하는 공급사 중 매출이 가장 큰 곳은?",
+    )
+    assert llm_ranked[0]["name"] == "솔브레인 주식회사"
+    assert "llm_operating" in llm_ranked[0]["policy"]["reasons"]
+
+
+def test_operating_counterparty_llm_confirms_hub_keeps_demotion(monkeypatch):
+    candidates = _operating_candidates()
+    monkeypatch.setattr(structured_executor, "_fetch_metric_values", _operating_metric_values)
+    monkeypatch.setattr(structured_executor, "_LLM_RANK_POLICY", True)
+    monkeypatch.setattr(
+        structured_executor,
+        "_invoke_rank_llm",
+        lambda anchors, relation_label, question, contested: {"솔브레인 주식회사": "hub"},
+    )
+
+    ranked = structured_executor._rank_candidates(
+        candidates,
+        "ifrs-full_Revenue",
+        2025,
+        policy="operating_counterparty",
+        anchors=["삼성전자(주)", "삼성SDI(주)"],
+        relation_label="SUPPLIES_TO",
+    )
+    assert ranked[0]["name"] == "(주)에스에프에이반도체"
+    demoted = next(c for c in ranked if c["name"] == "솔브레인 주식회사")
+    assert "llm_hub" in demoted["policy"]["reasons"]
+    assert demoted["policy"]["bucket"] < 0
+
+
+def test_operating_counterparty_llm_off_falls_back_to_rule(monkeypatch):
+    candidates = _operating_candidates()
+    monkeypatch.setattr(structured_executor, "_fetch_metric_values", _operating_metric_values)
+    monkeypatch.setattr(structured_executor, "_LLM_RANK_POLICY", False)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("LLM must not be called when GRAPHRAG_LLM_RANK_POLICY is off")
+
+    monkeypatch.setattr(structured_executor, "_invoke_rank_llm", _boom)
+
+    ranked = structured_executor._rank_candidates(
+        candidates,
+        "ifrs-full_Revenue",
+        2025,
+        policy="operating_counterparty",
+        anchors=["삼성전자(주)", "삼성SDI(주)"],
+        relation_label="SUPPLIES_TO",
+    )
+    assert ranked[0]["name"] == "(주)에스에프에이반도체"
+
+
 def test_select_supported_prefers_stronger_evidence_before_metric(monkeypatch):
     candidates = [
         {

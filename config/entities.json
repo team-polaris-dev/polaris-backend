@@ -17,6 +17,13 @@
     "기타", "기타법인", "해당없음", "상기", "동사", "당사", "본사"
   ],
   "generic_org_terms": ["기업", "기업들", "회사", "회사들", "업체", "업체들"],
+  "corp_code_overrides": {
+    "sk하이닉스": "00164779",
+    "에스케이하이닉스": "00164779",
+    "하이닉스": "00164779",
+    "삼성전자": "00126380",
+    "samsungelectronics": "00126380"
+  },
   "label_map": {
     "Organization": "organization",
     "Person": "person",

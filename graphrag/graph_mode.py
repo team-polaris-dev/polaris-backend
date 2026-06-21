@@ -13,7 +13,6 @@ from enum import Enum
 
 from config.relations import MACRO_TERMS, RANK_TERMS, has_rank_intent
 
-_RANK_TERMS = RANK_TERMS  # config.relations SSOT
 _RELATION_TERMS = (
     "거래", "공급", "납품", "협력", "벤더", "매출처", "고객", "관련",
     "특수관계", "관계자", "계열", "주주", "지분", "자회사", "종속", "투자",
@@ -61,7 +60,7 @@ def _is_silent(query: str) -> bool:
     q = " ".join((query or "").split())
     if not q or not _has_any(q, _ATTRIBUTE_ONLY_TERMS):
         return False
-    return not (_has_any(q, _RELATION_TERMS) or _has_any(q, _RANK_TERMS))
+    return not (_has_any(q, _RELATION_TERMS) or _has_any(q, RANK_TERMS))
 
 
 def _prefilter_mode(query: str, *, has_anchor: bool, has_metric: bool) -> GraphMode | None:

@@ -19,6 +19,7 @@ from config.graphrag import (
 )
 # 회사명 정규화·일반어 판정은 SSOT(config.entities). _norm 은 정확매칭 판정용 별칭.
 from config.entities import (
+    CORP_CODE_OVERRIDES as _EXACT_CORP_ALIASES,
     GENERIC_ORG_TERMS,
     LABEL_MAP as _LABEL_MAP,
     is_generic_org,
@@ -31,13 +32,6 @@ from graphrag.schema import Seed
 
 # Lucene 특수문자 — 그대로 던지면 파싱 에러
 _LUCENE_SPECIAL = re.compile(r'([+\-!(){}\[\]^"~*?:\\/]|&&|\|\|)')
-_EXACT_CORP_ALIASES = {
-    "sk하이닉스": "00164779",
-    "에스케이하이닉스": "00164779",
-    "하이닉스": "00164779",
-    "삼성전자": "00126380",
-    "samsungelectronics": "00126380",
-}
 
 
 def escape_lucene(q: str) -> str:

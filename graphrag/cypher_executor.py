@@ -14,9 +14,10 @@ from config.relations import has_rank_intent, metric_for_query
 from tool.rdb_client import parse_year
 
 from graphrag.schema import GraphHit
+from config.relations import metric_label_for
 from graphrag.structured_executor import (
-    _METRIC_LABEL,
     _NODE_SCORE_HIGH,
+    _NODE_SCORE_MEDIUM,
     _fetch_chunk_texts,
     _fetch_metric_values,
     _node_hit,
@@ -25,9 +26,10 @@ from graphrag.structured_executor import (
 )
 
 # 근거 level → 노드 hit score (structured_executor 와 동일 의미). 강근거=1.0, 중=0.75.
-_NODE_SCORE_ANCHOR = 1.0
-_NODE_SCORE_OTHER = 0.75
-_REL_SCORE = 0.75
+# 점수 리터럴은 structured_executor 가 단일 출처 — 여기선 role 의미 이름만 부여한다.
+_NODE_SCORE_ANCHOR = _NODE_SCORE_HIGH
+_NODE_SCORE_OTHER = _NODE_SCORE_MEDIUM
+_REL_SCORE = _NODE_SCORE_MEDIUM
 
 # 행이 노드별로 싣는 role. 알 수 없으면 neighbor.
 _VALID_ROLES = {"anchor", "bridge", "sibling", "neighbor"}
@@ -267,7 +269,7 @@ def rank_results(
             "bsns_year": winner["year"],
             "unit": winner["unit"],
             "corp_code": winner["corp_code"],
-            "metric_label": _METRIC_LABEL.get(metric_id, metric_id),
+            "metric_label": metric_label_for(metric_id),
             "rank": 1,
         },
         "score": _NODE_SCORE_HIGH,
@@ -277,7 +279,7 @@ def rank_results(
 
     structured = dict(meta.get("structured") or {})
     structured["rank_metric"] = metric_id
-    structured["metric_label"] = _METRIC_LABEL.get(metric_id, metric_id)
+    structured["metric_label"] = metric_label_for(metric_id)
     structured["year"] = year
     structured["members"] = ranked
     structured["selected"] = winner
