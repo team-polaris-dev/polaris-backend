@@ -22,6 +22,7 @@ from core.digest import build_evidence_digest
 from nodes.router import empty_sources
 from tool import chat_store
 from tool.vector_store import warmup as _vector_warmup
+from services.landing_graph import build_landing_graph
 
 @asynccontextmanager
 async def lifespan(_api: "FastAPI"):
@@ -313,6 +314,37 @@ def chat_digest_endpoint(request: DigestRequest):
         except Exception as e:
             print(f"⚠️ digest 저장 실패(무시): {e}")
     return DigestResponse(digest=digest)
+
+
+# 3-5. 랜딩 페이지 그래프 — Neo4j 실데이터를 프론트 GraphExplorer 형태로 반환(공개).
+#   { nodes:[{id,name,category,val}], links:[{source,target,kind}] }
+class LandingGraphNode(BaseModel):
+    id: str
+    name: str
+    category: str
+    val: int = 5
+
+
+class LandingGraphLink(BaseModel):
+    source: str
+    target: str
+    kind: str = ""
+
+
+class LandingGraphResponse(BaseModel):
+    nodes: List[LandingGraphNode] = []
+    links: List[LandingGraphLink] = []
+
+
+@api.get("/api/graph/landing", response_model=LandingGraphResponse)
+def landing_graph_endpoint(limit: int = 1000):
+    """랜딩 진입화면 그래프. 실패해도 500 을 던져 프론트가 목업으로 폴백하게 한다."""
+    try:
+        limit = max(50, min(limit, 3000))  # 방어적 상한 — 과도한 응답 방지
+        data = build_landing_graph(node_limit=limit)
+        return LandingGraphResponse(**data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"랜딩 그래프 조회 오류: {str(e)}")
 
 
 # 직접 실행할 때를 위한 엔트리포인트
