@@ -197,16 +197,28 @@ _REQUIRED_SOURCES: list[str] = [
 
 
 def empty_sources(state: AgentState) -> list[str]:
-    """필수 소스 중 결과가 비어 있는 것들의 사용자용 명칭 목록을 반환한다.
+    """필수 소스 중 결과가 비어 있는 것들의 사용자용 명칭 목록을 반환한다(진단용).
 
-    _REQUIRED_SOURCES 에 든 키만 검사한다(주석으로 vec 를 빼면 검사 제외).
-    하나라도 비어 있으면 result_check 가 사용자에게 재질문을 유도한다.
+    _REQUIRED_SOURCES 에 든 키만 검사한다. 게이트 통과 여부는 이 목록이 아니라
+    has_required_evidence(OR)가 결정한다 — 이 목록은 어떤 소스가 비었는지 로그·안내에
+    쓰는 진단 정보다.
     """
     return [
         _SOURCE_LABELS.get(key, key)
         for key in _REQUIRED_SOURCES
         if not state.get(key)
     ]
+
+
+def has_required_evidence(state: AgentState) -> bool:
+    """필수 소스 중 하나라도 결과가 있으면 True (OR 게이트).
+
+    질문 유형마다 채워지는 소스가 다르다(관계도→graph 만, 재무 랭킹→rdb 만,
+    원문 인용→vec 만). 그래서 '셋 다 채워짐'(AND)이 아니라 '근거가 하나라도 있음'을
+    통과 기준으로 둔다 — 전부 비었을 때만 gen 을 막아 환각을 방어한다. vec 청크 0건처럼
+    질문 유형상 정상적으로 비는 소스가 멀쩡한 답(rdb·graph 다수)을 막던 문제를 없앤다.
+    """
+    return any(state.get(key) for key in _REQUIRED_SOURCES)
 
 
 def _fmt_cell(value, width: int) -> str:
@@ -453,19 +465,19 @@ def route_result_check(state: AgentState) -> str:
 
     - global(매크로/업계): 세 소스(rdb/vec/graph)는 비기 마련이므로 검사하지 않고,
       커뮤니티 요약(community_results)이 하나라도 있으면 'gen'.
-    - 그 외: 필수 소스가 모두 있으면 'gen', 하나라도 비면 'end'.
+    - 그 외: 필수 소스가 하나라도 있으면 'gen', 전부 비었을 때만 'end'(OR 게이트).
     """
     if state.get("intent") == "global":
         return "gen" if state.get("community_results") else "end"
-    return "end" if empty_sources(state) else "gen"
+    return "gen" if has_required_evidence(state) else "end"
 
 
 def result_check_node(state: AgentState):
     """Result Check: LLM 없이 AgentState 의 검색 결과 유무만 규칙 기반으로 점검한다.
 
-    필수 소스(_REQUIRED_SOURCES)가 모두 채워져 있으면 그대로 통과시켜 gen 노드가
-    포매팅하게 하고, 하나라도 비어 있으면 어떤 검색에서 결과가 없었는지 명시하며
-    더 구체적인 질문을 요청하는 답변을 만들어 END 로 종료한다.
+    필수 소스(_REQUIRED_SOURCES) 중 하나라도 채워져 있으면 그대로 통과시켜 gen 노드가
+    포매팅하게 하고(OR 게이트), 전부 비어 있을 때만 어떤 검색에서도 결과가 없었음을
+    명시하며 더 구체적인 질문을 요청하는 답변을 만들어 END 로 종료한다.
     """
     print("🔎 [ResultCheck Node] 검색 결과 충분성 점검 중...")
 
@@ -487,16 +499,19 @@ def result_check_node(state: AgentState):
 
     empties = empty_sources(state)
 
-    # 필수 소스가 모두 있으면 통과 — gen 으로.
-    if not empties:
-        print("   -> 통과✅ (필수 검색 결과 모두 존재)")
+    # 근거가 하나라도 있으면 통과 — gen 으로(OR 게이트). 일부 소스가 비어도
+    # (예: 관계도 질문의 vec 청크 0건=정상 degrade) 나머지 근거로 답을 만든다.
+    if has_required_evidence(state):
+        if empties:
+            print(f"   -> 통과✅ (근거 있음 / 빈 소스: {', '.join(empties)})")
+        else:
+            print("   -> 통과✅ (필수 검색 결과 모두 존재)")
         return {}
 
-    # 하나라도 비어 있으면 어떤 소스가 비었는지 명시하고 재질문을 유도한다.
-    print(f"   -> 불충분❌ (결과 없음: {', '.join(empties)})")
-    empty_text = ", ".join(empties)
+    # 전 소스가 비었을 때만 재질문을 유도한다.
+    print(f"   -> 불충분❌ (전 소스 결과 없음: {', '.join(empties)})")
     guidance = (
-        f"{empty_text}에서 검색 결과를 찾지 못했습니다. "
+        "정형 데이터·문서 본문·관계망 어디에서도 검색 결과를 찾지 못했습니다. "
         "기업명, 연도, 항목(예: 매출액, 자회사 등)을 포함해 좀 더 구체적으로 "
         "질문해 주시면 더 정확한 답변을 드릴 수 있습니다."
     )

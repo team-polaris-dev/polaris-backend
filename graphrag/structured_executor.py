@@ -501,11 +501,20 @@ def _rank_candidates(
             }
         ranked.append(item)
 
+    # 정렬키 우선순위(질문이 "매출 상위"면 매출이 주 정렬키여야 한다):
+    #  1) bucket>=0 — 페널티 받은 후보(허브·operating 정책의 지배구조 계열사)는 한 단계
+    #     아래 tier 로 가라앉힌다. 단 페널티의 '정도'는 지표를 못 이긴다(coarse 강등).
+    #  2) 지표 보유 여부 — 지표 없는 후보(매출 0/미보유 외국·제품 노드)는 지표 보유 후보 아래.
+    #  3) 지표 값 — 사용자가 요청한 지표(매출 등) 내림차순. 이게 진짜 랭킹 차원.
+    #  4) bucket 값 — 동률(같은 지표값)일 때만 근거·운영상대 품질로 미세 정렬.
+    # 예전엔 bucket 이 1순위라 근거 좋은 매출 0원 후보(WNC·NVIDIA)가 매출 1.8조 후보를
+    # 누르고 "매출 상위"의 맨 위에 올라오는 버그가 있었다 → 지표를 bucket 위로 올린다.
     ranked.sort(
         key=lambda c: (
-            c.get("policy", {}).get("bucket", 0),
+            (c.get("policy", {}).get("bucket", 0) or 0) >= 0,
             c.get("metric", {}).get("value") is not None,
             c.get("metric", {}).get("value") or float("-inf"),
+            c.get("policy", {}).get("bucket", 0) or 0,
             c.get("id") or c.get("name") or "",
         ),
         reverse=True,

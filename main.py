@@ -19,7 +19,7 @@ from services.pipeline_jobs import init_pipeline_tables, sweep_stale_jobs
 from services.chat_logging import init_chat_tables
 from core.serialize import serialize_state
 from core.digest import build_evidence_digest
-from nodes.router import empty_sources
+from nodes.router import has_required_evidence
 from tool import chat_store
 from tool.vector_store import warmup as _vector_warmup
 
@@ -218,16 +218,16 @@ def chat_endpoint(request: ChatRequest):
         final_intent = result.get("intent", "unknown")
 
         # 최종 state → 우측 패널용 그래프/원본문서 페이로드
-        # 단, result_check 가 재질문을 요청한 턴(필수 검색 소스 일부가 비어 END)에는
+        # 단, result_check 가 재질문을 요청한 턴(전 검색 소스가 비어 END)에는
         # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
-        # 않도록. 판정은 result_check 와 동일하게 empty_sources(필수 소스) 로 한다.
+        # 않도록. 판정은 result_check 와 동일하게 has_required_evidence(OR 게이트) 로 한다.
         # 참고: 글로벌(매크로/업계) 턴은 rdb/vec/graph 가 비어 community_results 만 채우므로
-        # empty_sources 가 True → 우측 패널은 닫힌다(의도된 동작). 답변 본문(response)은
+        # has_required_evidence 가 False → 우측 패널은 닫힌다(의도된 동작). 답변 본문(response)은
         # gen 이 community_results 로 생성하므로 아래 분기와 무관하게 그대로 반환된다.
-        if empty_sources(result):
-            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "financials": [], "panel": "none"}
-        else:
+        if has_required_evidence(result):
             panel_data = serialize_state(result)
+        else:
+            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "financials": [], "panel": "none"}
 
         # 우측 '원본 문서' 탭 상단의 통합 근거 정리(digest)는 LLM 1회 추가 호출이라
         # 동기로 만들면 답변이 그만큼 늦는다. 여기서 만들지 않고 답변을 먼저 반환한 뒤,
