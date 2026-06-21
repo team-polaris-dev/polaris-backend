@@ -172,9 +172,15 @@ _patch_codex_for_windows()
 
 
 # 환경 변수 (하드코딩 금지 — .env 기반)
-APIMAKER_PROVIDER = os.environ.get("APIMAKER_PROVIDER", "gemini")
-# 모델 미지정 시 gemini CLI 기본값 사용. 지정 시 -m 로 전달 (예: gemini-2.5-flash).
-APIMAKER_MODEL = os.environ.get("APIMAKER_MODEL") or os.environ.get("GEMINI_MODEL_NAME") or None
+APIMAKER_PROVIDER = os.environ.get("APIMAKER_PROVIDER", "gemini").lower().strip()
+# provider별 모델 fallback. codex는 ChatGPT/Codex CLI 기본 모델을 쓰도록 비워둔다.
+_ENV_MODEL = (os.environ.get("APIMAKER_MODEL") or "").strip()
+if APIMAKER_PROVIDER == "gemini":
+    APIMAKER_MODEL = _ENV_MODEL or os.environ.get("GEMINI_MODEL_NAME") or None
+elif APIMAKER_PROVIDER == "codex":
+    APIMAKER_MODEL = None if _ENV_MODEL.lower().startswith("gemini") else (_ENV_MODEL or None)
+else:
+    APIMAKER_MODEL = _ENV_MODEL or None
 APIMAKER_TIMEOUT = float(os.environ.get("APIMAKER_TIMEOUT", "180"))
 
 _JSON_DIRECTIVE = (

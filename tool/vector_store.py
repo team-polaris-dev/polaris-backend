@@ -937,13 +937,22 @@ def hybrid_search(
     return [_to_retrieved(row, score) for row, score in selected]
 
 
-def search_vector_db(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+def search_vector_db(
+    query: str, top_k: int = 10, *, corp_codes: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """하이브리드 검색 진입점. `corp_codes` 가 주어지면 회사 필터로 그걸 쓴다.
 
+    호출부(노드)가 관계도에서 뽑은 앵커 corp_code 를 넘기면 벡터 검색을 그 회사들로
+    한정한다 — 질문 텍스트로만 회사를 추측하던(extract_filter_signals) 오염을 막는다.
+    앵커가 없으면(None/빈) 기존대로 질문에서 회사·연도를 추출해 폴백한다. 임베딩/BM25
+    질의는 어느 경우든 question 그대로 — 회사 한정만 그래프 기준으로 바뀐다.
+    """
     print(f"🛠️ [vectorDB]  검색 시뮬레이션 중: {query}")
     if not query.strip():
         return []
-    corp_codes, year = extract_filter_signals(query)
-    rows = hybrid_search(query, top_k=top_k, corp_codes=corp_codes or None, year=year)
+    extracted_codes, year = extract_filter_signals(query)
+    filter_codes = corp_codes if corp_codes else extracted_codes
+    rows = hybrid_search(query, top_k=top_k, corp_codes=filter_codes or None, year=year)
     return [row.to_dict() for row in rows]
 
 

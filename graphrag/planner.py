@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import re
 
-from config.relations import GROUP_SCOPE_TERMS, has_rank_intent
+from config.relations import (
+    GROUP_SCOPE_TERMS,
+    has_rank_intent,
+    metric_for_query,
+    metric_label_for,
+)
 from graphrag.plan_schema import BranchRankStep, MetricRankStep, RelationStep, StructuredPlan
 
 
@@ -37,19 +42,15 @@ def _has_any(text: str, terms: tuple[str, ...]) -> bool:
 
 
 def _metric_id(query: str) -> tuple[str, str] | None:
-    """Return (metric_id, reason). Defaults '잘나가는' to revenue.
+    """Return (metric_id, reason) or None. 지표 어휘는 config.relations 단어집 SSOT.
 
-    node.py(has_metric)·executor 가 같이 쓰는 지표 해소기 — 보존한다.
+    chain_planner._metric_id 와 같은 metric_for_query 를 공유한다 — 지표 키워드를 코드에
+    중복 정의하지 않는다(stale·불일치 방지). node.py(has_metric)·executor 가 함께 쓴다.
     """
-    if "영업이익" in query:
-        return "dart_OperatingIncomeLoss", "영업이익 기준 랭킹"
-    if "순이익" in query or "당기순이익" in query:
-        return "ifrs-full_ProfitLoss", "순이익 기준 랭킹"
-    if "자산" in query or "규모" in query:
-        return "ifrs-full_Assets", "자산 기준 랭킹"
-    if "매출" in query or "수익" in query or "잘나가" in query:
-        return "ifrs-full_Revenue", "매출액 기준 랭킹"
-    return None
+    metric_id = metric_for_query(query)
+    if not metric_id:
+        return None
+    return metric_id, f"{metric_label_for(metric_id)} 기준 랭킹"
 
 
 def _first_relation(query: str) -> tuple[RelationStep, str] | None:

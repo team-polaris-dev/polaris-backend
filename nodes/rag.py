@@ -41,11 +41,11 @@ def _is_corp_code(s: str) -> bool:
     return bool(s) and len(s) == 8 and s.isdigit()
 
 
-def _collect_corp_codes(state: AgentState, question: str) -> list[str]:
-    """앵커 corp_code 수집: graph_seeds → graph_facts → 질문 자가해소 순(순서보존 dedup).
+def _collect_graph_corp_codes(state: AgentState) -> list[str]:
+    """그래프 앵커 corp_code 만 수집(graph_seeds → graph_facts, 순서보존 dedup).
 
-    GraphDB 가 시드를 잡았으면 그걸 1순위로, 못 잡았으면 질문에서 직접 회사명을
-    결정론으로 해소한다(재무질문이 그래프 빈 결과에도 동작하도록).
+    질문 자가해소(resolve_corp_codes_from_text)는 넣지 않는다 — 호출부가 폴백 정책을
+    정한다. rdb/vec 둘 다 "관계도에서 뽑은 회사"를 1순위 앵커로 공유하는 단일 경로.
     """
     codes: list[str] = []
 
@@ -65,9 +65,19 @@ def _collect_corp_codes(state: AgentState, question: str) -> list[str]:
         add(str(extra.get("from_id") or ""))
         add(str(extra.get("to_id") or ""))
 
-    for c in resolve_corp_codes_from_text(question):
-        add(c)
+    return codes
 
+
+def _collect_corp_codes(state: AgentState, question: str) -> list[str]:
+    """앵커 corp_code 수집: graph 앵커 → 질문 자가해소 순(순서보존 dedup, 상한 적용).
+
+    GraphDB 가 시드를 잡았으면 그걸 1순위로, 못 잡았으면 질문에서 직접 회사명을
+    결정론으로 해소한다(재무질문이 그래프 빈 결과에도 동작하도록).
+    """
+    codes = _collect_graph_corp_codes(state)
+    for c in resolve_corp_codes_from_text(question):
+        if _is_corp_code(c) and c not in codes:
+            codes.append(c)
     return codes[:_CORP_CODE_CAP]
 
 
@@ -206,13 +216,17 @@ def _chunk_to_unified(row: dict) -> UnifiedResult:
 
 
 def vector_search_node(state: AgentState):
-    """Vector 검색: 하이브리드 검색(Dense+BM25+rerank) → UnifiedResult 리스트.
+    """Vector 검색: 그래프 앵커로 회사를 한정한 하이브리드 검색(Dense+BM25+rerank).
 
-    실패하거나 결과가 없으면 vec_results=[] 를 반환해 파이프라인을 보호한다.
+    회사 필터는 관계도에서 뽑은 앵커(graph_seeds/graph_facts)를 1순위로 쓴다 — 벡터
+    검색이 "관계도에서 뽑은 회사"를 근거로 답을 찾게 한다(질문 텍스트만으로 회사를
+    추측하던 오염 제거). 그래프가 비면 search_vector_db 가 질문에서 폴백한다. 임베딩/
+    BM25 질의는 질문 그대로(의미 관련도). 실패·0건은 vec_results=[] 로 보호한다.
     """
     question = state.get("reconstructed_query") or _last_human_text(state)
     try:
-        rows = search_vector_db(question)
+        corp_codes = _collect_graph_corp_codes(state)[:_CORP_CODE_CAP]
+        rows = search_vector_db(question, corp_codes=corp_codes or None)
         if not rows:
             # 정상 0건 — 검색은 동작했고 관련 청크가 없었다(관련도 하한/메타필터).
             # 아래 예외 경로(검색 자체 실패)와 구분해 로깅한다. 콜드스타트 0건은

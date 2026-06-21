@@ -18,7 +18,11 @@ from config.graphrag import (
     STRUCTURED_MIN_EVIDENCE,
     STRUCTURED_MIN_EVIDENCE_OPERATING,
 )
-from config.relations import NETWORK_REL_TYPES
+from config.relations import (
+    NETWORK_REL_TYPES,
+    SUPPLY_NOISE_NAME_TERMS,
+    corp_name_variants,
+)
 from graphrag.plan_schema import BranchRankStep, MetricRankStep, RelationStep, StructuredPlan
 from graphrag.schema import GraphHit, Seed
 
@@ -50,7 +54,7 @@ _TYPE_ATTESTED_RELS = {"RELATED_PARTY"}
 # 출자현황·대주주현황은 DART 공시 '표'에서 와서 서술형 청크 본문이 없다(rcept_no 출처만 보유).
 # 표의 rcept_no 출처 자체가 1차 근거이므로, 본문 청크/관계어를 요구하는 게이트 대신 출처 보유만
 # 확인하는 별도 게이트로 분리한다(_candidate_supported 참고).
-_SOURCE_ATTESTED_RELS = {"INVESTS_IN", "IS_MAJOR_SHAREHOLDER_OF"}
+_SOURCE_ATTESTED_RELS = {"INVESTS_IN", "IS_MAJOR_SHAREHOLDER_OF", "IS_SUBSIDIARY_OF"}
 
 # 엣지 근거 신뢰도 사다리(_score_edge_evidence). 출처+청크본문+양끝언급+관계어가 모두 있으면
 # 최상(FULL), 단계적으로 약해진다. config 로 빼지 않는다 — 게이트 임계(STRUCTURED_MIN_EVIDENCE
@@ -73,9 +77,7 @@ _ANSWER_HIT_DEFAULT_SCORE = 0.95   # add_answer_hit 기본(메트릭 랭킹 1위
 # SUPPLIES_TO 질의 시점 노이즈 게이트(_passes_noise_gate). 적재 과정에서 SUPPLIES_TO 에는
 # corp_code 없는 외부/제품 노드와 운영 공급사가 아닌 금융기관(대주·인수단)이 섞인다. 엣지를
 # 지우지 않고 랭킹 후보에서만 비파괴적으로 빼 되돌릴 수 있게 한다. 운영 거래상대만 남긴다.
-_SUPPLY_NOISE_NAME_TERMS = (
-    "은행", "증권", "보험", "캐피탈", "저축은행", "카드사", "금융지주", "자산운용",
-)
+# 노이즈 단어 목록은 config/relations.json 단어집(SUPPLY_NOISE_NAME_TERMS)이 SSOT.
 
 
 def _placeholders(n: int) -> str:
@@ -156,15 +158,8 @@ def _norm_evidence_text(value: str) -> str:
 
 
 def _name_variants(name: str) -> set[str]:
-    base = _norm_evidence_text(name)
-    variants = {base} if base else set()
-    if base.startswith("에스케이"):
-        variants.add("sk" + base[len("에스케이"):])
-    if base.startswith("sk"):
-        variants.add("에스케이" + base[2:])
-    if "하이닉스" in base:
-        variants.add("하이닉스")
-    return {v for v in variants if len(v) >= 2}
+    # 별칭 변형 규칙(에스케이↔SK 음역, 하이닉스 약칭)은 config/relations.json 단어집이 SSOT.
+    return corp_name_variants(_norm_evidence_text(name))
 
 
 def _mentions_name(text_norm: str, name: str) -> bool:
@@ -843,11 +838,46 @@ def _passes_noise_gate(candidate: dict[str, Any], rel_type: str) -> bool:
     if not candidate.get("corp_code"):
         return False
     name = str(candidate.get("name") or "")
-    return not any(term in name for term in _SUPPLY_NOISE_NAME_TERMS)
+    return not any(term in name for term in SUPPLY_NOISE_NAME_TERMS)
 
 
 def _gate_candidates(candidates: list[dict[str, Any]], rel_type: str) -> list[dict[str, Any]]:
     return [c for c in candidates if _passes_noise_gate(c, rel_type)]
+
+
+def _candidate_rel_type(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("edge", {}).get("rel_type") or "")
+
+
+def _gather_hop_candidates(
+    anchor: dict[str, Any],
+    hop: Any,
+    *,
+    exclude_ids: set[str],
+) -> list[dict[str, Any]]:
+    """홉의 모든 관계(hop.rel_steps())를 펼쳐 후보를 합집합으로 모은다(노드 id 기준 dedupe).
+
+    '수혜'처럼 영향이 한 관계로만 흐르지 않는 복합 홉을 위해 공급·지분·지배·투자·특수관계
+    후보를 한 풀로 합친다. 관계 배열의 순서 = LLM 선호: 같은 노드가 여러 관계로 닿으면 먼저
+    나온 관계의 엣지를 대표로 남겨, 어떤 관계로 보여줄지를 LLM 이 정하게 한다(executor 가
+    "지분이 공급을 이긴다" 같은 룰을 박지 않는다). 노이즈 게이트는 관계별 rel_type 으로 적용.
+    단일 관계 홉이면 기존 _relation_candidates+노이즈게이트와 동일한 결과.
+    """
+    anchor_id = str(anchor.get("id") or "")
+    excl = exclude_ids | {anchor_id}
+    by_id: dict[str, dict[str, Any]] = {}
+    for step in hop.rel_steps():
+        relation = _resolve_relation_for_anchor(anchor, step)
+        cands = _gate_candidates(
+            _relation_candidates(anchor, relation, exclude_ids=excl),
+            relation.rel_type,
+        )
+        for cand in cands:
+            cid = str(cand.get("id") or "")
+            if not cid or cid in by_id:
+                continue
+            by_id[cid] = cand
+    return list(by_id.values())
 
 
 def _candidate_is_fertile(
@@ -864,16 +894,11 @@ def _candidate_is_fertile(
     동일하게 적용해, "전방에서도 채택 가능한가" 를 같은 기준으로 본다.
     """
     anchor = _anchor_from_candidate(candidate)
-    relation = _resolve_relation_for_anchor(anchor, next_hop.relation)
-    anchor_id = str(anchor.get("id") or "")
-    cands = _gate_candidates(
-        _relation_candidates(anchor, relation, exclude_ids=exclude_ids | {anchor_id}),
-        relation.rel_type,
-    )
+    cands = _gather_hop_candidates(anchor, next_hop, exclude_ids=exclude_ids)
     if not cands:
         return False
     _attach_candidate_evidence(cands)
-    return any(_candidate_supported(c, relation.rel_type) for c in cands)
+    return any(_candidate_supported(c, _candidate_rel_type(c)) for c in cands)
 
 
 def _select_hop_candidates(
@@ -965,17 +990,12 @@ def _execute_multi_hop_chain(
         selected_in_hop: set[str] = set()
         selected_names: list[str] = []
         for anchor in frontier:
-            relation = _resolve_relation_for_anchor(anchor, hop.relation)
-            anchor_id = str(anchor.get("id") or "")
-            candidates = _gate_candidates(
-                _relation_candidates(anchor, relation, exclude_ids=visited_ids | {anchor_id}),
-                relation.rel_type,
-            )
+            candidates = _gather_hop_candidates(anchor, hop, exclude_ids=visited_ids)
             if not candidates:
                 continue
             _attach_candidate_evidence(candidates)
             ranked = _rank_candidates(candidates, hop.rank.metric_id, year, policy=hop.policy)
-            supported = [c for c in ranked if _candidate_supported(c, relation.rel_type)]
+            supported = [c for c in ranked if _candidate_supported(c, _candidate_rel_type(c))]
             chosen = _select_hop_candidates(
                 supported, hop.top_n, next_hop=next_hop, year=year, visited_ids=visited_ids,
             )
@@ -997,6 +1017,7 @@ def _execute_multi_hop_chain(
         hop_results.append({
             "depth": depth + 1,
             "relation": hop.relation.__dict__,
+            "relations": [r.__dict__ for r in hop.rel_steps()],
             "metric": hop.rank.metric_id,
             "metric_label": _METRIC_LABEL.get(hop.rank.metric_id, hop.rank.metric_id),
             "top_n": hop.top_n,

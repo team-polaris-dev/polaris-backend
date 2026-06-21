@@ -13,7 +13,6 @@ import time
 from typing import Iterable
 
 from config.graphrag import PPR_ENABLED, TEXT2CYPHER_ENABLED
-from config.relations import FOCUS_KEYWORD_GROUPS as _FOCUS_KEYWORDS
 from config.relations import metric_for_query
 from graphrag.cypher_executor import _anchor_code, map_results, rank_results
 from graphrag.matcher import match
@@ -72,30 +71,6 @@ def _structured_abstain_output(
             "errors": errors,
         },
     }
-
-
-def _relation_focus(query: str) -> set[str]:
-    """질문에서 어떤 관계를 앞세울지 결정. 매칭 없으면 빈 set(=전체)."""
-    focus: set[str] = set()
-    for keywords, rels in _FOCUS_KEYWORDS:
-        if any(k in query for k in keywords):
-            focus.update(rels)
-    return focus
-
-
-def _apply_focus(hits: list[GraphHit], focus: set[str]) -> list[GraphHit]:
-    """관계 hit을 focus 유형으로 스코프. 비관계 hit(노드/속성)은 보존.
-    과필터로 관계가 0이 되면 원본 유지(빈 망 방지)."""
-    if not focus:
-        return hits
-    kept = [
-        h for h in hits
-        if h.get("label") != "relationship"
-        or h.get("attrs", {}).get("rel_type") in focus
-    ]
-    if any(h.get("label") == "relationship" for h in kept):
-        return kept
-    return hits
 
 
 def _try_text2cypher(
@@ -238,14 +213,6 @@ def search(
                     patterns_run.append(f"fallback({sd['id']})")
                 except Exception as e:
                     errors.append(f"fallback({sd['id']}): {e}")
-
-    # 질문 키워드로 관계 스코프 (주주→지분망 / 공급망→공급망). 질문 무관 덤프 방지.
-    focus = _relation_focus(query)
-    if focus:
-        before = len(hits)
-        hits = _apply_focus(hits, focus)
-        if len(hits) != before:
-            patterns_run.append("focus(" + "+".join(sorted(focus)) + ")")
 
     elapsed = (time.perf_counter() - started) * 1000.0
 

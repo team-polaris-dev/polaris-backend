@@ -125,10 +125,11 @@ async def _run_codex_cli(session: CodexSession, prompt: str) -> str:
         *args,
         cwd=session.options.cwd,
         env=process_env,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await process.communicate()
+    stdout, stderr = await process.communicate(input=prompt.encode("utf-8"))
     stdout_text = stdout.decode("utf-8", errors="replace")
     stderr_text = stderr.decode("utf-8", errors="replace")
 
@@ -164,12 +165,12 @@ def _codex_cli_args(session: CodexSession, prompt: str) -> list[str]:
     if session.cli_session_id:
         args = ["codex", "exec", "resume", "--json"]
         args.extend(_codex_resume_flags(options))
-        args.extend([session.cli_session_id, prompt])
+        args.extend([session.cli_session_id, "-"])
         return args
 
     args = ["codex", "exec", "--json"]
     args.extend(_codex_initial_flags(options))
-    args.append(prompt)
+    args.append("-")
     return args
 
 

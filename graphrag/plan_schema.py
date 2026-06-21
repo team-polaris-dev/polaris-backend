@@ -68,12 +68,22 @@ class HopStep:
     relation 으로 현재 frontier 에서 한 홉 펼치고, rank 지표로 줄세워 상위 top_n 을
     답으로 채택한다. 채택된 후보가 다음 홉의 앵커(frontier)가 된다. policy 는 후보
     버킷팅(operating_counterparty 면 지배 허브 강등)을 고른다.
+
+    relations 가 비어있지 않으면 그 홉은 '복합' 홉이다 — 여러 관계(공급·지분·지배·투자·
+    특수관계)의 후보를 합집합으로 모은 뒤 한 지표로 함께 줄세운다. '수혜'처럼 영향이
+    한 관계로만 흐르지 않는 질문을 LLM 이 복합으로 펼치게 하는 레버. 비어있으면 relation
+    단일 홉(기존 동작). relation 은 항상 복합집합의 첫 원소로 채워둔다(표시·하위호환).
     """
 
     relation: RelationStep
     rank: MetricRankStep
     top_n: int = 3
     policy: FirstCandidatePolicy = "default"
+    relations: tuple[RelationStep, ...] = ()
+
+    def rel_steps(self) -> tuple[RelationStep, ...]:
+        """이 홉이 펼칠 관계들. 복합이면 relations, 아니면 relation 단일."""
+        return self.relations or (self.relation,)
 
 
 @dataclass(frozen=True)
@@ -104,6 +114,7 @@ class StructuredPlan:
             "hops": [
                 {
                     "relation": h.relation.__dict__,
+                    "relations": [r.__dict__ for r in h.rel_steps()],
                     "rank": h.rank.__dict__,
                     "top_n": h.top_n,
                     "policy": h.policy,

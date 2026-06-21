@@ -121,9 +121,14 @@ OPENAI_API_KEY="sk-your-api-key-here"
 ### 3. 서버 실행
 (db 연결 시 docker-compose up -d )
 
-FastAPI 서버를 실행합니다. 코드가 수정될 때마다 자동으로 재시작(`--reload`) 됩니다.
+FastAPI 서버를 실행합니다. 코드가 수정될 때마다 자동으로 재시작(`reload`) 됩니다.
 
-uvicorn main:api --reload
+python main.py
+
+> `uvicorn main:api --reload` 로 직접 띄우지 마세요. 이 CLI 형태는 `.venv` 까지 감시 대상에
+> 포함해, in-process LLM 호출이 `.venv` 패키지 파일을 건드리는 순간 요청 도중 리로드가
+> 일어나 `/api/chat` 이 500 으로 끊깁니다. `python main.py` 는 감시 대상을 앱 소스
+> 디렉터리로만 한정하므로 안전합니다.
 
 
 ---

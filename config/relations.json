@@ -1,0 +1,122 @@
+{
+  "relations": [
+    {
+      "type": "IS_MAJOR_SHAREHOLDER_OF",
+      "weight": 3.0,
+      "ko_label": "대주주",
+      "legacy_type": "shareholder",
+      "is_network": true,
+      "aliases": ["주주", "지분", "대주주", "최대주주", "주식", "소유", "오너"],
+      "desc": "주주/지분 관계. 후보가 기준 회사 지분을 보유한 주주(지배력·이익 공유 경로)."
+    },
+    {
+      "type": "IS_SUBSIDIARY_OF",
+      "weight": 3.0,
+      "ko_label": "자회사",
+      "legacy_type": "subsidiary",
+      "is_network": true,
+      "aliases": ["자회사", "종속", "종속회사", "모회사", "지배구조", "지배", "계열"],
+      "desc": "자회사/종속·모회사 관계. 지배구조를 타고 이익이 모회사로 흐른다."
+    },
+    {
+      "type": "INVESTS_IN",
+      "weight": 2.5,
+      "ko_label": "투자",
+      "legacy_type": "investment",
+      "is_network": true,
+      "aliases": ["투자", "출자", "지분투자", "투자관계", "출자관계"],
+      "desc": "투자/출자 관계."
+    },
+    {
+      "type": "SUPPLIES_TO",
+      "weight": 2.5,
+      "ko_label": "공급",
+      "legacy_type": "supply",
+      "is_network": true,
+      "aliases": ["공급", "납품", "협력사", "벤더", "거래처", "조달", "매입", "고객", "고객사", "매출처", "납품처", "공급망"],
+      "desc": "공급/납품 관계. incoming=후보가 기준 회사에 공급(공급사), outgoing=기준 회사가 후보에 공급(고객/매출처), 애매하면 auto."
+    },
+    {
+      "type": "EXECUTIVE_OF",
+      "weight": 1.5,
+      "ko_label": "임원",
+      "legacy_type": "executive",
+      "is_network": false,
+      "aliases": ["임원", "대표", "대표이사", "경영진", "이사", "CEO"],
+      "desc": ""
+    },
+    {
+      "type": "PRODUCES",
+      "weight": 1.5,
+      "ko_label": "생산",
+      "legacy_type": "produces",
+      "is_network": false,
+      "aliases": ["제품", "생산", "만드", "품목"],
+      "desc": ""
+    },
+    {
+      "type": "USES_TECH",
+      "weight": 1.5,
+      "ko_label": "기술",
+      "legacy_type": "uses_tech",
+      "is_network": false,
+      "aliases": ["기술", "공정"],
+      "desc": ""
+    },
+    {
+      "type": "RELATED_PARTY",
+      "weight": 1.0,
+      "ko_label": "특수관계",
+      "legacy_type": "related_party",
+      "is_network": true,
+      "aliases": ["특수관계", "특수관계자", "관련 회사", "관계기업", "계열거래"],
+      "desc": "특수관계자/관련 회사. 방향은 보통 undirected."
+    },
+    {
+      "type": "INTERLOCKING_DIRECTORATE",
+      "weight": 0.5,
+      "ko_label": "겸직",
+      "legacy_type": "interlocking_directorate",
+      "is_network": true,
+      "aliases": ["겸직", "겸임"],
+      "desc": ""
+    }
+  ],
+  "chain_relation_types": [
+    "IS_MAJOR_SHAREHOLDER_OF",
+    "IS_SUBSIDIARY_OF",
+    "INVESTS_IN",
+    "SUPPLIES_TO",
+    "RELATED_PARTY"
+  ],
+  "composite_concepts": {
+    "수혜": {
+      "aliases": ["수혜", "낙수", "파급", "이득", "이익", "혜택", "수혜주"],
+      "relations": ["IS_MAJOR_SHAREHOLDER_OF", "IS_SUBSIDIARY_OF", "INVESTS_IN", "SUPPLIES_TO", "RELATED_PARTY"],
+      "note": "한 회사가 오르면 이득을 보는 경로는 공급(SUPPLIES_TO)뿐 아니라 지분/지배(IS_MAJOR_SHAREHOLDER_OF, IS_SUBSIDIARY_OF), 투자(INVESTS_IN), 특수관계(RELATED_PARTY)로도 흐른다. 질문이 한 경로로 못박지 않으면 그 홉의 relation 배열에 이 관계들을 함께 담아 복합으로 펼친다 — 공급 하나로 좁히지 말 것."
+    }
+  },
+  "ingest_edge_types": ["PRODUCES", "USES_TECH", "SUPPLIES_TO", "RELATED_PARTY", "hasObject"],
+  "rank_terms": ["가장", "최고", "1위", "상위", "제일", "많은", "높은", "잘나가", "최대", "최다"],
+  "rank_nonintent_compounds": ["최대 주주", "최대주주", "대주주"],
+  "metric_by_term": [
+    [["영업이익"], "dart_OperatingIncomeLoss"],
+    [["순이익", "당기순이익"], "ifrs-full_ProfitLoss"],
+    [["자산", "규모"], "ifrs-full_Assets"],
+    [["매출", "수익", "잘나가"], "ifrs-full_Revenue"]
+  ],
+  "metric_labels": {
+    "dart_OperatingIncomeLoss": "영업이익",
+    "ifrs-full_ProfitLoss": "순이익",
+    "ifrs-full_Assets": "자산",
+    "ifrs-full_Revenue": "매출액"
+  },
+  "supply_noise_name_terms": ["은행", "증권", "보험", "캐피탈", "저축은행", "카드사", "금융지주", "자산운용"],
+  "corp_name_aliases": {
+    "prefix_transliterations": [["에스케이", "sk"]],
+    "substring_shortcuts": ["하이닉스"]
+  },
+  "group_scope_terms": ["계열사", "계열회사", "그룹사", "그룹", "계열", "관계사"],
+  "macro_terms": ["업계", "업종", "산업", "시장", "전반", "트렌드", "동향", "큰 그림", "큰그림", "생태계", "흐름", "지형", "판도", "대기업"],
+  "metric_terms": ["매출액", "매출", "수익", "영업이익", "순이익", "당기순이익", "자산", "부채", "자본"]
+}

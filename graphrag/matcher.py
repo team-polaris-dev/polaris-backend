@@ -18,7 +18,12 @@ from config.graphrag import (
     SEED_SCORE_BAND,
 )
 # 회사명 정규화·일반어 판정은 SSOT(config.entities). _norm 은 정확매칭 판정용 별칭.
-from config.entities import normalize_corp_name as _norm, is_generic_org, LABEL_MAP as _LABEL_MAP
+from config.entities import (
+    GENERIC_ORG_TERMS,
+    LABEL_MAP as _LABEL_MAP,
+    is_generic_org,
+    normalize_corp_name as _norm,
+)
 from config.relations import METRIC_TERMS
 from tool.graph_client import neo4j_driver
 from graphrag.schema import Seed
@@ -42,26 +47,29 @@ def escape_lucene(q: str) -> str:
     return _LUCENE_SPECIAL.sub(r"\\\1", q)
 
 
-# 토큰 끝 조사(은/는/이/가 …) — 지표어 정확매칭을 위해 제거한다("매출은" → "매출").
-_METRIC_JOSA = ("으로", "은", "는", "이", "가", "을", "를", "의", "로", "과", "와", "도", "만")
-_METRIC_TERM_SET = frozenset(METRIC_TERMS)
+# 토큰 끝 조사(은/는/이/가 …) — 불용어 정확매칭을 위해 제거한다("매출은" → "매출").
+_LINK_JOSA = ("으로", "은", "는", "이", "가", "을", "를", "의", "로", "과", "와", "도", "만")
+# 엔티티 링킹 풀텍스트에서 떼어낼 불용어 = 재무 지표어(랭킹 차원) + 회사/기업류 일반명사.
+# 둘 다 회사명이 아닌데 FULLTEXT cjk 가 Product 노드(매출채권)·실재 노드(기업은행)에 매칭해
+# 시드 슬롯을 잠식한다. 단어집은 config(relations.METRIC_TERMS·entities.GENERIC_ORG_TERMS).
+_LINK_STOPWORDS = frozenset(METRIC_TERMS) | frozenset(GENERIC_ORG_TERMS)
 
 
-def _strip_metric_terms(query: str) -> str:
-    """엔티티 링킹(풀텍스트)용으로 재무 지표어 *독립 토큰*만 제거한다.
+def _strip_link_stopwords(query: str) -> str:
+    """엔티티 링킹(풀텍스트)용으로 불용어 *독립 토큰*만 제거한다.
 
-    "매출"은 회사명이 아니라 랭킹 차원인데 entity_fulltext 에 매출채권/수출매출 같은 Product
-    노드가 있어 시드 슬롯을 잠식한다. 토큰 단위로만 떼므로 '삼성자산운용' 같은 회사명 토큰은
-    보존된다(부분문자열 치환이 아님). 원 질의는 그대로 두고 풀텍스트 검색에만 이 결과를 쓴다.
+    "매출"(랭킹 차원)·"기업"(보통명사)은 회사명이 아닌데 entity_fulltext 에 매출채권 Product·
+    기업은행 같은 노드가 있어 가짜 시드가 잡힌다. 토큰 단위로만 떼므로 '삼성자산운용'·'기업은행'
+    같은 회사명 토큰은 보존된다(부분문자열 치환이 아님). 원 질의는 그대로 두고 풀텍스트에만 쓴다.
     """
     kept: list[str] = []
     for tok in (query or "").split():
         bare = tok
-        for josa in _METRIC_JOSA:
+        for josa in _LINK_JOSA:
             if bare.endswith(josa) and len(bare) > len(josa):
                 bare = bare[: -len(josa)]
                 break
-        if bare in _METRIC_TERM_SET:
+        if bare in _LINK_STOPWORDS:
             continue
         kept.append(tok)
     return " ".join(kept)
@@ -149,8 +157,8 @@ def match_fulltext(
 
     limit 은 FULLTEXT 후보 풀 크기, max_seeds 는 최종 시드 상한이다.
     """
-    # 풀텍스트 검색어에서만 지표어 토큰을 제거(원 query 는 _select 의 strong 판정에 그대로 씀).
-    q = escape_lucene(_strip_metric_terms(query).strip())
+    # 풀텍스트 검색어에서만 불용어 토큰을 제거(원 query 는 _select 의 strong 판정에 그대로 씀).
+    q = escape_lucene(_strip_link_stopwords(query).strip())
     if not q:
         return []
 

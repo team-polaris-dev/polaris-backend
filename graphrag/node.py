@@ -9,7 +9,7 @@ import logging
 
 from config.entities import normalize_corp_name as _norm
 from tool.graph_client import neo4j_driver
-from graphrag import planner
+from graphrag import chain_planner, planner
 from graphrag.matcher import match
 from graphrag.router import classify
 from graphrag.schema import adapt_to_legacy
@@ -168,6 +168,11 @@ def effective_query(state: dict) -> str:
     original = _last_human_text(state)
     if not original or original == reconstructed:
         return reconstructed
+    # 다중홉 전파(수혜의 수혜) 보존: 재구성이 전파/반복 cue 를 표준어 치환으로 지우면
+    # ("수혜"→"제품을 공급하는 협력사") 복합 체인이 단일 공급 랭킹으로 무너진다. 원문이
+    # 체인 cue 를 갖는데 재구성이 잃었으면 원문을 써 LLM 라우터가 복합 관계를 직접 펼치게 한다.
+    if chain_planner._looks_chain(original) and not chain_planner._looks_chain(reconstructed):
+        return original
     orig_plan = planner.plan(original)
     if orig_plan and orig_plan.kind in _RECONSTRUCT_PRESERVE_KINDS:
         recon_plan = planner.plan(reconstructed)

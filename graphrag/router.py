@@ -20,6 +20,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from config.relations import render_chain_relation_vocab
 from graphrag import chain_planner, graph_mode, planner
 from graphrag.plan_schema import StructuredPlan
 
@@ -178,9 +179,12 @@ question_type (질문 종류):
   만 묻는 질문. 관계가 필요 없다. 대표이사·임원·경영진 같은 인물은 속성이 아니라 관계이므로
   silent 가 아니다(relation_explore).
 
-chain 일 때 hops 각 단계는 아래 허용값만 쓴다.
-허용 relation: SUPPLIES_TO(공급/납품), RELATED_PARTY(특수관계), IS_MAJOR_SHAREHOLDER_OF(주주),
-IS_SUBSIDIARY_OF(자회사), INVESTS_IN(투자).
+chain 일 때 hops 각 단계의 relation 은 아래 단어집의 관계 타입만 쓴다. 각 관계의 한글
+관련어를 보고 질문 표현이 어느 관계(들)에 해당하는지 판단하라. 한 표현이 여러 관계에 걸리는
+복합 신호(수혜 등)는 그 관계들을 한 relation 배열에 함께 담아 펼친다 — 하나로 좁히지 말 것.
+
+""" + render_chain_relation_vocab() + """
+
 허용 rank_metric: ifrs-full_Revenue(매출), dart_OperatingIncomeLoss(영업이익),
 ifrs-full_ProfitLoss(순이익), ifrs-full_Assets(자산).
 
@@ -193,10 +197,12 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
   "question_type": "chain|community_member_rank|multi_anchor_rank|relation_rank|relation_explore|relation_only|macro|silent",
   "hops": [
     {{
-      "relation": {{
-        "rel_type": "SUPPLIES_TO|RELATED_PARTY|IS_MAJOR_SHAREHOLDER_OF|IS_SUBSIDIARY_OF|INVESTS_IN",
-        "direction": "incoming|outgoing|undirected|auto"
-      }},
+      "relation": [
+        {{
+          "rel_type": "SUPPLIES_TO|RELATED_PARTY|IS_MAJOR_SHAREHOLDER_OF|IS_SUBSIDIARY_OF|INVESTS_IN",
+          "direction": "incoming|outgoing|undirected|auto"
+        }}
+      ],
       "rank_metric": "ifrs-full_Revenue|dart_OperatingIncomeLoss|ifrs-full_ProfitLoss|ifrs-full_Assets",
       "top_n": 3,
       "policy": "default|operating_counterparty"
@@ -208,9 +214,13 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 규칙:
 - question_type 은 항상 하나 고른다.
 - hops 는 question_type 이 chain 일 때만 채운다(최소 2홉, 단계 순서대로). 그 외엔 빈 배열 [].
-- chain 의 '수혜/낙수/거래'는 보통 SUPPLIES_TO(고객·매출처=outgoing, 공급사=incoming,
-  애매하면 auto)이고 후보는 매출(ifrs-full_Revenue)로 줄세운다. top_n 은 질문이 N개를
-  명시하면 그 수, 아니면 3.
+- 각 hop 의 relation 은 관계 객체의 '배열'이다. 한 관계만 맞으면 길이 1, '복합' 경로면 여러
+  관계를 한 배열에 담는다 — 그 홉에서 모든 관계의 후보를 합쳐 한 지표로 함께 줄세운다.
+- chain 의 '수혜/낙수/거래'는 복합 신호다. 한 회사가 오르면 이득은 공급(SUPPLIES_TO: 공급사
+  =incoming, 고객=outgoing, 애매하면 auto)뿐 아니라 지분/지배(IS_MAJOR_SHAREHOLDER_OF,
+  IS_SUBSIDIARY_OF), 투자(INVESTS_IN), 특수관계(RELATED_PARTY)로도 흐른다. 질문이 한 경로로
+  못박지 않으면 relation 배열에 해당 관계들을 함께 담아라 — 공급 하나로 좁히지 말 것. 후보는
+  기본 매출(ifrs-full_Revenue)로 줄세운다. top_n 은 질문이 N개를 명시하면 그 수, 아니면 3.
 - 단일 단계 '수혜주' 질문은 chain 이 아니다(전파가 한 번뿐). 관계 랭킹이면 relation_rank.
 - 거래금액·점유율처럼 노드 지표가 아닌 크기로 줄세우라는 질문은 relation_only(억지 1위 금지).
 - 대표이사·임원·경영진 등 인물을 묻는 질문은 silent 가 아니라 relation_explore.

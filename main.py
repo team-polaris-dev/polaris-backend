@@ -317,5 +317,24 @@ def chat_digest_endpoint(request: DigestRequest):
 
 # 직접 실행할 때를 위한 엔트리포인트
 if __name__ == "__main__":
+    import os
+
+    # reload 감시 대상을 앱 소스 디렉터리로만 한정한다. uvicorn --reload 의 기본값은
+    # cwd 전체(.venv 포함)의 *.py 를 감시하는데, in-process LLM 프로바이더(codex/apimaker)
+    # 가 요청 처리 중 .venv\site-packages 패키지 파일 mtime 을 건드리면 WatchFiles 가
+    # 그걸 변경으로 보고 요청 도중 리로드를 트리거한다 → in-flight /api/chat 워커가
+    # 죽어 500, 리로드 창 동안 백엔드가 잠깐 끊겨 프론트가 "백엔드가 켜져 있는지" 표시.
+    # 소스 디렉터리만 감시하면 .venv 변경에는 반응하지 않아 이 현상이 사라진다.
+    _base = os.path.dirname(os.path.abspath(__file__))
+    _reload_dirs = [
+        os.path.join(_base, d)
+        for d in ("core", "nodes", "routers", "services", "tool", "graphrag", "config", "schemas")
+    ]
     # uvicorn 웹 서버를 통해 FastAPI 앱 실행
-    uvicorn.run("main:api", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:api",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_dirs=_reload_dirs,
+    )
