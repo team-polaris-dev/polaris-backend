@@ -19,6 +19,10 @@ GraphRAG 런타임은 이 엣지를 읽기만 한다(생성 금지 — CLAUDE.md
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # -m 실행 시 db 모듈 해석
 
 from db import neo4j_driver
 
