@@ -1,7 +1,7 @@
 """Personalized PageRank 기반 시드 관련성 랭킹.
 
 하이퍼 연결 그래프(허브 차수 수천)에서 시드에 *진짜* 가까운 노드를 뽑는다.
-순수 파이썬 power iteration — GDS·networkx 등 외부 의존성 없음.
+networkx.pagerank(personalization=시드) 표준 PPR.
 
 흐름:
 1. seeds → elementId
@@ -15,9 +15,10 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, TypedDict
 
+import networkx as nx
+
 from config.graphrag import (
     PPR_ALPHA,
-    PPR_ITERS,
     PPR_NEIGHBORHOOD_LIMIT,
     PPR_TOP_NODES,
 )
@@ -117,28 +118,23 @@ def _domain_edges(session, eids: list[str]) -> list[tuple[str, str, str]]:
     return [(r["a"], r["b"], r["t"]) for r in rows]
 
 
-def _power_iteration(
+def _ppr_scores(
     adj: dict[str, list[tuple[str, float]]], seed_eids: list[str]
 ) -> dict[str, float]:
-    """가중 무방향 인접에서 시드 personalization PPR. r = (1-α)s + α·Wr."""
-    nodes = list(adj.keys())
-    if not nodes:
+    """가중 무방향 그래프에서 시드 personalization PPR (nx.pagerank)."""
+    if not adj:
         return {}
-    seeds_in = [e for e in seed_eids if e in adj] or nodes
-    s = {n: (1.0 / len(seeds_in) if n in seeds_in else 0.0) for n in nodes}
-    outw = {n: sum(w for _, w in adj[n]) or 1.0 for n in nodes}
-    r = dict(s)
-    for _ in range(PPR_ITERS):
-        nr = {n: (1.0 - PPR_ALPHA) * s[n] for n in nodes}
-        for n in nodes:
-            rn = r[n]
-            if not rn:
-                continue
-            share = PPR_ALPHA * rn / outw[n]
-            for m, w in adj[n]:
-                nr[m] += share * w
-        r = nr
-    return r
+    g = nx.Graph()
+    g.add_nodes_from(adj)
+    for n, nbrs in adj.items():
+        for m, w in nbrs:
+            if not g.has_edge(n, m):
+                g.add_edge(n, m, weight=w)
+    pers = {e: 1.0 for e in seed_eids if e in g} or None  # 시드 없으면 균일 teleport(=표준 PageRank)
+    try:
+        return nx.pagerank(g, alpha=PPR_ALPHA, personalization=pers, weight="weight")
+    except nx.PowerIterationFailedConvergence:
+        return nx.pagerank(g, alpha=PPR_ALPHA, personalization=pers, weight="weight", max_iter=300)
 
 
 def ppr_rank(seeds: list[Seed]) -> list[PPRNode]:
@@ -165,7 +161,7 @@ def ppr_rank(seeds: list[Seed]) -> list[PPRNode]:
         adj[a].append((b, w))
         adj[b].append((a, w))
 
-    scores = _power_iteration(adj, seed_eids)
+    scores = _ppr_scores(adj, seed_eids)
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
     top = ranked[:PPR_TOP_NODES]
