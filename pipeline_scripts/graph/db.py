@@ -12,23 +12,32 @@ from pathlib import Path
 
 import sys
 import pymysql
+from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
 # repo 루트를 path 에 넣어 적재 컨텍스트(cd pipeline_scripts)에서도 config 임포트 보장
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from config.entities import normalize_corp_name  # noqa: E402  (ER 정규화 SSOT)
 
-# ── 접속 정보 (실제 가동 컨테이너) ──────────────────────────
+# .env 로드 — 스탠드얼론 스크립트(백엔드 config 미경유)도 서버 포트 설정을 받도록.
+# 서버는 DB 호스트 포트가 16xxx 로 매핑돼 7687/3307 하드코딩이면 거부당한다.
+load_dotenv()
+
+# ── 접속 정보 — .env(MARIADB_*/NEO4J_*) 우선, 없으면 로컬 기본값 ──────────
+# 백엔드(tool/rdb_client·tool/graph_client)와 동일한 env 변수명을 쓴다.
 MARIADB = dict(
-    host="localhost",
-    port=3307,
-    user="polaris",
-    password="polaris_dev_only",
-    database="polaris",
+    host=os.getenv("MARIADB_HOST", "localhost"),
+    port=int(os.getenv("MARIADB_PORT") or 3307),
+    user=os.getenv("MARIADB_USER", "polaris"),
+    password=os.getenv("MARIADB_PASSWORD", "polaris_dev_only"),
+    database=os.getenv("MARIADB_DATABASE", "polaris"),
     charset="utf8mb4",
 )
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_AUTH = ("neo4j", "polaris_dev_only")
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_AUTH = (
+    os.getenv("NEO4J_USER", "neo4j"),
+    os.getenv("NEO4J_PASSWORD", "polaris_dev_only"),
+)
 
 # 회사 폴더명 → corp_code
 CORP_CODE = {
