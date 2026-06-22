@@ -216,11 +216,15 @@ _USER_TEMPLATE = """질문을 아래 JSON 스키마로만 변환하라.
 - hops 는 question_type 이 chain 일 때만 채운다(최소 2홉, 단계 순서대로). 그 외엔 빈 배열 [].
 - 각 hop 의 relation 은 관계 객체의 '배열'이다. 한 관계만 맞으면 길이 1, '복합' 경로면 여러
   관계를 한 배열에 담는다 — 그 홉에서 모든 관계의 후보를 합쳐 한 지표로 함께 줄세운다.
-- chain 의 '수혜/낙수/거래'는 복합 신호다. 한 회사가 오르면 이득은 공급(SUPPLIES_TO: 공급사
-  =incoming, 고객=outgoing, 애매하면 auto)뿐 아니라 지분/지배(IS_MAJOR_SHAREHOLDER_OF,
-  IS_SUBSIDIARY_OF), 투자(INVESTS_IN), 특수관계(RELATED_PARTY)로도 흐른다. 질문이 한 경로로
-  못박지 않으면 relation 배열에 해당 관계들을 함께 담아라 — 공급 하나로 좁히지 말 것. 후보는
-  기본 매출(ifrs-full_Revenue)로 줄세운다. top_n 은 질문이 N개를 명시하면 그 수, 아니면 3.
+- chain 의 '수혜/낙수/거래'는 복합 신호다. 한 회사가 오르면 이득은 공급(SUPPLIES_TO)뿐 아니라
+  지분/지배(IS_MAJOR_SHAREHOLDER_OF, IS_SUBSIDIARY_OF), 투자(INVESTS_IN), 특수관계
+  (RELATED_PARTY)로도 흐른다. 질문이 한 경로로 못박지 않으면 relation 배열에 해당 관계들을
+  함께 담아라 — 공급 하나로 좁히지 말 것(관계는 타입별로 따로 줄세워 보여주므로 섞어도 된다).
+- 단, 방향은 '주문·매출이 전파되는 쪽'으로 못박아라. 실적이 오른 회사의 수혜자는 그 회사의
+  공급사이므로 SUPPLIES_TO 는 incoming(공급사 쪽)이 기본이고, 다음 홉의 '낙수'도 직전 회사의
+  공급사(다시 incoming)다. outgoing(고객 쪽)은 질문이 '매출처·납품처·고객'을 명시할 때만,
+  auto 는 방향이 진짜 모호할 때만 쓴다. 후보는 기본 매출(ifrs-full_Revenue)로 줄세운다.
+  top_n 은 질문이 N개를 명시하면 그 수, 아니면 3.
 - 단일 단계 '수혜주' 질문은 chain 이 아니다(전파가 한 번뿐). 관계 랭킹이면 relation_rank.
 - 거래금액·점유율처럼 노드 지표가 아닌 크기로 줄세우라는 질문은 relation_only(억지 1위 금지).
 - 대표이사·임원·경영진 등 인물을 묻는 질문은 silent 가 아니라 relation_explore.
