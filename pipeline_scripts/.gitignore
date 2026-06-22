@@ -1,0 +1,16 @@
+# 런타임 데이터/상태 (fetch·chunk·extract 가 생성, cleanup 이 정리) — 커밋 금지
+raw/
+chunk/output/
+pdf/
+graph/ledger/
+graph/_auto/
+extra_finance/raw/
+__pycache__/
+*.pyc
+*.jsonl
+# QC 런타임 산출물 (detect_conflicts·qc/judge·entity-judge·acknowledge 가 갱신)
+graph/conflicts_queue.json
+graph/qc_judgments.json
+graph/qc_acknowledged.json
+graph/qc_entity_judgments.json
+# qc/resolve·restore 감사 로그 (qc_resolved.jsonl) 는 *.jsonl 라인으로 이미 커버됨

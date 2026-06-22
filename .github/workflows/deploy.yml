@@ -1,0 +1,21 @@
+name: Deploy backend
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            export XDG_RUNTIME_DIR=/run/user/$(id -u)
+            cd ~/polaris-backend && git pull --ff-only
+            systemctl --user restart polaris-backend
+            sleep 2 && systemctl --user is-active polaris-backend

@@ -1,0 +1,26 @@
+[
+  {
+    "endpoint": "exctvSttus",
+    "corp_code": "00126362",
+    "latest_rcept": "20260515002408",
+    "latest_n": 5,
+    "union_n": 11,
+    "사유": "최신 집합이 합집합의 50% 미만 — 부분 보고서 의심, 자동마감 보류"
+  },
+  {
+    "endpoint": "exctvSttus",
+    "corp_code": "00139889",
+    "latest_rcept": "20260515002307",
+    "latest_n": 17,
+    "union_n": 39,
+    "사유": "최신 집합이 합집합의 50% 미만 — 부분 보고서 의심, 자동마감 보류"
+  },
+  {
+    "endpoint": "exctvSttus",
+    "corp_code": "00181712",
+    "latest_rcept": "20260515001990",
+    "latest_n": 87,
+    "union_n": 177,
+    "사유": "최신 집합이 합집합의 50% 미만 — 부분 보고서 의심, 자동마감 보류"
+  }
+]

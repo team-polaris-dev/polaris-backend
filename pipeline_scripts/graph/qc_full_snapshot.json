@@ -1,0 +1,126 @@
+{
+  "self_loops": [],
+  "supplies_bidirectional_total": 50,
+  "supplies_bidir_both_domestic": 2,
+  "orphan_product": 51,
+  "orphan_tech": 27,
+  "company_in_producttech": [
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)잉크테크",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)한울반도체",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)이오엘",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)이엠테크",
+      "rels": 0
+    },
+    {
+      "labels": [
+        "Product"
+      ],
+      "name": "(주)솔레오",
+      "rels": 0
+    }
+  ],
+  "generic_nodes": [],
+  "short_nodes": [],
+  "newline_nodes": 0,
+  "mojibake_nodes": 0,
+  "broken_provenance_chunks": 0,
+  "edge_counts": [
+    {
+      "rel": "HAS_METRIC",
+      "n": 37679
+    },
+    {
+      "rel": "hasObject",
+      "n": 3310
+    },
+    {
+      "rel": "RELATED_PARTY",
+      "n": 2201
+    },
+    {
+      "rel": "IS_SUBSIDIARY_OF",
+      "n": 2146
+    },
+    {
+      "rel": "PRODUCES",
+      "n": 1922
+    },
+    {
+      "rel": "USES_TECH",
+      "n": 1407
+    },
+    {
+      "rel": "EXECUTIVE_OF",
+      "n": 1334
+    },
+    {
+      "rel": "INVESTS_IN",
+      "n": 1252
+    },
+    {
+      "rel": "SUPPLIES_TO",
+      "n": 434
+    },
+    {
+      "rel": "IS_MAJOR_SHAREHOLDER_OF",
+      "n": 352
+    },
+    {
+      "rel": "INTERLOCKING_DIRECTORATE",
+      "n": 51
+    }
+  ],
+  "node_counts": [
+    {
+      "label": "FinMetric",
+      "n": 37679
+    },
+    {
+      "label": "Organization",
+      "n": 3623
+    },
+    {
+      "label": "Chunk",
+      "n": 2803
+    },
+    {
+      "label": "Product",
+      "n": 1726
+    },
+    {
+      "label": "Person",
+      "n": 1589
+    },
+    {
+      "label": "Technology",
+      "n": 1113
+    }
+  ],
+  "provenance_ledger": {
+    "claude": 29001,
+    "ollama": 2672,
+    "q3.5:9b": 1880
+  }
+}

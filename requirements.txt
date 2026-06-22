@@ -1,0 +1,43 @@
+# Web Framework & Server
+fastapi
+uvicorn
+pydantic
+
+# LangGraph & LangChain Core
+langgraph
+langchain-core
+
+# LLM Provider (apimaker in-process: 로컬 gemini CLI 구독 세션)
+# apimaker 패키지는 repo 내 apimaker-project/src 를 sys.path 로 직접 사용 (별도 설치 불필요)
+# apimaker 코어 의존성(fastapi/httpx/pydantic)은 위/아래에 이미 포함됨
+langchain-openai
+
+# apimaker (claude CLI 세션 래퍼) - in-process 라이브러리로 직접 사용 (별도 HTTP 서버 불필요)
+-e ../../apimaker[claude]
+
+# RDB (MariaDB 직결)
+pymysql
+sqlglot          # SELECT-only 안전 검사 + LIMIT 클램프 (AST 파싱)
+
+# Vector 하이브리드 검색 (Dense Qdrant + BM25)
+qdrant-client
+rank-bm25
+numpy            # BM25 top-N 정렬 (np.argsort), vector_store.py 필수
+httpx
+
+# Environment Variables
+python-dotenv
+
+# Test
+pytest
+
+#vector DB
+qdrant_client
+rank_bm25
+
+# 적재 파이프라인 + 챗봇 통계 관리자 콘솔
+neo4j             # db/status 그래프 카운트 (graphrag 도 사용)
+neo4j-graphrag    # 공식 Text2CypherRetriever (관계 검색 LLM→Cypher 생성+read-only EXPLAIN 가드)
+anthropic         # extract 단계의 Claude 분기 (provider=claude 일 때 pipeline_scripts 가 사용)
+psutil            # sweep_stale_jobs() 의 pid 생존 체크
+# (SSE 는 fastapi StreamingResponse 직접 사용 — 추가 패키지 불필요)
