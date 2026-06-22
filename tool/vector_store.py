@@ -34,17 +34,30 @@ MAX_CHUNKS_PER_DOC = 3  # 결과 다양화: 한 공시(rcept_no)에서 가져올
 
 # ---- 관련도 하한 (off-topic 게이트) ----
 # RRF 점수는 '순위'의 함수라 무관한 질문에도 항상 0보다 커서(상위 N 이 늘 존재)
-# 관련도 컷의 잣대가 못 된다. 그래서 의미적 관련도는 dense(bge-m3) 코사인 유사도로
-# 잰다. 이 코퍼스(반도체 공시)에서 실측한 top-1 코사인 분포(2026-06):
-#   관련 질문(공급망/기술) 0.58 · 관련(재무) 0.72  ↔  무관(잡담) 0.43 · 무관(타도메인) 0.41
-# → 0.50 이면 관련/무관 사이에 양방향 마진(±0.07~0.08)이 생긴다. dense 최고 코사인이
-#   이 하한 미만이면 '코퍼스에 의미적으로 관련된 청크가 없다'고 보고 빈 결과를 낸다
-#   (0건이 정답일 수 있다 — rdb 규칙 9 와 같은 철학). 코퍼스가 바뀌면 재보정한다.
-DENSE_SCORE_FLOOR = float(os.getenv("VECTOR_DENSE_FLOOR", "0.50"))
+# 관련도 컷의 잣대가 못 된다. 그래서 의미적 관련도는 dense(bge-m3) 코사인 유사도로 잰다.
+# 벡터 전용 평가셋 10-probe 실측(2026-06):
+#   off-topic(날씨/파이썬/이순신/김치찌개) dense top 0.376~0.5215
+#   정상(공급망/기술/재무/거버넌스)         dense top 0.6523~0.7884
+# → 갭 0.5215↔0.6523. 0.55 면 off-topic 최대(0.5215) 위, 정상 최소(0.6523) 아래로 깔끔히
+#   분리되며 정상 쪽 마진(0.10)을 크게 둔다. 정상 질문을 잘못 0건 처리(silent fail)하는 게
+#   off-topic 을 한둘 통과시키는 것보다 나쁘므로 floor 를 off-topic 쪽에 가깝게 잡았다.
+#   dense 최고 코사인이 이 하한 미만이면(그리고 강한 BM25 앵커도 없으면) '코퍼스에 무관'
+#   으로 보고 빈 결과를 낸다(0건이 정답일 수 있다 — rdb 규칙 9 철학). 코퍼스가 바뀌면 재보정.
+DENSE_SCORE_FLOOR = float(os.getenv("VECTOR_DENSE_FLOOR", "0.55"))
+# off-topic 게이트의 BM25 '강한 매치' 하한. dense 가 약해도 약어·코드처럼 정확 lexical 앵커가
+# 있으면 게이트를 끈다. 단 '매치 존재'로는 안 된다 — 17만 한국어 코퍼스에선 off-topic 도 흔한
+# 토큰으로 26~50건 매치되기 때문(과거 `not bm25` 가 절대 성립 안 해 게이트가 죽어 있던 원인).
+# 실측: off-topic BM25 top ≤24, 정확매치('DUAL TC') 73.7 → 40 이면 분리. (env override)
+BM25_STRONG_FLOOR = float(os.getenv("VECTOR_BM25_STRONG_FLOOR", "40"))
 
 _TOKEN_RE = re.compile(r"[가-힣a-zA-Z0-9]+")
 _YEAR_RE = re.compile(r"(20\d{2})\s*년?")
 _COMPARISON_RE = re.compile(r"비교|대비|\bvs\b|VS|둘\s*중|차이")
+# 과거 '사건' 연도 — 설립/분할/합병/출범 등. 이런 연도는 회계기간이 아니라 사건 시점을
+# 가리키며, 보통 후속 연도의 보고서가 그 사실을 서술한다(예: 2024 보고서가 '2017년
+# 인적분할'을 기술). 사건 연도로 하드필터하면 정답 청크(회계연도≠사건연도)가 드롭된다
+# (eval vp_meta_03). '상장/인수'는 '상장 협력사' 등으로 흔히 쓰여 사건어에서 제외(오탐 방지).
+_EVENT_YEAR_RE = re.compile(r"설립|창립|분할|합병|출범")
 # 제목의 회계기간 '(YYYY.MM)' — 연도 필터를 접수연도가 아닌 회계연도 기준으로 잡기 위함
 _TITLE_YEAR_RE = re.compile(r"\((20\d{2})\.\d{1,2}")
 
@@ -52,6 +65,31 @@ _TITLE_YEAR_RE = re.compile(r"\((20\d{2})\.\d{1,2}")
 # 재무 수치성 질문이면 '재무제표 주석'이 정답이므로 페널티를 끄고 전부 중립(×1.0)으로 둔다.
 _FINANCIAL_QUERY_RE = re.compile(
     r"매출|영업이익|순이익|손익|자산|부채|자본|현금흐름|재무|실적|배당|EPS|주당"
+)
+# 지배구조·관계사 질문 감지 — 이런 질문은 '계열회사', '특수관계', '대주주' 섹션이
+# 정답 위치이므로 보일러플레이트 패널티를 끄고 중립(×1.0)으로 전환한다.
+# (_BOILERPLATE_SECTION_RE 의 0.3× 패널티는 기술/사업 질문용 노이즈 억제 목적이라
+#  거버넌스 질문에 적용하면 관련 섹션이 absolute_floor 미만으로 떨어져 0건이 된다.)
+#
+# ※ '납품처·협력사·공급사'는 의도적으로 제외한다.
+#   이 키워드 질문의 정답은 '계열회사 등에 관한 사항' 보일러플레이트가 아니라
+#   'II. 사업의 내용' 텍스트 청크에 있으므로, content_mode=True(사업의 내용 ×1.3 부스트 +
+#   table_nl ×0.3 억제)가 더 적합하다. governance mode(중립×1.0)로 두면 생산량·재무 표가
+#   고객사 목록 텍스트를 밀어내는 문제가 발생했다(eval 실측, 2026-06).
+_GOVERNANCE_QUERY_RE = re.compile(
+    r"대주주|특수관계|계열사|계열회사|지분|임원.*겸직|겸직.*임원"
+    r"|이해관계|관련\s*회사|주주.*현황|주식\s*소유"
+)
+# 공급망 관계형 질문 감지 — "X에 납품하는 협력사", "X의 주요 매출처/고객사" 등.
+# 이 질문들의 정답은 'II. 사업의 내용' 본문(매출처/고객사 진술)에 있는데, "...영업이익을
+# 비교하라"·"...자산총계를 비교하라"처럼 재무 키워드가 섞이면 _is_financial_query 가
+# True 가 돼 content_mode 가 꺼지고(섹션 재가중 OFF) 감사보고서·재무표가 본문을 밀어내
+# recall 0 이 됐다(eval 실측 sup_002/003/007, 2026-06). 재무 비교 부분은 어차피 RDB/Graph
+# 몫이므로, 공급망 신호가 있으면 재무/지배구조 키워드가 섞여도 content_mode 를 강제한다.
+# '공급'은 단독 매칭하지 않는다(전력공급 등 오탐) — 공급사/공급업체/공급처/공급망만.
+_SUPPLY_QUERY_RE = re.compile(
+    r"납품|협력사|협력업체|매출처|고객사|거래처|벤더"
+    r"|공급사|공급업체|공급처|공급망"
 )
 # section_path 가 재무제표·감사·지분거래 보일러플레이트인지 / 사업의 내용(본문)인지 판별.
 # 실제 코퍼스 section_path 10개 전수 introspection 으로 확정(2026-06): 기존 패턴이
@@ -64,6 +102,16 @@ _BUSINESS_SECTION_RE = re.compile(r"사업의\s*내용")
 # 내용성 질문에서 적용할 섹션 배수 (RRF 점수에 곱함). 시작값이며 검증하며 조정.
 _SECTION_WEIGHT_BOILERPLATE = 0.3
 _SECTION_WEIGHT_BUSINESS = 1.3
+
+# ---- 정보 없는 공시 누락 스텁 필터 ('본 항목을 기재하지 않습니다' 등) ----
+# 분기/반기 보고서는 특정 항목을 "기재하지 않습니다"·"해당사항 없음"으로 비워둔다.
+# 이런 청크는 회사명·섹션 토큰만으로 검색에 걸리지만 답이 없다(eval 실측 sup_007).
+# 누락 표현이 있으면서 본문이 짧으면(정보성 본문은 길다) 스텁으로 보고 후보에서 뺀다.
+# 실측 분리: 순수 스텁은 본문 ≤85자 / 정보성 본문은 200자+ → 120자 가드로 깔끔히 갈린다.
+# (감사 TOC 류의 더 긴 스텁은 _BOILERPLATE_SECTION_RE(감사의견)가 content_mode 에서
+#  ×0.3 으로 이미 누르므로 여기서 또 잡지 않아도 된다 — 정보성 본문 오탐만 키운다.)
+_OMISSION_RE = re.compile(r"기재하지\s*(?:않|아니)|해당\s*사항\s*없음|기재를?\s*생략")
+_UNINFORMATIVE_MAX_LEN = 120
 
 # ---- 본문 근접중복 제거 (같은 문단이 분기마다 반복 게재되는 문제) ----
 # per_doc_cap 은 같은 공시(rcept_no) 안에서만 막으므로, 공시를 넘는 동일 문단은
@@ -443,7 +491,12 @@ def _extract_year_filter(query: str) -> int | None:
     포함)는 연도 스코핑이 정당하므로 유지한다.
     """
     distinct = sorted({int(y) for y in _YEAR_RE.findall(query)})
-    return distinct[0] if len(distinct) == 1 else None
+    if len(distinct) != 1:
+        return None
+    # 단일 연도라도 설립/분할/합병 등 과거 사건을 가리키면 회계기간 하드필터로 쓰지 않는다.
+    if _EVENT_YEAR_RE.search(query):
+        return None
+    return distinct[0]
 
 
 def extract_filter_signals(query: str) -> tuple[list[str], int | None]:
@@ -522,6 +575,45 @@ def _embed(text: str) -> list[float]:
     list 를 변형해도 캐시가 오염되지 않는다.
     """
     return list(_embed_cached_key(text))
+
+
+# ---------------------------------------------------------------- HyDE (Hypothetical Document Embeddings)
+# 질문 어휘와 청크 어휘 사이의 갭을 LLM 이 가상 답안(hypothetical document) 안에서
+# '답 어휘' 로 미리 변환해 dense 임베딩의 어휘 불일치를 줄인다.
+# BM25 는 원본 쿼리를 그대로 써서 키워드 정밀도를 유지한다.
+_HYDE_PROMPT = """\
+다음 질문에 대한 DART 사업보고서 '사업의 내용' 섹션의 관련 문단을 한국어 2~3문장으로 작성하세요.
+실제 공시 본문 문체(~입니다. ~있습니다.)로 쓰고, 추측 가능한 범위에서 구체적으로 서술하세요.
+
+질문: {query}
+
+공시 본문 예시:"""
+
+
+def _hyde_generate(query: str) -> str | None:
+    """Ollama 로 가상 답안(hypothetical document) 생성. 실패 시 None → 원본 쿼리 폴백."""
+    import httpx
+
+    base = os.getenv("OLLAMA_BASE", "http://localhost:11434").rstrip("/")
+    model = os.getenv("OLLAMA_HYDE_MODEL", "gemma4:latest")
+    try:
+        resp = httpx.post(
+            f"{base}/api/generate",
+            json={
+                "model": model,
+                "prompt": _HYDE_PROMPT.format(query=query),
+                "stream": False,
+                "options": {"temperature": 0.3, "num_predict": 200},
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        text = resp.json().get("response", "").strip()
+        if len(text) > 20:
+            return text
+    except Exception as e:
+        print(f"⚠️ [vector] HyDE 생성 실패 → 원본 쿼리 임베딩 폴백: {e!r}")
+    return None
 
 
 # ---------------------------------------------------------------- Dense (Qdrant)
@@ -672,13 +764,15 @@ def _is_offtopic(
     dense: list[tuple[str, float]],
     bm25: list[tuple[str, float]],
     floor: float = DENSE_SCORE_FLOOR,
+    bm25_strong: float = BM25_STRONG_FLOOR,
 ) -> bool:
     """off-topic 게이트: 코퍼스에 의미·어휘적으로 무관한 질문인지 판정.
 
-    dense(bge-m3) 최고 코사인이 floor 미만이고 **BM25 정확 매치도 없을 때만** True.
-    예전엔 BM25 를 보기 전에 dense 단독으로 컷해서, dense 가 약하지만 sparse 가 강한
-    질문(약어 'HBM3E'·코드 '11011'·정확 명칭)을 잘못 0건 처리했다(①의 BM25 개선과
-    충돌). 두 신호가 모두 약할 때만 무관으로 본다.
+    dense(bge-m3) 최고 코사인이 floor 미만이고 **강한 BM25 앵커도 없을 때만** True.
+    BM25 는 약어 'HBM3E'·코드·정확 명칭처럼 dense 가 약해도 정확 lexical 매치가 강한
+    질문을 구제하기 위한 escape hatch 다. 단 '매치 존재'(top>0)로는 안 된다 — 17만 한국어
+    코퍼스에선 off-topic 질문도 흔한 토큰으로 늘 매치돼 게이트가 죽었다(precision 0 결함).
+    그래서 BM25 최고 점수가 bm25_strong 이상일 때만 구제한다.
 
     dense 가 비면(Qdrant/Ollama 장애 가능) 게이트를 끈다 — 외부 장애를 '무관'으로
     오인하지 않고 BM25 단독으로 graceful degrade.
@@ -688,7 +782,8 @@ def _is_offtopic(
     top_dense = max(score for _, score in dense)
     if top_dense >= floor:
         return False
-    return not bm25
+    top_bm25 = max((score for _, score in bm25), default=0.0)
+    return top_bm25 < bm25_strong
 
 
 def _rrf_fuse(
@@ -712,6 +807,46 @@ def _is_financial_query(query: str) -> bool:
     (_section_weight 가 이 결과로 content_mode 를 끈다).
     """
     return bool(_FINANCIAL_QUERY_RE.search(query or ""))
+
+
+def _is_governance_query(query: str) -> bool:
+    """지배구조·관계사 질문인지 — 결정론적 키워드 판별.
+
+    대주주/특수관계/계열회사/임원겸직 등을 묻는 질문은 해당 섹션이 정답 위치이므로
+    보일러플레이트 패널티를 끄고 중립(×1.0)으로 전환한다.
+    """
+    return bool(_GOVERNANCE_QUERY_RE.search(query or ""))
+
+
+def _is_supply_query(query: str) -> bool:
+    """공급망 관계형 질문인지 — 결정론적 키워드 판별(납품/협력사/매출처/고객사 등)."""
+    return bool(_SUPPLY_QUERY_RE.search(query or ""))
+
+
+def _resolve_content_mode(query: str) -> bool:
+    """섹션 재가중을 켤지(content_mode) 결정한다.
+
+    공급망 관계형 질문("X에 납품하는 협력사", "X의 주요 고객사")은 재무·지배구조 키워드가
+    섞여 있어도 정답이 'II. 사업의 내용' 본문에 있으므로 content_mode 를 강제로 켠다 —
+    혼합 질문이 재무로 오분류돼 재가중이 꺼지던 결함을 막는다(eval sup_002/003/007).
+    그 외에는 재무·지배구조 수치성 질문이면 중립(False), 일반 내용 질문이면 True.
+    """
+    if _is_supply_query(query):
+        return True
+    return not _is_financial_query(query) and not _is_governance_query(query)
+
+
+def _is_uninformative(text: str) -> bool:
+    """정보 없는 공시 누락 스텁('본 항목을 기재하지 않습니다'·'해당사항 없음')인지.
+
+    머리말 메타('[회사 · 문서(날짜) · 섹션]')를 떼고 본문만 본다. 누락 표현이 있으면서
+    본문이 짧을 때만 스텁으로 본다 — 길이 가드로 '한 줄만 누락'인 정보성 본문은 보존한다.
+    """
+    body = text.split("]", 1)[-1] if text.startswith("[") else text
+    body = body.strip()
+    if not _OMISSION_RE.search(body):
+        return False
+    return len(body) <= _UNINFORMATIVE_MAX_LEN
 
 
 def _dedup_body_tokens(text: str) -> frozenset[str]:
@@ -872,8 +1007,13 @@ def hybrid_search(
     use_bm25: bool = True,
     chunk_type_filter: str | None = None,
     per_doc_cap: int | None = MAX_CHUNKS_PER_DOC,
+    embed_text: str | None = None,
 ) -> list[RetrievedChunk]:
-    """Dense(Qdrant) + BM25 + RRF(k=60) + 문서 단위 다양화(per_doc_cap)."""
+    """Dense(Qdrant) + BM25 + RRF(k=60) + 문서 단위 다양화(per_doc_cap).
+
+    embed_text: dense 임베딩에 쓸 텍스트. HyDE 가상 답안을 넘기면 dense 경로만 교체되고
+    BM25 는 원본 query 로 유지된다. None 이면 query 를 그대로 임베딩한다.
+    """
     if not query.strip() or top_k <= 0:
         return []
 
@@ -888,7 +1028,7 @@ def hybrid_search(
         def row_filter(r: _ChunkRow) -> bool:
             return _passes_meta_filter(r, corp_codes, year, chunk_type_filter)
 
-    qvec = _embed(query)
+    qvec = _embed(embed_text if embed_text else query)
     dense = _dense_search(qvec, fetch_limit, corp_codes=corp_codes)
     # 본문(text_micro) 보강: bge-m3 는 회사명·관계어로 빽빽한 표(table_nl)를 본문보다
     # 일괄 높게 점수내어(실측: 표 0.64~0.65 vs 본문 ≤0.63) 본문이 dense top-N 에서 통째로
@@ -902,15 +1042,16 @@ def hybrid_search(
     # off-topic 게이트는 dense·BM25 를 모두 본 뒤 적용한다(BM25 강한 매치를 죽이지
     # 않기 위해 — dense 단독 컷이 약어/코드 질문을 0건 처리하던 결함 수정).
     if _is_offtopic(dense, bm25_results):
-        print(f"ℹ️ [vector] off-topic 게이트(dense<{DENSE_SCORE_FLOOR:.2f} & BM25 무매치) "
+        print(f"ℹ️ [vector] off-topic 게이트(dense<{DENSE_SCORE_FLOOR:.2f} & 강한 BM25 앵커 없음) "
               f"→ 빈 결과(무관 질문, 정상 0건): {query[:40]!r}")
         return []
 
     fused = _rrf_fuse(dense, bm25_results)
 
     # 섹션 인지 재가중: 내용성 질문이면 보일러플레이트(감사·재무주석·지분거래)를 누르고
-    # 사업의 내용을 띄운다. 재무 수치성 질문은 중립(×1.0)이라 영향이 없다.
-    content_mode = not _is_financial_query(query)
+    # 사업의 내용을 띄운다. 재무 수치성·지배구조 질문은 중립(×1.0)이라 영향이 없다.
+    # 단, 공급망 관계형 질문은 재무 키워드가 섞여도 content_mode 를 강제한다(혼합 질문).
+    content_mode = _resolve_content_mode(query)
 
     # 메타필터를 통과한 후보를 (재가중된) 관련도순으로 모은 뒤, 문서 단위로 다양화해 top_k 선별
     candidates: list[tuple[_ChunkRow, float]] = []
@@ -919,6 +1060,9 @@ def hybrid_search(
         if row is None:
             continue
         if not _passes_meta_filter(row, corp_codes, year, chunk_type_filter):
+            continue
+        # 정보 없는 공시 누락 스텁('기재하지 않습니다'·'해당사항 없음')은 후보에서 제외
+        if _is_uninformative(row.text):
             continue
         candidates.append((row, score * _section_weight(row, content_mode)))
 
@@ -938,21 +1082,37 @@ def hybrid_search(
 
 
 def search_vector_db(
-    query: str, top_k: int = 10, *, corp_codes: list[str] | None = None
+    query: str,
+    top_k: int = 10,
+    *,
+    corp_codes: list[str] | None = None,
+    use_hyde: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """하이브리드 검색 진입점. `corp_codes` 가 주어지면 회사 필터로 그걸 쓴다.
+    """하이브리드 검색 진입점.
 
-    호출부(노드)가 관계도에서 뽑은 앵커 corp_code 를 넘기면 벡터 검색을 그 회사들로
-    한정한다 — 질문 텍스트로만 회사를 추측하던(extract_filter_signals) 오염을 막는다.
-    앵커가 없으면(None/빈) 기존대로 질문에서 회사·연도를 추출해 폴백한다. 임베딩/BM25
-    질의는 어느 경우든 question 그대로 — 회사 한정만 그래프 기준으로 바뀐다.
+    corp_codes: 호출부(노드)가 그래프에서 뽑은 앵커 corp_code. None/빈이면 질문에서 폴백.
+    use_hyde: True/False 명시 또는 None → 환경변수 HYDE_ENABLED(1/true/yes) 로 결정.
     """
     print(f"🛠️ [vectorDB]  검색 시뮬레이션 중: {query}")
     if not query.strip():
         return []
+
+    if use_hyde is None:
+        use_hyde = os.getenv("HYDE_ENABLED", "").lower() in ("1", "true", "yes")
+
+    embed_text: str | None = None
+    if use_hyde:
+        hypo = _hyde_generate(query)
+        if hypo:
+            print(f"🔮 [vector] HyDE 가상 답안: {hypo[:100]}...")
+            embed_text = hypo
+
     extracted_codes, year = extract_filter_signals(query)
     filter_codes = corp_codes if corp_codes else extracted_codes
-    rows = hybrid_search(query, top_k=top_k, corp_codes=filter_codes or None, year=year)
+    rows = hybrid_search(
+        query, top_k=top_k, corp_codes=filter_codes or None, year=year,
+        embed_text=embed_text,
+    )
     return [row.to_dict() for row in rows]
 
 
