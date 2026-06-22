@@ -12,6 +12,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from dotenv import load_dotenv
+
+load_dotenv()  # tool.graph_client 가 import 시점에 NEO4J_URI 를 읽으므로 그 전에 로드.
+
 from tool.graph_client import neo4j_driver
 
 
