@@ -256,6 +256,8 @@ def list_messages(session_id: str, limit: int = 500) -> list[dict[str, Any]]:
                 "graph": panel.get("graph", {"nodes": [], "edges": []}),
                 "documents": panel.get("documents", []),
                 "financials": panel.get("financials", []),
+                "ratios": panel.get("ratios", []),
+                "ownership": panel.get("ownership", {"shareholders": [], "investments": []}),
                 "digest": panel.get("digest", ""),
             }
         )

@@ -19,6 +19,7 @@ from services.pipeline_jobs import init_pipeline_tables, sweep_stale_jobs
 from services.chat_logging import init_chat_tables
 from core.serialize import serialize_state
 from core.digest import build_evidence_digest
+from services.disclosure_tables import fetch_disclosure_tables
 from nodes.router import has_required_evidence
 from tool import chat_store
 from tool.vector_store import warmup as _vector_warmup
@@ -129,6 +130,39 @@ class FinancialGroup(BaseModel):
     metrics: List[FinancialMetric] = []
 
 
+# DART 원본 정형(접근 B) 패널 데이터 — 재무비율 / 최대주주·타법인출자
+class RatioItem(BaseModel):
+    name: str = ""
+    value: str = ""
+    category: str = ""
+
+
+class RatioGroup(BaseModel):
+    corp_name: str = ""
+    year: Any = None
+    items: List[RatioItem] = []
+
+
+class ShareholderItem(BaseModel):
+    corp_name: str = ""
+    holder: str = ""
+    relate: str = ""
+    qota_rt: str = ""
+
+
+class InvestmentItem(BaseModel):
+    corp_name: str = ""
+    target: str = ""
+    qota_rt: str = ""
+    book_amount: str = ""
+    purpose: str = ""
+
+
+class Ownership(BaseModel):
+    shareholders: List[ShareholderItem] = []
+    investments: List[InvestmentItem] = []
+
+
 class ChatResponse(BaseModel):
     response: str
     intent: str
@@ -139,6 +173,9 @@ class ChatResponse(BaseModel):
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
     financials: List[FinancialGroup] = []
+    # DART 원본 정형 — 재무비율 / 지분·관계(최대주주·타법인출자)
+    ratios: List[RatioGroup] = []
+    ownership: Ownership = Ownership()
     # 우측 패널 '원본 문서' 탭 상단의 LLM 통합 근거 정리본(마크다운). 없으면 빈 문자열.
     digest: str = ""
 
@@ -154,6 +191,8 @@ class HistoryMessage(BaseModel):
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
     financials: List[FinancialGroup] = []
+    ratios: List[RatioGroup] = []
+    ownership: Ownership = Ownership()
     digest: str = ""
 
 # 3-0. 로그인 / 회원가입 — 사용자이름만 입력. 처음이면 자동 가입.
@@ -242,7 +281,10 @@ def chat_endpoint(request: ChatRequest):
         if has_required_evidence(result):
             panel_data = serialize_state(result)
         else:
-            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "financials": [], "panel": "none"}
+            panel_data = {
+                "graph": {"nodes": [], "edges": []}, "documents": [], "financials": [],
+                "ratios": [], "ownership": {"shareholders": [], "investments": []}, "panel": "none",
+            }
 
         # 우측 '원본 문서' 탭 상단의 통합 근거 정리(digest)는 LLM 1회 추가 호출이라
         # 동기로 만들면 답변이 그만큼 늦는다. 여기서 만들지 않고 답변을 먼저 반환한 뒤,
@@ -283,6 +325,8 @@ def chat_endpoint(request: ChatRequest):
             graph=panel_data["graph"],
             documents=panel_data["documents"],
             financials=panel_data.get("financials", []),
+            ratios=panel_data.get("ratios", []),
+            ownership=panel_data.get("ownership", {"shareholders": [], "investments": []}),
             digest="",
         )
 
@@ -348,6 +392,26 @@ class LandingGraphLink(BaseModel):
 class LandingGraphResponse(BaseModel):
     nodes: List[LandingGraphNode] = []
     links: List[LandingGraphLink] = []
+
+
+# 3-6. 공시 한 건의 표 → 섹션별 구조(헤더/행). DART pont 식 '보고서 표 → 엑셀' 데이터 소스.
+#   원본 문서 패널에서 보고서마다 '엑셀 다운로드' 모달을 열 때 프론트가 호출한다.
+class DisclosureTablesResponse(BaseModel):
+    rcept_no: str
+    corp_name: str = ""
+    title: str = ""
+    date: str = ""
+    sections: List[Any] = []
+
+
+@api.get("/api/disclosure/{rcept_no}/tables", response_model=DisclosureTablesResponse)
+def disclosure_tables_endpoint(rcept_no: str):
+    """공시 한 건(rcept_no)의 표를 섹션별로 묶어 반환. 표가 없으면 sections=[] (빈 구조)."""
+    try:
+        data = fetch_disclosure_tables(rcept_no)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"공시 표 조회 오류: {str(e)}")
+    return DisclosureTablesResponse(**data)
 
 
 @api.get("/api/graph/landing", response_model=LandingGraphResponse)

@@ -10,6 +10,11 @@ from tool.rdb_client import (
     parse_year,
     resolve_corp_codes_from_text,
 )
+from tool.dart_extra import (
+    fetch_other_corp_investments,
+    fetch_major_shareholders,
+    fetch_financial_indicators,
+)
 from tool.vector_store import search_vector_db
 
 
@@ -120,6 +125,59 @@ def _fin_to_unified(row: dict) -> UnifiedResult:
     }
 
 
+def _invest_to_unified(row: dict) -> UnifiedResult:
+    """타법인 출자현황 행 → UnifiedResult(rdb_invest). 지분 관계 + 장부가."""
+    return {
+        "type": "rdb_invest",
+        "code": str(row.get("corp_code", "")),
+        "name": str(row.get("target") or ""),
+        "value": str(row.get("qota_rt") or ""),
+        "extra": {
+            "kind": "investment",
+            "target": row.get("target"),
+            "qota_rt": row.get("qota_rt"),
+            "book_amount": row.get("book_amount"),
+            "purpose": row.get("purpose"),
+        },
+        "source": str(row.get("rcept_no") or ""),
+    }
+
+
+def _shareholder_to_unified(row: dict) -> UnifiedResult:
+    """최대주주 현황 행 → UnifiedResult(rdb_shareholder). 보유자·관계·지분율."""
+    return {
+        "type": "rdb_shareholder",
+        "code": str(row.get("corp_code", "")),
+        "name": str(row.get("holder") or ""),
+        "value": str(row.get("qota_rt") or ""),
+        "extra": {
+            "kind": "shareholder",
+            "holder": row.get("holder"),
+            "relate": row.get("relate"),
+            "qota_rt": row.get("qota_rt"),
+        },
+        "source": str(row.get("rcept_no") or ""),
+    }
+
+
+def _indicator_to_unified(row: dict) -> UnifiedResult:
+    """재무비율(주요지표) 행 → UnifiedResult(rdb_indicator). 지표명·값."""
+    return {
+        "type": "rdb_indicator",
+        "code": str(row.get("corp_code", "")),
+        "name": str(row.get("name") or ""),
+        "value": str(row.get("value") or ""),
+        "extra": {
+            "kind": "indicator",
+            "name": row.get("name"),
+            "value": row.get("value"),
+            "bsns_year": row.get("bsns_year"),
+            "category": row.get("category"),
+        },
+        "source": str(row.get("rcept_no") or ""),
+    }
+
+
 def _doc_to_unified(row: dict) -> UnifiedResult:
     """공시 메타 행 → UnifiedResult. render._fmt_rdb 가 별도 문서 섹션으로 렌더."""
     return {
@@ -178,6 +236,10 @@ def rdb_search_node(state: AgentState):
 
         if corp_codes:
             results.extend(_fin_to_unified(r) for r in fetch_financial_card(corp_codes, year))
+            # DART 원본 정형(접근 B): 타법인출자·최대주주·재무비율 — dart_raw_index 직접 파싱.
+            results.extend(_invest_to_unified(r) for r in fetch_other_corp_investments(corp_codes))
+            results.extend(_shareholder_to_unified(r) for r in fetch_major_shareholders(corp_codes))
+            results.extend(_indicator_to_unified(r) for r in fetch_financial_indicators(corp_codes))
 
         # 그래프가 인용한 공시(rcept_no) 우선, 없으면 회사 최근 공시로 맥락 보강.
         if rcept_nos:

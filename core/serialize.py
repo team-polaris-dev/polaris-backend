@@ -33,17 +33,28 @@ def _humanize_rel(rel: str) -> str:
 # IFRS/DART account_id → 한글 라벨
 _ACCOUNT_KR: dict[str, str] = {
     "ifrs-full_Revenue": "매출액",
-    "dart_OperatingIncomeLoss": "영업이익",
-    "ifrs-full_ProfitLoss": "당기순이익",
     "ifrs-full_GrossProfit": "매출총이익",
-    "ifrs-full_Assets": "총자산",
-    "ifrs-full_Liabilities": "총부채",
-    "ifrs-full_Equity": "자본총계",
-    "ifrs-full_CashAndCashEquivalents": "현금및현금성자산",
-    "ifrs-full_CurrentAssets": "유동자산",
-    "ifrs-full_CurrentLiabilities": "유동부채",
-    "ifrs-full_CostOfSales": "매출원가",
+    "dart_OperatingIncomeLoss": "영업이익",
+    "ifrs-full_FinanceIncome": "금융수익",
+    "ifrs-full_FinanceCosts": "금융비용",
     "ifrs-full_ProfitLossBeforeTax": "세전순이익",
+    "ifrs-full_IncomeTaxExpenseContinuingOperations": "법인세비용",
+    "ifrs-full_ProfitLoss": "당기순이익",
+    "ifrs-full_Assets": "총자산",
+    "ifrs-full_CurrentAssets": "유동자산",
+    "ifrs-full_NoncurrentAssets": "비유동자산",
+    "ifrs-full_PropertyPlantAndEquipment": "유형자산",
+    "ifrs-full_Liabilities": "총부채",
+    "ifrs-full_CurrentLiabilities": "유동부채",
+    "ifrs-full_NoncurrentLiabilities": "비유동부채",
+    "ifrs-full_Equity": "자본총계",
+    "ifrs-full_IssuedCapital": "자본금",
+    "ifrs-full_RetainedEarnings": "이익잉여금",
+    "ifrs-full_CashAndCashEquivalents": "현금및현금성자산",
+    "ifrs-full_CashFlowsFromUsedInOperatingActivities": "영업활동현금흐름",
+    "ifrs-full_CashFlowsFromUsedInInvestingActivities": "투자활동현금흐름",
+    "ifrs-full_CashFlowsFromUsedInFinancingActivities": "재무활동현금흐름",
+    "ifrs-full_CostOfSales": "매출원가",
 }
 
 _SUMMARY_ORDER = ["매출액", "영업이익", "당기순이익"]
@@ -750,6 +761,11 @@ def build_financials(state: dict) -> list[dict]:
                 "label": _ACCOUNT_KR.get(aid, aid),
                 "value": round(raw[aid] / divisor, 1),
                 "unit": unit,
+                # 표(테이블)용 정확 표기 — 그룹 단일 단위로 반올림하면 자본금·금융수익 등
+                # 작은 계정이 0.0 으로 뭉개지므로, 값마다 조/억을 따로 붙여 정확히 보여준다.
+                "display": _fmt_krw(raw[aid]),
+                # 엑셀 추출용 원본 금액(원) — 분석에 쓰도록 반올림 없는 정확한 숫자.
+                "raw": raw[aid],
             }
             for aid in ordered_ids
         ]
@@ -759,13 +775,81 @@ def build_financials(state: dict) -> list[dict]:
     return result
 
 
+def _rdb_code_to_name(rdb_results: list[dict]) -> dict[str, str]:
+    """corp_code → 회사명 — DART 원본 정형(주주·출자·비율) 라벨용.
+
+    이 행들엔 회사명이 없고 corp_code 만 있다. 같은 결과셋의 rdb_row/rdb_doc 가
+    corp_name 을 갖고 있으므로 거기서 매핑을 만든다(없으면 코드 자체로 폴백).
+    """
+    m: dict[str, str] = {}
+    for r in rdb_results:
+        if r.get("type") in ("rdb_row", "rdb_doc") and r.get("code") and r.get("name"):
+            m.setdefault(str(r["code"]), str(r["name"]))
+    return m
+
+
+def build_ratios(state: dict) -> list[dict]:
+    """rdb_indicator(재무비율) → 회사별 그룹. 재무지표 차트 탭의 '재무비율' 표용.
+
+    반환: [{corp_name, year, items:[{name, value, category}]}]
+    """
+    rdb = state.get("rdb_results") or []
+    name_map = _rdb_code_to_name(rdb)
+    groups: dict[str, dict] = {}
+    for r in rdb:
+        if r.get("type") != "rdb_indicator":
+            continue
+        ex = r.get("extra") or {}
+        code = str(r.get("code") or "")
+        g = groups.setdefault(code, {"corp_name": name_map.get(code, code), "year": ex.get("bsns_year"), "items": []})
+        g["items"].append({
+            "name": str(ex.get("name") or r.get("name") or ""),
+            "value": str(ex.get("value") or r.get("value") or ""),
+            "category": str(ex.get("category") or ""),
+        })
+    return [g for g in groups.values() if g["items"]]
+
+
+def build_ownership(state: dict) -> dict:
+    """rdb_shareholder/rdb_invest → '지분·관계' 탭용 두 표(최대주주·타법인출자).
+
+    반환: {shareholders:[{corp_name,holder,relate,qota_rt}],
+           investments:[{corp_name,target,qota_rt,book_amount,purpose}]}
+    """
+    rdb = state.get("rdb_results") or []
+    name_map = _rdb_code_to_name(rdb)
+    shareholders: list[dict] = []
+    investments: list[dict] = []
+    for r in rdb:
+        t = r.get("type")
+        ex = r.get("extra") or {}
+        code = str(r.get("code") or "")
+        if t == "rdb_shareholder":
+            shareholders.append({
+                "corp_name": name_map.get(code, code),
+                "holder": str(ex.get("holder") or r.get("name") or ""),
+                "relate": str(ex.get("relate") or ""),
+                "qota_rt": str(ex.get("qota_rt") or ""),
+            })
+        elif t == "rdb_invest":
+            investments.append({
+                "corp_name": name_map.get(code, code),
+                "target": str(ex.get("target") or r.get("name") or ""),
+                "qota_rt": str(ex.get("qota_rt") or ""),
+                "book_amount": str(ex.get("book_amount") or ""),
+                "purpose": str(ex.get("purpose") or ""),
+            })
+    return {"shareholders": shareholders, "investments": investments}
+
+
 def serialize_state(state: dict) -> dict:
-    """최종 state → {graph, documents, financials, panel}.
+    """최종 state → {graph, documents, financials, ratios, ownership, panel}.
 
     panel: 프론트가 자동으로 펼칠 탭 힌트.
       'graph'     → 관계도 데이터 있음
       'documents' → 원본 문서만 있음
       'none'      → 우측 패널 표시 안 함
+    ratios/ownership: DART 원본 정형(재무비율 / 최대주주·타법인출자) 패널 데이터.
     """
     msgs = state.get("messages") or []
     answer = ""
@@ -777,6 +861,8 @@ def serialize_state(state: dict) -> dict:
     graph      = build_graph(state, answer)
     documents  = build_documents(state)
     financials = build_financials(state)
+    ratios     = build_ratios(state)
+    ownership  = build_ownership(state)
 
     if graph["edges"]:
         panel = "graph"
@@ -785,4 +871,11 @@ def serialize_state(state: dict) -> dict:
     else:
         panel = "none"
 
-    return {"graph": graph, "documents": documents, "financials": financials, "panel": panel}
+    return {
+        "graph": graph,
+        "documents": documents,
+        "financials": financials,
+        "ratios": ratios,
+        "ownership": ownership,
+        "panel": panel,
+    }

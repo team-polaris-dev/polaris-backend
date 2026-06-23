@@ -61,7 +61,50 @@ def _fmt_rdb(rdb_results: list[dict]) -> str:
         src = f" (근거: {rcept})" if rcept else ""
         docs.append(f"  - [{meta}] {title}{src}")
 
-    if not groups and not docs:
+    # corp_code → 회사명 (DART 원본 정형 섹션 라벨용; rdb_row/doc 가 이름을 갖고 있다)
+    code_to_name: dict[str, str] = {}
+    for r in rdb_results:
+        if r.get("type") in ("rdb_row", "rdb_doc") and r.get("code") and r.get("name"):
+            code_to_name.setdefault(str(r["code"]), str(r["name"]))
+
+    def _corp_label(code: str) -> str:
+        return code_to_name.get(str(code)) or str(code) or "(회사 미상)"
+
+    # ── DART 원본 정형(접근 B): 타법인출자 / 최대주주 / 재무비율 ──
+    invest_by_corp: dict[str, list[str]] = defaultdict(list)
+    holder_by_corp: dict[str, list[str]] = defaultdict(list)
+    indic_by_corp: dict[str, list[str]] = defaultdict(list)
+    for r in rdb_results:
+        t = r.get("type")
+        ex = r.get("extra") or {}
+        code = str(r.get("code") or "")
+        if t == "rdb_invest":
+            tgt = str(ex.get("target") or r.get("name") or "").strip()
+            if not tgt:
+                continue
+            tags = []
+            if ex.get("qota_rt"):
+                tags.append(f"지분 {ex['qota_rt']}%")
+            if ex.get("book_amount"):
+                tags.append(f"장부가 {ex['book_amount']}")
+            tail = f" [{', '.join(tags)}]" if tags else ""
+            purp = f" ({ex['purpose']})" if ex.get("purpose") else ""
+            invest_by_corp[code].append(f"  - → {tgt}{tail}{purp}")
+        elif t == "rdb_shareholder":
+            holder = str(ex.get("holder") or r.get("name") or "").strip()
+            if not holder:
+                continue
+            rel = f" ({ex['relate']})" if ex.get("relate") else ""
+            pct = f" [지분 {ex['qota_rt']}%]" if ex.get("qota_rt") else ""
+            holder_by_corp[code].append(f"  - {holder}{rel}{pct}")
+        elif t == "rdb_indicator":
+            nm = str(ex.get("name") or r.get("name") or "").strip()
+            val = str(ex.get("value") or r.get("value") or "").strip()
+            if not nm or not val:
+                continue
+            indic_by_corp[code].append(f"  - {nm}: {val}")
+
+    if not groups and not docs and not invest_by_corp and not holder_by_corp and not indic_by_corp:
         return ""
 
     lines: list[str] = []
@@ -72,6 +115,27 @@ def _fmt_rdb(rdb_results: list[dict]) -> str:
             for aid, amt in metrics.items():
                 label = _ACCOUNT_KR.get(aid, aid)
                 lines.append(f"  - {label}: {_fmt_krw(amt)}")
+    if indic_by_corp:
+        if lines:
+            lines.append("")
+        lines.append("### [정형 데이터 — 재무비율(주요지표)]")
+        for code, items in indic_by_corp.items():
+            lines.append(f"\n**{_corp_label(code)}**")
+            lines.extend(items)
+    if holder_by_corp:
+        if lines:
+            lines.append("")
+        lines.append("### [정형 데이터 — 최대주주 현황]")
+        for code, items in holder_by_corp.items():
+            lines.append(f"\n**{_corp_label(code)}**")
+            lines.extend(items)
+    if invest_by_corp:
+        if lines:
+            lines.append("")
+        lines.append("### [정형 데이터 — 타법인 출자현황]")
+        for code, items in invest_by_corp.items():
+            lines.append(f"\n**{_corp_label(code)}**")
+            lines.extend(items)
     if docs:
         if lines:
             lines.append("")
