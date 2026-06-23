@@ -468,15 +468,17 @@ def _dedup(items: list[str]) -> list[str]:
 
 
 def _select_owner_company(query: str, mentioned: list[str]) -> str | None:
-    """"A의/A에서/A 사업보고서" 패턴의 "문서 소유" 회사를 찾는다."""
+    """"A의/A에서/A 사업보고서" 패턴의 "문서 소유" 회사를 찾는다(대소문자 무시)."""
+    q_lower = query.lower()
     for name in mentioned:
-        idx = query.find(name)
+        nl = name.lower()
+        idx = q_lower.find(nl)
         if idx == -1:
             continue
-        rest = query[idx + len(name):]
+        rest = query[idx + len(nl):]
         if rest.startswith(("의", "에서")):
             return name
-        if f"{name} 사업보고서" in query or f"{name} 보고서" in query:
+        if f"{nl} 사업보고서" in q_lower or f"{nl} 보고서" in q_lower:
             return name
     return None
 
@@ -507,8 +509,12 @@ def extract_filter_signals(query: str) -> tuple[list[str], int | None]:
     필터로 쓴다(나머지는 단순 비교 대상으로 보고 필터에서 제외).
     """
     name_to_code = _get_corp_name_to_code()
+    # 대소문자 무시 매칭 — "sk하이닉스"/"lg화학"처럼 영문 약칭을 소문자로 쳐도 매핑의
+    # 정식 표기("SK하이닉스")와 매칭되게 한다. 한 글자 케이스 차이로 회사가 통째로
+    # 필터에서 누락되던 문제를 막는다(core.news.companies_from_query 와 동일 규칙).
+    q_lower = query.lower()
     candidates = sorted(
-        (name for name in name_to_code if name and name in query), key=len, reverse=True
+        (name for name in name_to_code if name and name.lower() in q_lower), key=len, reverse=True
     )
     # 긴 이름 우선("SK하이닉스" > "SK") — 이미 채택된 이름의 부분문자열인 후보는 제외
     mentioned: list[str] = []
@@ -625,6 +631,7 @@ def _qdrant_client():
         _QDRANT_CLIENT = QdrantClient(
             host=os.getenv("QDRANT_HOST", "localhost"),
             port=int(os.getenv("QDRANT_PORT", "6333")),
+            timeout=float(os.getenv("QDRANT_TIMEOUT", "30")),  # exact=True 전수검색(17만 청크, 필터 없음) 대비
         )
     return _QDRANT_CLIENT
 
