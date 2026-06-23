@@ -188,6 +188,20 @@ def session_messages_endpoint(session_id: str):
         raise HTTPException(status_code=500, detail=f"메시지 기록 조회 오류: {str(e)}")
 
 
+# 3-2b. 대화 삭제 — 소유자(user_id) 본인 세션만 삭제 가능
+@api.delete("/api/sessions/{session_id}")
+def delete_session_endpoint(session_id: str, user_id: str):
+    try:
+        ok = chat_store.delete_session(session_id, user_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="세션을 찾을 수 없거나 권한이 없습니다.")
+        return {"deleted": True, "session_id": session_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"세션 삭제 오류: {str(e)}")
+
+
 # 3-3. POST 엔드포인트 구현
 @api.post("/api/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):
