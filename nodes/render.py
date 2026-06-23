@@ -61,7 +61,50 @@ def _fmt_rdb(rdb_results: list[dict]) -> str:
         src = f" (근거: {rcept})" if rcept else ""
         docs.append(f"  - [{meta}] {title}{src}")
 
-    if not groups and not docs:
+    # corp_code → 회사명 (DART 원본 정형 섹션 라벨용; rdb_row/doc 가 이름을 갖고 있다)
+    code_to_name: dict[str, str] = {}
+    for r in rdb_results:
+        if r.get("type") in ("rdb_row", "rdb_doc") and r.get("code") and r.get("name"):
+            code_to_name.setdefault(str(r["code"]), str(r["name"]))
+
+    def _corp_label(code: str) -> str:
+        return code_to_name.get(str(code)) or str(code) or "(회사 미상)"
+
+    # ── DART 원본 정형(접근 B): 타법인출자 / 최대주주 / 재무비율 ──
+    invest_by_corp: dict[str, list[str]] = defaultdict(list)
+    holder_by_corp: dict[str, list[str]] = defaultdict(list)
+    indic_by_corp: dict[str, list[str]] = defaultdict(list)
+    for r in rdb_results:
+        t = r.get("type")
+        ex = r.get("extra") or {}
+        code = str(r.get("code") or "")
+        if t == "rdb_invest":
+            tgt = str(ex.get("target") or r.get("name") or "").strip()
+            if not tgt:
+                continue
+            tags = []
+            if ex.get("qota_rt"):
+                tags.append(f"지분 {ex['qota_rt']}%")
+            if ex.get("book_amount"):
+                tags.append(f"장부가 {ex['book_amount']}")
+            tail = f" [{', '.join(tags)}]" if tags else ""
+            purp = f" ({ex['purpose']})" if ex.get("purpose") else ""
+            invest_by_corp[code].append(f"  - → {tgt}{tail}{purp}")
+        elif t == "rdb_shareholder":
+            holder = str(ex.get("holder") or r.get("name") or "").strip()
+            if not holder:
+                continue
+            rel = f" ({ex['relate']})" if ex.get("relate") else ""
+            pct = f" [지분 {ex['qota_rt']}%]" if ex.get("qota_rt") else ""
+            holder_by_corp[code].append(f"  - {holder}{rel}{pct}")
+        elif t == "rdb_indicator":
+            nm = str(ex.get("name") or r.get("name") or "").strip()
+            val = str(ex.get("value") or r.get("value") or "").strip()
+            if not nm or not val:
+                continue
+            indic_by_corp[code].append(f"  - {nm}: {val}")
+
+    if not groups and not docs and not invest_by_corp and not holder_by_corp and not indic_by_corp:
         return ""
 
     lines: list[str] = []
@@ -72,6 +115,27 @@ def _fmt_rdb(rdb_results: list[dict]) -> str:
             for aid, amt in metrics.items():
                 label = _ACCOUNT_KR.get(aid, aid)
                 lines.append(f"  - {label}: {_fmt_krw(amt)}")
+    if indic_by_corp:
+        if lines:
+            lines.append("")
+        lines.append("### [정형 데이터 — 재무비율(주요지표)]")
+        for code, items in indic_by_corp.items():
+            lines.append(f"\n**{_corp_label(code)}**")
+            lines.extend(items)
+    if holder_by_corp:
+        if lines:
+            lines.append("")
+        lines.append("### [정형 데이터 — 최대주주 현황]")
+        for code, items in holder_by_corp.items():
+            lines.append(f"\n**{_corp_label(code)}**")
+            lines.extend(items)
+    if invest_by_corp:
+        if lines:
+            lines.append("")
+        lines.append("### [정형 데이터 — 타법인 출자현황]")
+        for code, items in invest_by_corp.items():
+            lines.append(f"\n**{_corp_label(code)}**")
+            lines.extend(items)
     if docs:
         if lines:
             lines.append("")
@@ -93,7 +157,7 @@ def _fmt_graph(
     organization→ 생략 (단순 노드, 관계 없이 나오면 정보가 없음)
     """
     fin: dict[tuple[Any, str], Any] = {}   # (year, account_id) → amount
-    rels: list[str] = []
+    rels_by_type: dict[str, list[str]] = defaultdict(list)  # rel_type → 라인들 (타입별 분리)
     seen_rels: set[tuple] = set()
     execs: list[str] = []
     seen_execs: set[str] = set()
@@ -123,15 +187,14 @@ def _fmt_graph(
             if key in seen_rels:
                 continue
             seen_rels.add(key)
-            lbl = _humanize_rel(rel_type)
-            line = f"  - {from_name} →({lbl})→ {to_name}"
+            line = f"  - {from_name} → {to_name}"
             try:
                 fv = float(pct)
                 if fv > 0:
                     line += f" [지분 {fv:.2f}%]"
             except (TypeError, ValueError):
                 pass
-            rels.append(line)
+            rels_by_type[rel_type].append(line)
 
         # ── 임원 ────────────────────────────────────────
         elif t == "person":
@@ -157,11 +220,19 @@ def _fmt_graph(
                 label = _ACCOUNT_KR.get(aid, aid)
                 parts.append(f"  - {label}: {_fmt_krw(amt)}")
 
-    if rels:
+    if rels_by_type:
         if parts:
             parts.append("")
-        parts.append("### [관계망 — 기업 관계]")
-        parts.extend(rels)
+        parts.append("### [관계망 — 기업 관계] (관계 타입별)")
+        # 공급을 먼저, 그다음 등장 순서. 타입을 섞지 않고 헤더로 분리해 렌더가
+        # '지분/지배/특수관계'를 '공급(낙수)'으로 뭉뚱그리지 못하게 한다.
+        rel_order = sorted(
+            rels_by_type.keys(),
+            key=lambda rt: (0 if rt == "SUPPLIES_TO" else 1),
+        )
+        for rt in rel_order:
+            parts.append(f"\n**{_humanize_rel(rt)}:**")
+            parts.extend(rels_by_type[rt])
 
     if execs:
         if parts:
@@ -284,9 +355,18 @@ def generate_report_node(state: AgentState):
 5. [분석 기초 자료]에 없는 내용(사전 학습 지식·추정 수치)은 사용하지 마세요.
    자료로 다루지 못한 부분은 솔직하게 밝히세요.
 
-6. 마크다운(##헤더·**볼드**·표)으로 가독성을 높이세요.
+6. **수혜·낙수·순위 질문의 순위·목록은 [관계망 — 기업 관계]에 실제로 있는 회사로만 구성하세요.**
+   사전지식이나 [비정형 문서]에 언급된 회사를 끌어와 순위·수혜주 목록에 넣지 마세요.
+   관계망에 없는 회사를 거론해야 할 땐 "관계 데이터에 없음"임을 분명히 밝히고 순위에서 제외하세요.
 
-7. "알겠습니다" 같은 서론 없이 바로 시작하세요.
+7. **관계는 [관계망 — 기업 관계]에 표시된 실제 타입으로만 서술하세요.**
+   타입별 헤더(공급/지분·대주주/자회사·지배/투자/특수관계)를 그대로 따르고, 공급이 아닌 관계
+   (지분·지배·특수관계 등)를 '공급'이나 '낙수(거래 전파)'로 바꿔 부르지 마세요. 타입이 다르면
+   수혜 경로의 성격(매출 전파 vs 지분 가치 vs 지배구조)도 다르므로 구분해 설명하세요.
+
+8. 마크다운(##헤더·**볼드**·표)으로 가독성을 높이세요.
+
+9. "알겠습니다" 같은 서론 없이 바로 시작하세요.
 """
 
     human_prompt = f"[사용자 질문]\n{question}\n\n[분석 기초 자료]\n{draft_info}"

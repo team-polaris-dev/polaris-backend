@@ -155,6 +155,36 @@ def list_sessions(user_id: str, limit: int = 50) -> list[dict[str, Any]]:
     return sessions
 
 
+def delete_session(session_id: str, user_id: str) -> bool:
+    """세션과 그 메시지를 삭제한다(소유자 본인 것만). 삭제됐으면 True.
+
+    user_id 로 소유권을 확인해 남의 세션은 건드리지 않는다.
+    메시지 → 세션 순으로 지운다(FK 안전).
+    """
+    sid = (session_id or "").strip()
+    uid = (user_id or "").strip()
+    if not sid or not uid:
+        return False
+    with mariadb_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM chat_sessions WHERE session_id=%s AND user_id=%s",
+                (sid, uid),
+            )
+            if cur.fetchone() is None:
+                return False
+            cur.execute(
+                "DELETE FROM chat_messages WHERE session_id=%s AND user_id=%s",
+                (sid, uid),
+            )
+            cur.execute(
+                "DELETE FROM chat_sessions WHERE session_id=%s AND user_id=%s",
+                (sid, uid),
+            )
+            conn.commit()
+            return True
+
+
 def get_message_panel(message_id: int) -> dict[str, Any] | None:
     """단일 메시지(message_id)의 패널 JSON(search_plan)을 복원한다. 행이 없으면 None.
 
@@ -245,6 +275,8 @@ def list_messages(session_id: str, limit: int = 500) -> list[dict[str, Any]]:
                 "graph": panel.get("graph", {"nodes": [], "edges": []}),
                 "documents": panel.get("documents", []),
                 "financials": panel.get("financials", []),
+                "ratios": panel.get("ratios", []),
+                "ownership": panel.get("ownership", {"shareholders": [], "investments": []}),
                 "digest": panel.get("digest", ""),
                 # 뉴스 분석(지연 로딩 결과). 없으면 기본값 — 기존 메시지 호환(§0 additive).
                 "news": panel.get("news", {"companies": []}),

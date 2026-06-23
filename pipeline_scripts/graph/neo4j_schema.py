@@ -1,6 +1,11 @@
 """Neo4j 제약 생성 — 03_neo4j.md §4-1 그대로. 멱등(IF NOT EXISTS)."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # -m 실행 시 db 모듈 해석
+
 from db import neo4j_driver
 
 CONSTRAINTS = [

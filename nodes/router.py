@@ -214,11 +214,18 @@ def has_required_evidence(state: AgentState) -> bool:
     """필수 소스 중 하나라도 결과가 있으면 True (OR 게이트).
 
     질문 유형마다 채워지는 소스가 다르다(관계도→graph 만, 재무 랭킹→rdb 만,
-    원문 인용→vec 만). 그래서 '셋 다 채워짐'(AND)이 아니라 '근거가 하나라도 있음'을
-    통과 기준으로 둔다 — 전부 비었을 때만 gen 을 막아 환각을 방어한다. vec 청크 0건처럼
-    질문 유형상 정상적으로 비는 소스가 멀쩡한 답(rdb·graph 다수)을 막던 문제를 없앤다.
+    원문 인용→vec 만, 매크로/업계→community 만). 그래서 '셋 다 채워짐'(AND)이 아니라
+    '근거가 하나라도 있음'을 통과 기준으로 둔다 — 전부 비었을 때만 gen 을 막아 환각을
+    방어한다. vec 청크 0건처럼 질문 유형상 정상적으로 비는 소스가 멀쩡한 답(rdb·graph
+    다수)을 막던 문제를 없앤다.
+
+    글로벌 루트는 community_results 만 채우는데 _REQUIRED_SOURCES 가 셋만 보던 탓에
+    main.py 의 패널 게이트가 항상 False → 우측 '원본 문서' 탭이 닫혔다. community 도
+    OR 에 포함해 글로벌 답변의 군집 멤버 공시 카드가 패널에 노출되게 한다.
     """
-    return any(state.get(key) for key in _REQUIRED_SOURCES)
+    if any(state.get(key) for key in _REQUIRED_SOURCES):
+        return True
+    return bool(state.get("community_results"))
 
 
 def _fmt_cell(value, width: int) -> str:

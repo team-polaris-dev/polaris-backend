@@ -27,6 +27,7 @@ from core.news import (
     companies_from_query,
 )
 from tool.news_client import news_enabled
+from services.disclosure_tables import fetch_disclosure_tables
 from nodes.router import has_required_evidence
 from tool import chat_store
 from tool.vector_store import warmup as _vector_warmup
@@ -169,6 +170,39 @@ class NewsData(BaseModel):
     companies: List[NewsAnalysisCompany] = []
 
 
+# DART 원본 정형(접근 B) 패널 데이터 — 재무비율 / 최대주주·타법인출자
+class RatioItem(BaseModel):
+    name: str = ""
+    value: str = ""
+    category: str = ""
+
+
+class RatioGroup(BaseModel):
+    corp_name: str = ""
+    year: Any = None
+    items: List[RatioItem] = []
+
+
+class ShareholderItem(BaseModel):
+    corp_name: str = ""
+    holder: str = ""
+    relate: str = ""
+    qota_rt: str = ""
+
+
+class InvestmentItem(BaseModel):
+    corp_name: str = ""
+    target: str = ""
+    qota_rt: str = ""
+    book_amount: str = ""
+    purpose: str = ""
+
+
+class Ownership(BaseModel):
+    shareholders: List[ShareholderItem] = []
+    investments: List[InvestmentItem] = []
+
+
 class ChatResponse(BaseModel):
     response: str
     intent: str
@@ -179,6 +213,9 @@ class ChatResponse(BaseModel):
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
     financials: List[FinancialGroup] = []
+    # DART 원본 정형 — 재무비율 / 지분·관계(최대주주·타법인출자)
+    ratios: List[RatioGroup] = []
+    ownership: Ownership = Ownership()
     # 우측 패널 '원본 문서' 탭 상단의 LLM 통합 근거 정리본(마크다운). 없으면 빈 문자열.
     digest: str = ""
 
@@ -194,6 +231,8 @@ class HistoryMessage(BaseModel):
     graph: GraphData = GraphData()
     documents: List[DocumentItem] = []
     financials: List[FinancialGroup] = []
+    ratios: List[RatioGroup] = []
+    ownership: Ownership = Ownership()
     digest: str = ""
     # 뉴스 분석(지연 로딩). 기존 메시지엔 없으므로 빈 기본값으로 둔다(§0 additive).
     news: NewsData = NewsData()
@@ -230,6 +269,20 @@ def session_messages_endpoint(session_id: str):
         raise HTTPException(status_code=500, detail=f"메시지 기록 조회 오류: {str(e)}")
 
 
+# 3-2b. 대화 삭제 — 소유자(user_id) 본인 세션만 삭제 가능
+@api.delete("/api/sessions/{session_id}")
+def delete_session_endpoint(session_id: str, user_id: str):
+    try:
+        ok = chat_store.delete_session(session_id, user_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="세션을 찾을 수 없거나 권한이 없습니다.")
+        return {"deleted": True, "session_id": session_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"세션 삭제 오류: {str(e)}")
+
+
 # 3-3. POST 엔드포인트 구현
 @api.post("/api/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):
@@ -264,13 +317,16 @@ def chat_endpoint(request: ChatRequest):
         # 단, result_check 가 재질문을 요청한 턴(전 검색 소스가 비어 END)에는
         # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
         # 않도록. 판정은 result_check 와 동일하게 has_required_evidence(OR 게이트) 로 한다.
-        # 참고: 글로벌(매크로/업계) 턴은 rdb/vec/graph 가 비어 community_results 만 채우므로
-        # has_required_evidence 가 False → 우측 패널은 닫힌다(의도된 동작). 답변 본문(response)은
-        # gen 이 community_results 로 생성하므로 아래 분기와 무관하게 그대로 반환된다.
+        # 참고: 글로벌(매크로/업계) 턴은 rdb/vec/graph 가 비고 community_results 만 채워지지만,
+        # has_required_evidence 가 community 도 OR 로 보고 serialize 가 군집 멤버 공시를
+        # 카드로 깔아 우측 '원본 문서' 탭이 열린다.
         if has_required_evidence(result):
             panel_data = serialize_state(result)
         else:
-            panel_data = {"graph": {"nodes": [], "edges": []}, "documents": [], "financials": [], "panel": "none"}
+            panel_data = {
+                "graph": {"nodes": [], "edges": []}, "documents": [], "financials": [],
+                "ratios": [], "ownership": {"shareholders": [], "investments": []}, "panel": "none",
+            }
 
         # 우측 '원본 문서' 탭 상단의 통합 근거 정리(digest)는 LLM 1회 추가 호출이라
         # 동기로 만들면 답변이 그만큼 늦는다. 여기서 만들지 않고 답변을 먼저 반환한 뒤,
@@ -314,6 +370,8 @@ def chat_endpoint(request: ChatRequest):
             graph=panel_data["graph"],
             documents=panel_data["documents"],
             financials=panel_data.get("financials", []),
+            ratios=panel_data.get("ratios", []),
+            ownership=panel_data.get("ownership", {"shareholders": [], "investments": []}),
             digest="",
         )
 
@@ -518,6 +576,26 @@ class LandingGraphLink(BaseModel):
 class LandingGraphResponse(BaseModel):
     nodes: List[LandingGraphNode] = []
     links: List[LandingGraphLink] = []
+
+
+# 3-6. 공시 한 건의 표 → 섹션별 구조(헤더/행). DART pont 식 '보고서 표 → 엑셀' 데이터 소스.
+#   원본 문서 패널에서 보고서마다 '엑셀 다운로드' 모달을 열 때 프론트가 호출한다.
+class DisclosureTablesResponse(BaseModel):
+    rcept_no: str
+    corp_name: str = ""
+    title: str = ""
+    date: str = ""
+    sections: List[Any] = []
+
+
+@api.get("/api/disclosure/{rcept_no}/tables", response_model=DisclosureTablesResponse)
+def disclosure_tables_endpoint(rcept_no: str):
+    """공시 한 건(rcept_no)의 표를 섹션별로 묶어 반환. 표가 없으면 sections=[] (빈 구조)."""
+    try:
+        data = fetch_disclosure_tables(rcept_no)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"공시 표 조회 오류: {str(e)}")
+    return DisclosureTablesResponse(**data)
 
 
 @api.get("/api/graph/landing", response_model=LandingGraphResponse)

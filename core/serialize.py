@@ -33,17 +33,28 @@ def _humanize_rel(rel: str) -> str:
 # IFRS/DART account_id → 한글 라벨
 _ACCOUNT_KR: dict[str, str] = {
     "ifrs-full_Revenue": "매출액",
-    "dart_OperatingIncomeLoss": "영업이익",
-    "ifrs-full_ProfitLoss": "당기순이익",
     "ifrs-full_GrossProfit": "매출총이익",
-    "ifrs-full_Assets": "총자산",
-    "ifrs-full_Liabilities": "총부채",
-    "ifrs-full_Equity": "자본총계",
-    "ifrs-full_CashAndCashEquivalents": "현금및현금성자산",
-    "ifrs-full_CurrentAssets": "유동자산",
-    "ifrs-full_CurrentLiabilities": "유동부채",
-    "ifrs-full_CostOfSales": "매출원가",
+    "dart_OperatingIncomeLoss": "영업이익",
+    "ifrs-full_FinanceIncome": "금융수익",
+    "ifrs-full_FinanceCosts": "금융비용",
     "ifrs-full_ProfitLossBeforeTax": "세전순이익",
+    "ifrs-full_IncomeTaxExpenseContinuingOperations": "법인세비용",
+    "ifrs-full_ProfitLoss": "당기순이익",
+    "ifrs-full_Assets": "총자산",
+    "ifrs-full_CurrentAssets": "유동자산",
+    "ifrs-full_NoncurrentAssets": "비유동자산",
+    "ifrs-full_PropertyPlantAndEquipment": "유형자산",
+    "ifrs-full_Liabilities": "총부채",
+    "ifrs-full_CurrentLiabilities": "유동부채",
+    "ifrs-full_NoncurrentLiabilities": "비유동부채",
+    "ifrs-full_Equity": "자본총계",
+    "ifrs-full_IssuedCapital": "자본금",
+    "ifrs-full_RetainedEarnings": "이익잉여금",
+    "ifrs-full_CashAndCashEquivalents": "현금및현금성자산",
+    "ifrs-full_CashFlowsFromUsedInOperatingActivities": "영업활동현금흐름",
+    "ifrs-full_CashFlowsFromUsedInInvestingActivities": "투자활동현금흐름",
+    "ifrs-full_CashFlowsFromUsedInFinancingActivities": "재무활동현금흐름",
+    "ifrs-full_CostOfSales": "매출원가",
 }
 
 _SUMMARY_ORDER = ["매출액", "영업이익", "당기순이익"]
@@ -353,6 +364,78 @@ def _build_rdb_text_documents(rdb_results: list[dict]) -> list[dict]:
     return documents
 
 
+# Community 카드 cap — 군집 멤버사가 수십~수백이라 회사당 N건·전체 M건으로 좁혀
+# 우측 패널이 같은 회사 사업보고서/반기/분기 등으로 뒤덮이지 않게 한다.
+_COMMUNITY_DOCS_PER_CORP = 2
+_COMMUNITY_DOCS_TOTAL = 24
+
+# corp_code 인젝션 방어 — 8자리 숫자만 남긴다.
+_CORP_CODE_RE = re.compile(r"[^0-9]")
+
+
+def _build_community_documents(community_results: list[dict]) -> list[dict]:
+    """community_results 멤버 corp_code → document_index 최신 공시 카드.
+
+    글로벌 루트는 community_results 만 채우므로 vec/rdb 카드가 비어 우측 '원본 문서'
+    탭이 닫혔다. 군집 멤버 회사들의 최신 공시(date desc)를 카드로 노출해 답변 본문
+    (군집 요약)의 근거를 패널에 깐다. 군집들의 멤버 corp_code 합집합을 IN 1회 조회 →
+    회사당 _COMMUNITY_DOCS_PER_CORP 건 → 전체 _COMMUNITY_DOCS_TOTAL 건으로 cap.
+    """
+    if not community_results:
+        return []
+    codes: list[str] = []
+    seen_codes: set[str] = set()
+    for c in community_results:
+        for code in (c.get("extra") or {}).get("members") or []:
+            cc = _CORP_CODE_RE.sub("", str(code))
+            if cc and cc not in seen_codes:
+                seen_codes.add(cc)
+                codes.append(cc)
+    if not codes:
+        return []
+
+    in_list = ", ".join(f"'{c}'" for c in sorted(codes))
+    sql = (
+        "SELECT rcept_no, corp_code, corp_name, doc_type, date, title, summary_short "
+        f"FROM document_index WHERE corp_code IN ({in_list}) "
+        "ORDER BY date DESC, rcept_no DESC"
+    )
+    # max_rows 는 회사당 cap 적용 전이므로 넉넉히. 큰 군집(150사)이라도
+    # _COMMUNITY_DOCS_TOTAL 차면 조기 break 하므로 비용 bound.
+    result = execute_sql_query(sql, max_rows=500)
+    if not result.get("ok"):
+        return []
+
+    per_corp: dict[str, int] = defaultdict(int)
+    documents: list[dict] = []
+    for row in result["rows"]:
+        cc = str(row.get("corp_code") or "")
+        if per_corp[cc] >= _COMMUNITY_DOCS_PER_CORP:
+            continue
+        per_corp[cc] += 1
+        summary = row.get("summary_short") or ""
+        documents.append(
+            {
+                "rcept_no": str(row.get("rcept_no") or ""),
+                "chunk_id": "",
+                "corp_name": row.get("corp_name") or "",
+                "title": row.get("title") or "",
+                "doc_type": row.get("doc_type") or "",
+                "date": str(row.get("date") or ""),
+                "summary": summary,
+                "section_path": "",
+                "year": None,
+                "score": None,
+                # 본문 청크가 없어 요약문을 본문 자리에 둔다(프론트가 빈 카드를 그리지 않게).
+                "text": summary,
+                "source_kind": "community_doc",
+            }
+        )
+        if len(documents) >= _COMMUNITY_DOCS_TOTAL:
+            break
+    return documents
+
+
 _CO_STRIP_RE = re.compile(r"주식회사|\(주\)|㈜|\s+")
 
 
@@ -571,6 +654,16 @@ def build_documents(state: dict) -> list[dict]:
         if d["chunk_id"]:
             seen.add(d["chunk_id"])
 
+    # 2) Community 멤버 최신 공시 — 글로벌 루트(community_results) 답변의 근거를 깐다.
+    #    vec/rdb 와 중복은 rcept_no 기준 dedup(seen).
+    for d in _build_community_documents(state.get("community_results") or []):
+        rcept_no = d["rcept_no"]
+        if rcept_no and rcept_no in seen:
+            continue
+        if rcept_no:
+            seen.add(rcept_no)
+        documents.append(d)
+
     # 1) Vector 청크 = 본문이 있는 원본 발췌
     for v in vec_results:
         extra = v.get("extra") or {}
@@ -668,6 +761,11 @@ def build_financials(state: dict) -> list[dict]:
                 "label": _ACCOUNT_KR.get(aid, aid),
                 "value": round(raw[aid] / divisor, 1),
                 "unit": unit,
+                # 표(테이블)용 정확 표기 — 그룹 단일 단위로 반올림하면 자본금·금융수익 등
+                # 작은 계정이 0.0 으로 뭉개지므로, 값마다 조/억을 따로 붙여 정확히 보여준다.
+                "display": _fmt_krw(raw[aid]),
+                # 엑셀 추출용 원본 금액(원) — 분석에 쓰도록 반올림 없는 정확한 숫자.
+                "raw": raw[aid],
             }
             for aid in ordered_ids
         ]
@@ -677,13 +775,81 @@ def build_financials(state: dict) -> list[dict]:
     return result
 
 
+def _rdb_code_to_name(rdb_results: list[dict]) -> dict[str, str]:
+    """corp_code → 회사명 — DART 원본 정형(주주·출자·비율) 라벨용.
+
+    이 행들엔 회사명이 없고 corp_code 만 있다. 같은 결과셋의 rdb_row/rdb_doc 가
+    corp_name 을 갖고 있으므로 거기서 매핑을 만든다(없으면 코드 자체로 폴백).
+    """
+    m: dict[str, str] = {}
+    for r in rdb_results:
+        if r.get("type") in ("rdb_row", "rdb_doc") and r.get("code") and r.get("name"):
+            m.setdefault(str(r["code"]), str(r["name"]))
+    return m
+
+
+def build_ratios(state: dict) -> list[dict]:
+    """rdb_indicator(재무비율) → 회사별 그룹. 재무지표 차트 탭의 '재무비율' 표용.
+
+    반환: [{corp_name, year, items:[{name, value, category}]}]
+    """
+    rdb = state.get("rdb_results") or []
+    name_map = _rdb_code_to_name(rdb)
+    groups: dict[str, dict] = {}
+    for r in rdb:
+        if r.get("type") != "rdb_indicator":
+            continue
+        ex = r.get("extra") or {}
+        code = str(r.get("code") or "")
+        g = groups.setdefault(code, {"corp_name": name_map.get(code, code), "year": ex.get("bsns_year"), "items": []})
+        g["items"].append({
+            "name": str(ex.get("name") or r.get("name") or ""),
+            "value": str(ex.get("value") or r.get("value") or ""),
+            "category": str(ex.get("category") or ""),
+        })
+    return [g for g in groups.values() if g["items"]]
+
+
+def build_ownership(state: dict) -> dict:
+    """rdb_shareholder/rdb_invest → '지분·관계' 탭용 두 표(최대주주·타법인출자).
+
+    반환: {shareholders:[{corp_name,holder,relate,qota_rt}],
+           investments:[{corp_name,target,qota_rt,book_amount,purpose}]}
+    """
+    rdb = state.get("rdb_results") or []
+    name_map = _rdb_code_to_name(rdb)
+    shareholders: list[dict] = []
+    investments: list[dict] = []
+    for r in rdb:
+        t = r.get("type")
+        ex = r.get("extra") or {}
+        code = str(r.get("code") or "")
+        if t == "rdb_shareholder":
+            shareholders.append({
+                "corp_name": name_map.get(code, code),
+                "holder": str(ex.get("holder") or r.get("name") or ""),
+                "relate": str(ex.get("relate") or ""),
+                "qota_rt": str(ex.get("qota_rt") or ""),
+            })
+        elif t == "rdb_invest":
+            investments.append({
+                "corp_name": name_map.get(code, code),
+                "target": str(ex.get("target") or r.get("name") or ""),
+                "qota_rt": str(ex.get("qota_rt") or ""),
+                "book_amount": str(ex.get("book_amount") or ""),
+                "purpose": str(ex.get("purpose") or ""),
+            })
+    return {"shareholders": shareholders, "investments": investments}
+
+
 def serialize_state(state: dict) -> dict:
-    """최종 state → {graph, documents, financials, panel}.
+    """최종 state → {graph, documents, financials, ratios, ownership, panel}.
 
     panel: 프론트가 자동으로 펼칠 탭 힌트.
       'graph'     → 관계도 데이터 있음
       'documents' → 원본 문서만 있음
       'none'      → 우측 패널 표시 안 함
+    ratios/ownership: DART 원본 정형(재무비율 / 최대주주·타법인출자) 패널 데이터.
     """
     msgs = state.get("messages") or []
     answer = ""
@@ -695,6 +861,8 @@ def serialize_state(state: dict) -> dict:
     graph      = build_graph(state, answer)
     documents  = build_documents(state)
     financials = build_financials(state)
+    ratios     = build_ratios(state)
+    ownership  = build_ownership(state)
 
     if graph["edges"]:
         panel = "graph"
@@ -703,4 +871,11 @@ def serialize_state(state: dict) -> dict:
     else:
         panel = "none"
 
-    return {"graph": graph, "documents": documents, "financials": financials, "panel": panel}
+    return {
+        "graph": graph,
+        "documents": documents,
+        "financials": financials,
+        "ratios": ratios,
+        "ownership": ownership,
+        "panel": panel,
+    }

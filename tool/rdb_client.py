@@ -355,15 +355,31 @@ _FIN_REPRT_CODE = "11011"  # 사업보고서(연간)
 # 재무카드에 담을 핵심 계정(IFRS/DART 택소노미). config.graphrag.FIN_KEY_ACCOUNTS 와
 # 같은 의도지만, RDB 는 graph 패키지에 의존하지 않도록 여기 독립 정의한다(레이어 분리).
 _FIN_CARD_ACCOUNTS = [
+    # ── 손익 ──────────────────────────────────────────────
     "ifrs-full_Revenue",              # 매출액
     "ifrs-full_GrossProfit",          # 매출총이익
     "dart_OperatingIncomeLoss",       # 영업이익
+    "ifrs-full_FinanceIncome",        # 금융수익
+    "ifrs-full_FinanceCosts",         # 금융비용
     "ifrs-full_ProfitLossBeforeTax",  # 법인세차감전순이익
+    "ifrs-full_IncomeTaxExpenseContinuingOperations",  # 법인세비용
     "ifrs-full_ProfitLoss",           # 당기순이익
+    # ── 재무상태(자산/부채/자본) ──────────────────────────
     "ifrs-full_Assets",               # 자산총계
+    "ifrs-full_CurrentAssets",        # 유동자산
+    "ifrs-full_NoncurrentAssets",     # 비유동자산
+    "ifrs-full_PropertyPlantAndEquipment",  # 유형자산
     "ifrs-full_Liabilities",          # 부채총계
+    "ifrs-full_CurrentLiabilities",   # 유동부채
+    "ifrs-full_NoncurrentLiabilities",  # 비유동부채
     "ifrs-full_Equity",               # 자본총계
+    "ifrs-full_IssuedCapital",        # 자본금
+    "ifrs-full_RetainedEarnings",     # 이익잉여금
     "ifrs-full_CashAndCashEquivalents",  # 현금및현금성자산
+    # ── 현금흐름 ──────────────────────────────────────────
+    "ifrs-full_CashFlowsFromUsedInOperatingActivities",   # 영업활동현금흐름
+    "ifrs-full_CashFlowsFromUsedInInvestingActivities",   # 투자활동현금흐름
+    "ifrs-full_CashFlowsFromUsedInFinancingActivities",   # 재무활동현금흐름
 ]
 
 _YEAR_RE = re.compile(r"(20\d{2})\s*년?")
@@ -459,7 +475,10 @@ def fetch_financial_card(
         f"  {year_clause} "
         "ORDER BY f.corp_code, f.bsns_year DESC, f.account_id"
     )
-    return _run_select(sql, tuple(params))
+    # 행 상한은 (회사 수 × 카드계정 수)로 둔다 — 기본 MAX_ROWS(50)면 다회사×다계정
+    # 조회 시 뒤쪽 회사가 잘려 일부 계정만 나온다(계정 확장 후 3사×22=66>50 회귀).
+    cap = max(MAX_ROWS, len(codes) * len(_FIN_CARD_ACCOUNTS))
+    return _run_select(sql, tuple(params), max_rows=cap)
 
 
 def fetch_documents_by_rcept(rcept_nos: list[str]) -> list[dict]:

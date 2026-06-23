@@ -1146,23 +1146,42 @@ def _execute_multi_hop_chain(
         selected_in_hop: set[str] = set()
         selected_names: list[str] = []
         for anchor in frontier:
-            candidates = _gather_hop_candidates(anchor, hop, exclude_ids=visited_ids)
-            if not candidates:
+            # 관계 타입별로 따로 줄세운다(병합 익사 방지): 한 풀로 합쳐 단일 지표로 랭킹하면
+            # 고매출 계열사·고객이 실제 공급사를 밀어낸다. 타입마다 자기 top_n 슬롯을 받아
+            # 공급/지분/지배/투자/특수관계가 각각 표면화되고, 렌더가 타입별로 분리·라벨한다.
+            anchor_excl = visited_ids | {str(anchor.get("id") or "")}
+            chosen: list[dict[str, Any]] = []
+            chosen_ids: set[str] = set()
+            for step in hop.rel_steps():
+                relation = _resolve_relation_for_anchor(anchor, step)
+                cands = _gate_candidates(
+                    _relation_candidates(anchor, relation, exclude_ids=anchor_excl),
+                    relation.rel_type,
+                )
+                if not cands:
+                    continue
+                _attach_candidate_evidence(cands)
+                ranked = _rank_candidates(
+                    cands,
+                    hop.rank.metric_id,
+                    year,
+                    policy=hop.policy,
+                    anchors=[str(anchor.get("name") or "")],
+                    relation_label=relation.rel_type,
+                    question=query,
+                )
+                supported = [c for c in ranked if _candidate_supported(c, _candidate_rel_type(c))]
+                picked = _select_hop_candidates(
+                    supported, hop.top_n, next_hop=next_hop, year=year, visited_ids=visited_ids,
+                )
+                for cand in picked:
+                    cid = str(cand.get("id") or "")
+                    if not cid or cid in chosen_ids:
+                        continue
+                    chosen_ids.add(cid)
+                    chosen.append(cand)
+            if not chosen:
                 continue
-            _attach_candidate_evidence(candidates)
-            ranked = _rank_candidates(
-                candidates,
-                hop.rank.metric_id,
-                year,
-                policy=hop.policy,
-                anchors=[str(anchor.get("name") or "")],
-                relation_label=hop.relation.rel_type,
-                question=query,
-            )
-            supported = [c for c in ranked if _candidate_supported(c, _candidate_rel_type(c))]
-            chosen = _select_hop_candidates(
-                supported, hop.top_n, next_hop=next_hop, year=year, visited_ids=visited_ids,
-            )
             if len(chosen) < max(1, hop.top_n):
                 degraded = True
             for cand in chosen:
