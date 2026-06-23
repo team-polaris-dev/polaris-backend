@@ -1,4 +1,5 @@
 # main.py
+import os
 import threading
 from contextlib import asynccontextmanager
 
@@ -19,6 +20,13 @@ from services.pipeline_jobs import init_pipeline_tables, sweep_stale_jobs
 from services.chat_logging import init_chat_tables
 from core.serialize import serialize_state
 from core.digest import build_evidence_digest
+from core.news import (
+    build_news_analysis,
+    cards_only,
+    collect_company_news,
+    companies_from_query,
+)
+from tool.news_client import news_enabled
 from nodes.router import has_required_evidence
 from tool import chat_store
 from tool.vector_store import warmup as _vector_warmup
@@ -129,6 +137,38 @@ class FinancialGroup(BaseModel):
     metrics: List[FinancialMetric] = []
 
 
+# 뉴스 분석 탭 — 지연 로딩 결과(우측 패널 4번째 탭). 답변 이후 /api/chat/news 로 채운다.
+class NewsArticleCard(BaseModel):
+    title: str = ""
+    url: str = ""
+    press: str = ""
+    pub_date: str = ""
+    sentiment: str = "neutral"      # 기사별 논조
+    evidence: List[str] = []         # 연결된 DART 근거 라벨
+
+
+# 카드뉴스용 핵심 토픽 카드 — 패널 상단 그리드(아이콘+헤드라인+짧은 설명).
+class NewsTopicCard(BaseModel):
+    headline: str = ""               # 정제된 한 줄 제목
+    desc: str = ""                   # 두 줄 정도 설명
+    event_type: str = "기타"          # 실적|증설|HBM·신제품|인사|리스크|기타 (아이콘 매핑)
+    sentiment: str = "neutral"       # 카드 컬러용 논조
+
+
+class NewsAnalysisCompany(BaseModel):
+    corp_name: str = ""
+    corp_code: str = ""
+    summary: str = ""                # 최근 동향 요약(마크다운)
+    relevance: str = ""              # 공시 연관 설명(마크다운)
+    sentiment: str = "neutral"       # 전반 논조
+    cards: List[NewsTopicCard] = []  # 카드뉴스용 핵심 토픽(0~3장)
+    articles: List[NewsArticleCard] = []
+
+
+class NewsData(BaseModel):
+    companies: List[NewsAnalysisCompany] = []
+
+
 class ChatResponse(BaseModel):
     response: str
     intent: str
@@ -155,6 +195,8 @@ class HistoryMessage(BaseModel):
     documents: List[DocumentItem] = []
     financials: List[FinancialGroup] = []
     digest: str = ""
+    # 뉴스 분석(지연 로딩). 기존 메시지엔 없으므로 빈 기본값으로 둔다(§0 additive).
+    news: NewsData = NewsData()
 
 # 3-0. 로그인 / 회원가입 — 사용자이름만 입력. 처음이면 자동 가입.
 @api.post("/api/login", response_model=LoginResponse)
@@ -256,6 +298,9 @@ def chat_endpoint(request: ChatRequest):
                     **panel_data,
                     "tools": result.get("search_plan"),
                     "reconstructed_query": result.get("reconstructed_query") or request.message,
+                    # 원본 질문도 별도 보관 — 문맥재구성이 "SK하이닉스"→"에스케이하이닉스" 처럼
+                    # 회사명을 음역해버리면 뉴스 기업매칭(부분문자열)이 깨진다(§_resolve_news_companies).
+                    "original_query": request.message,
                 },
             ) or 0
         except Exception as log_err:
@@ -314,6 +359,145 @@ def chat_digest_endpoint(request: DigestRequest):
         except Exception as e:
             print(f"⚠️ digest 저장 실패(무시): {e}")
     return DigestResponse(digest=digest)
+
+
+# 3-4b. 뉴스 분석(news) — 답변 반환 후 프론트가 별도로 호출(지연 로딩, 프론트 주도 트리거).
+# 설계: docs/superpowers/specs/2026-06-22-news-analysis-tab-design.md
+#  - /api/chat 챗 핸들러는 건드리지 않는다(§0). 뉴스는 이 신규 엔드포인트로만 동작.
+#  - sync def 핸들러 — /api/chat·/api/chat/digest 와 동일(이벤트 루프 보호, §9-1).
+#  - NEWS_ENABLED OFF/키 없음/실패는 모두 빈 결과로 degrade(§9-3,5).
+class NewsRequest(BaseModel):
+    message_id: int
+
+
+class NewsResponse(BaseModel):
+    news: NewsData = NewsData()
+
+
+def _resolve_news_companies(panel: dict) -> list[tuple[str, str]]:
+    """저장된 패널 JSON 에서 분석 대상 기업 (corp_name, corp_code) 을 복원한다(§5).
+
+    1순위: reconstructed_query + original_query 에서 회사명 추출(긴 이름 우선, 등장순, cap).
+           문맥재구성(LLM)이 "SK하이닉스"→"에스케이하이닉스" 처럼 한글 음역을 해버리면
+           reconstructed_query 만으로는 부분문자열 매칭이 깨지므로, 사용자가 실제로 타이핑한
+           original_query 도 함께 검색해 음역 전 표기를 잡는다(§companies_from_query 부분문자열 매칭).
+    2순위: documents 에 등장한 corp_name(공시가 조회된 회사).
+    둘 다 비면 빈 리스트 → 뉴스 탭 미표시(매크로/업계 질문 정상 0건).
+    """
+    # 회사명↔코드 매핑은 vector_store 의 프로세스 캐시를 '호출만' 한다(§9-4, 내부 무수정).
+    from tool.vector_store import _get_corp_name_to_code
+
+    try:
+        name_to_code = _get_corp_name_to_code()
+    except Exception as e:
+        print(f"⚠️ [news] 회사명 매핑 로드 실패(빈 결과): {e!r}")
+        return []
+
+    # 1순위 — reconstructed_query + original_query(음역 보정, 둘 다 비어도 안전)
+    query = str(panel.get("reconstructed_query") or "") + " " + str(panel.get("original_query") or "")
+    companies = companies_from_query(query, name_to_code)
+    if companies:
+        return companies
+
+    # 2순위 — documents 의 corp_name 들(등장순, cap 적용)
+    cap = int(os.getenv("NEWS_MAX_COMPANIES", "3"))
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for doc in panel.get("documents") or []:
+        name = str(doc.get("corp_name") or "").strip()
+        code = name_to_code.get(name, "")
+        if not name or not code or code in seen:
+            continue
+        seen.add(code)
+        out.append((name, code))
+        if len(out) >= cap:
+            break
+    return out
+
+
+@api.post("/api/chat/news", response_model=NewsResponse)
+def chat_news_endpoint(request: NewsRequest):
+    """저장된 어시스턴트 메시지(message_id)의 대상 기업으로 최근 뉴스 분석을 만들어 캐시·반환.
+
+    프론트가 근거(documents/graph)가 나온 턴에서만 답변 렌더 후 호출한다(§2-결정1).
+    이미 계산돼 저장돼 있으면(세션 재방문 등) 네이버/LLM 재호출 없이 캐시를 돌려준다.
+    기능이 꺼져 있거나(NEWS_ENABLED) 대상 기업이 없으면 빈 결과(탭 미표시).
+    """
+    # 기능 OFF/키 없음 — DB 조차 읽지 않고 즉시 빈 결과(§9-5).
+    if not news_enabled():
+        return NewsResponse(news=NewsData())
+
+    try:
+        panel = chat_store.get_message_panel(request.message_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"메시지 조회 오류: {str(e)}")
+    if panel is None:
+        raise HTTPException(status_code=404, detail="메시지를 찾을 수 없습니다.")
+
+    # 캐시 히트 — LLM/네이버 재호출 없이 그대로 반환.
+    cached = panel.get("news")
+    if isinstance(cached, dict) and cached.get("companies"):
+        return NewsResponse(news=NewsData(**cached))
+
+    companies = _resolve_news_companies(panel)
+    if not companies:
+        return NewsResponse(news=NewsData())
+
+    query = str(panel.get("reconstructed_query") or "")
+    try:
+        analysis = build_news_analysis(companies, query)
+    except Exception as e:
+        # 어떤 실패도 빈 결과로 degrade — 챗봇 본체·기존 패널 무영향(§9-3).
+        print(f"⚠️ [news] 분석 생성 실패(빈 결과): {e!r}")
+        analysis = []
+
+    news_payload = {"companies": analysis}
+    if analysis:
+        try:
+            chat_store.set_message_news(request.message_id, news_payload)
+        except Exception as e:
+            print(f"⚠️ [news] 분석 저장 실패(무시): {e}")
+    return NewsResponse(news=NewsData(**news_payload))
+
+
+@api.post("/api/chat/news/cards", response_model=NewsResponse)
+def chat_news_cards_endpoint(request: NewsRequest):
+    """점진 렌더링 1단계 — 대상 기업의 최근 뉴스 '메타데이터만' 빠르게 수집해 카드(분석 전)를 반환.
+
+    프론트가 답변 렌더 직후 이걸 먼저 호출 → ~1~2초에 뉴스 목록부터 보여준다(summary 빈 값).
+    이어서 /api/chat/news 가 본문 포함 재수집 + LLM 분석으로 summary 를 채운다.
+    이미 분석이 끝나 캐시돼 있으면(세션 재방문 등) 그 완성본을 그대로 돌려준다.
+    **본문(body)은 fetch 하지 않는다**(body_k=0) — 빠르고, 어떤 원문도 영속화하지 않는다(§불변식).
+    sync def — /api/chat·/api/chat/digest 와 동일(이벤트 루프 보호, §9-1).
+    """
+    if not news_enabled():
+        return NewsResponse(news=NewsData())
+
+    try:
+        panel = chat_store.get_message_panel(request.message_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"메시지 조회 오류: {str(e)}")
+    if panel is None:
+        raise HTTPException(status_code=404, detail="메시지를 찾을 수 없습니다.")
+
+    # 이미 분석 완료본이 있으면 카드 대신 그걸 바로 준다(2단계 불필요).
+    cached = panel.get("news")
+    if isinstance(cached, dict) and cached.get("companies"):
+        return NewsResponse(news=NewsData(**cached))
+
+    companies = _resolve_news_companies(panel)
+    if not companies:
+        return NewsResponse(news=NewsData())
+
+    try:
+        collected = collect_company_news(companies, body_k=0)  # 메타데이터만 — 본문 미수집
+    except Exception as e:
+        print(f"⚠️ [news] 카드 수집 실패(빈 결과): {e!r}")
+        collected = []
+    if not collected:
+        return NewsResponse(news=NewsData())
+
+    return NewsResponse(news=NewsData(companies=cards_only(collected)))
 
 
 # 3-5. 랜딩 페이지 그래프 — Neo4j 실데이터를 프론트 GraphExplorer 형태로 반환(공개).
