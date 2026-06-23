@@ -154,6 +154,10 @@ def _to_unified(community: dict, value: str | None = None, score: int | None = N
         "size": community.get("size"),
         "edge_dist": _edge_dist_obj(community),
         "member_names": community.get("member_names") or [],
+        # 멤버 corp_code 모음. serialize 가 document_index 역조회로 우측 '원본 문서'
+        # 카드를 짤 때 쓴다(글로벌 루트의 카드 채움) + build_global_graph 가 군집 내 엣지
+        # 쿼리 입력으로 쓴다(우측 관계도 패널 채움).
+        "members": community.get("members") or [],
     }
     if score is not None:
         extra["score"] = score
@@ -208,3 +212,89 @@ def global_search(query: str, anchor_corp_codes: list[str] | None = None) -> lis
 
     mapped.sort(key=lambda u: (-int(u["extra"].get("score", 0)), _cid(u)))
     return mapped[:GLOBAL_MAP_MAX_COMMUNITIES]
+
+
+# build_communities 가 군집 검출에 쓴 같은 5종 관계. 같은 관계로 미니 관계망을 그려야
+# "이 군집이 무엇으로 묶였는지"가 답변(군집 요약) ↔ 패널(관계도) 사이에 일치한다.
+_COMMUNITY_GRAPH_REL_TYPES = [
+    "IS_SUBSIDIARY_OF",
+    "IS_MAJOR_SHAREHOLDER_OF",
+    "INVESTS_IN",
+    "SUPPLIES_TO",
+    "INTERLOCKING_DIRECTORATE",
+]
+
+# 군집당 엣지 cap. 5군집 × 40 = 최대 200 엣지(force-graph 무리 없음).
+# 군집은 간접 관계로도 묶이므로 anchor 사이 직접 엣지만 보면 거의 비는 경우가 있다 —
+# 군집 멤버 전체에서 끌고 ORDER BY 로 구조화 관계 우선 정렬해 노이즈를 줄인다.
+GLOBAL_GRAPH_EDGES_PER_COMMUNITY = 40
+
+
+def _community_edges(member_codes: list[str]) -> list[dict]:
+    """군집 멤버 corp_code 사이 valid_to=NULL 엣지를 Neo4j 에서 cap 만큼 로드.
+
+    구조화 관계(자회사 1·주주 2·투자 3)를 추출 관계(공급/임원겸직 4)보다 우선 정렬해
+    같은 군집이라도 시각화에 의미 있는 엣지가 먼저 들어오게 한다. a.corp_code < b.corp_code
+    로 같은 엣지 1회. r.rcept_no 는 추출 엣지에만 있고 구조화 엣지는 NULL. 실패 시 [].
+    """
+    if not member_codes:
+        return []
+    try:
+        with neo4j_driver.session() as s:
+            rows = s.run(
+                "MATCH (a:Organization)-[r]-(b:Organization) "
+                "WHERE a.corp_code IN $codes AND b.corp_code IN $codes "
+                "  AND a.corp_code < b.corp_code "
+                "  AND type(r) IN $rel_types "
+                "  AND r.valid_to IS NULL AND r.qc_disabled_at IS NULL "
+                "RETURN a.name AS src, type(r) AS rel, b.name AS tgt, "
+                "       coalesce(r.rcept_no, '') AS rcept "
+                "ORDER BY CASE type(r) "
+                "  WHEN 'IS_SUBSIDIARY_OF' THEN 1 "
+                "  WHEN 'IS_MAJOR_SHAREHOLDER_OF' THEN 2 "
+                "  WHEN 'INVESTS_IN' THEN 3 "
+                "  ELSE 4 END "
+                "LIMIT $cap",
+                codes=member_codes,
+                rel_types=_COMMUNITY_GRAPH_REL_TYPES,
+                cap=GLOBAL_GRAPH_EDGES_PER_COMMUNITY,
+            ).data()
+        return rows or []
+    except Exception as e:
+        log.warning("global_search: 군집 엣지 로드 실패: %s", e)
+        return []
+
+
+def build_global_graph(community_results: list[dict]) -> dict:
+    """글로벌 루트용 미니 관계망. 군집별 멤버 corp_code 사이 엣지로 graph_paths/sources/chunks.
+
+    글로벌은 graph_facts 를 채우지 않아(답변 본문에 관계망 텍스트 안 끼게) 우측 관계도
+    패널이 비었다. 군집 검출 입력이었던 회사 ↔ 회사 엣지가 Neo4j 에 이미 있으므로
+    군집당 GLOBAL_GRAPH_EDGES_PER_COMMUNITY 엣지만 끌어 미니 관계망을 그린다.
+    serialize.build_graph 가 graph_paths 를 받아 노드/엣지를 만들고 panel='graph' 가
+    자동 선택된다. graph_chunks 는 글로벌엔 청크 출처가 없어 빈 문자열로 정렬만 맞춘다.
+    """
+    paths: list[list[str]] = []
+    sources: list[str] = []
+    chunks: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for c in community_results:
+        member_codes = (c.get("extra") or {}).get("members") or []
+        for edge in _community_edges(member_codes):
+            src = str(edge.get("src") or "")
+            tgt = str(edge.get("tgt") or "")
+            rel = str(edge.get("rel") or "")
+            if not src or not tgt or not rel:
+                continue
+            key = (src, tgt, rel)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append([src, rel, tgt])
+            sources.append(str(edge.get("rcept") or ""))
+            chunks.append("")
+    return {
+        "graph_paths": paths,
+        "graph_path_sources": sources,
+        "graph_path_chunks": chunks,
+    }

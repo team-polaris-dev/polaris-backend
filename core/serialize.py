@@ -353,6 +353,78 @@ def _build_rdb_text_documents(rdb_results: list[dict]) -> list[dict]:
     return documents
 
 
+# Community 카드 cap — 군집 멤버사가 수십~수백이라 회사당 N건·전체 M건으로 좁혀
+# 우측 패널이 같은 회사 사업보고서/반기/분기 등으로 뒤덮이지 않게 한다.
+_COMMUNITY_DOCS_PER_CORP = 2
+_COMMUNITY_DOCS_TOTAL = 24
+
+# corp_code 인젝션 방어 — 8자리 숫자만 남긴다.
+_CORP_CODE_RE = re.compile(r"[^0-9]")
+
+
+def _build_community_documents(community_results: list[dict]) -> list[dict]:
+    """community_results 멤버 corp_code → document_index 최신 공시 카드.
+
+    글로벌 루트는 community_results 만 채우므로 vec/rdb 카드가 비어 우측 '원본 문서'
+    탭이 닫혔다. 군집 멤버 회사들의 최신 공시(date desc)를 카드로 노출해 답변 본문
+    (군집 요약)의 근거를 패널에 깐다. 군집들의 멤버 corp_code 합집합을 IN 1회 조회 →
+    회사당 _COMMUNITY_DOCS_PER_CORP 건 → 전체 _COMMUNITY_DOCS_TOTAL 건으로 cap.
+    """
+    if not community_results:
+        return []
+    codes: list[str] = []
+    seen_codes: set[str] = set()
+    for c in community_results:
+        for code in (c.get("extra") or {}).get("members") or []:
+            cc = _CORP_CODE_RE.sub("", str(code))
+            if cc and cc not in seen_codes:
+                seen_codes.add(cc)
+                codes.append(cc)
+    if not codes:
+        return []
+
+    in_list = ", ".join(f"'{c}'" for c in sorted(codes))
+    sql = (
+        "SELECT rcept_no, corp_code, corp_name, doc_type, date, title, summary_short "
+        f"FROM document_index WHERE corp_code IN ({in_list}) "
+        "ORDER BY date DESC, rcept_no DESC"
+    )
+    # max_rows 는 회사당 cap 적용 전이므로 넉넉히. 큰 군집(150사)이라도
+    # _COMMUNITY_DOCS_TOTAL 차면 조기 break 하므로 비용 bound.
+    result = execute_sql_query(sql, max_rows=500)
+    if not result.get("ok"):
+        return []
+
+    per_corp: dict[str, int] = defaultdict(int)
+    documents: list[dict] = []
+    for row in result["rows"]:
+        cc = str(row.get("corp_code") or "")
+        if per_corp[cc] >= _COMMUNITY_DOCS_PER_CORP:
+            continue
+        per_corp[cc] += 1
+        summary = row.get("summary_short") or ""
+        documents.append(
+            {
+                "rcept_no": str(row.get("rcept_no") or ""),
+                "chunk_id": "",
+                "corp_name": row.get("corp_name") or "",
+                "title": row.get("title") or "",
+                "doc_type": row.get("doc_type") or "",
+                "date": str(row.get("date") or ""),
+                "summary": summary,
+                "section_path": "",
+                "year": None,
+                "score": None,
+                # 본문 청크가 없어 요약문을 본문 자리에 둔다(프론트가 빈 카드를 그리지 않게).
+                "text": summary,
+                "source_kind": "community_doc",
+            }
+        )
+        if len(documents) >= _COMMUNITY_DOCS_TOTAL:
+            break
+    return documents
+
+
 _CO_STRIP_RE = re.compile(r"주식회사|\(주\)|㈜|\s+")
 
 
@@ -570,6 +642,16 @@ def build_documents(state: dict) -> list[dict]:
         documents.append(d)
         if d["chunk_id"]:
             seen.add(d["chunk_id"])
+
+    # 2) Community 멤버 최신 공시 — 글로벌 루트(community_results) 답변의 근거를 깐다.
+    #    vec/rdb 와 중복은 rcept_no 기준 dedup(seen).
+    for d in _build_community_documents(state.get("community_results") or []):
+        rcept_no = d["rcept_no"]
+        if rcept_no and rcept_no in seen:
+            continue
+        if rcept_no:
+            seen.add(rcept_no)
+        documents.append(d)
 
     # 1) Vector 청크 = 본문이 있는 원본 발췌
     for v in vec_results:

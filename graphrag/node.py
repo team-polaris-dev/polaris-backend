@@ -14,7 +14,7 @@ from graphrag.matcher import match
 from graphrag.router import classify
 from graphrag.schema import adapt_to_legacy
 from graphrag.search import search
-from graphrag.global_search import global_search
+from graphrag.global_search import build_global_graph, global_search
 from graphrag.traverse import fallback_for
 
 log = logging.getLogger(__name__)
@@ -88,6 +88,20 @@ def _assemble_local(out: dict) -> dict:
         "graph_path_sources": legacy["path_sources"],
         "graph_path_chunks": legacy["path_chunks"],
     }
+
+
+def _global_only_output(results: list[dict]) -> dict:
+    """순수 글로벌 출력 — community_results + 군집 anchor 미니 관계망(graph_paths).
+
+    graph_facts 는 비워 답변 본문엔 _fmt_community(군집 요약)만 들어가고, graph_paths 는
+    serialize.build_graph 가 우측 관계도 패널만 그리는 데 쓴다(panel='graph' 자동 선택).
+    """
+    out: dict = {"community_results": results}
+    graph = build_global_graph(results)
+    if graph["graph_paths"]:
+        print(f"   ↳ 미니 관계망 엣지 {len(graph['graph_paths'])}건")
+        out.update(graph)
+    return out
 
 
 def _attach_communities(result: dict, query: str, out: dict) -> None:
@@ -273,7 +287,7 @@ def graph_search_node(state: dict) -> dict:
                 return result
         results = global_search(query)
         print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
-        return {"community_results": results}
+        return _global_only_output(results)
 
     query = effective_query(state)
     upstream = state.get("reconstructed_seeds") or []
@@ -295,7 +309,7 @@ def graph_search_node(state: dict) -> dict:
     if route.type == "macro" and not explicit:
         results = global_search(query)
         print(f"🌐 [GraphRAG/Global] 커뮤니티 {len(results)}개 선택")
-        return {"community_results": results}
+        return _global_only_output(results)
 
     result = _assemble_local(out)
 

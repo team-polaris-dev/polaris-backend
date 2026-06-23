@@ -188,6 +188,20 @@ def session_messages_endpoint(session_id: str):
         raise HTTPException(status_code=500, detail=f"메시지 기록 조회 오류: {str(e)}")
 
 
+# 3-2b. 대화 삭제 — 소유자(user_id) 본인 세션만 삭제 가능
+@api.delete("/api/sessions/{session_id}")
+def delete_session_endpoint(session_id: str, user_id: str):
+    try:
+        ok = chat_store.delete_session(session_id, user_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="세션을 찾을 수 없거나 권한이 없습니다.")
+        return {"deleted": True, "session_id": session_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"세션 삭제 오류: {str(e)}")
+
+
 # 3-3. POST 엔드포인트 구현
 @api.post("/api/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):
@@ -222,9 +236,9 @@ def chat_endpoint(request: ChatRequest):
         # 단, result_check 가 재질문을 요청한 턴(전 검색 소스가 비어 END)에는
         # 그래프·우측 패널을 열지 않는다 — "결과 못 찾았다"는 답변과 패널이 모순되지
         # 않도록. 판정은 result_check 와 동일하게 has_required_evidence(OR 게이트) 로 한다.
-        # 참고: 글로벌(매크로/업계) 턴은 rdb/vec/graph 가 비어 community_results 만 채우므로
-        # has_required_evidence 가 False → 우측 패널은 닫힌다(의도된 동작). 답변 본문(response)은
-        # gen 이 community_results 로 생성하므로 아래 분기와 무관하게 그대로 반환된다.
+        # 참고: 글로벌(매크로/업계) 턴은 rdb/vec/graph 가 비고 community_results 만 채워지지만,
+        # has_required_evidence 가 community 도 OR 로 보고 serialize 가 군집 멤버 공시를
+        # 카드로 깔아 우측 '원본 문서' 탭이 열린다.
         if has_required_evidence(result):
             panel_data = serialize_state(result)
         else:
