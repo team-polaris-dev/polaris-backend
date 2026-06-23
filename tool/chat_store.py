@@ -223,6 +223,25 @@ def set_message_digest(message_id: int, digest: str) -> None:
             conn.commit()
 
 
+def set_message_news(message_id: int, news: dict[str, Any]) -> None:
+    """메시지 패널 JSON 의 news 필드만 갱신해 다시 저장한다(나중 계산된 뉴스 분석 영속화).
+
+    set_message_digest 와 동형 — 뉴스 탭은 답변 이후 별도 경로(/api/chat/news)로 채워지므로
+    그 결과를 기존 search_plan(longtext) JSON 안에 추가만 한다(스키마 변경 없음, §4-3).
+    """
+    panel = get_message_panel(message_id)
+    if panel is None:
+        return
+    panel["news"] = news
+    with mariadb_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE chat_messages SET search_plan=%s WHERE message_id=%s",
+                (json.dumps(panel, ensure_ascii=False), int(message_id)),
+            )
+            conn.commit()
+
+
 def list_messages(session_id: str, limit: int = 500) -> list[dict[str, Any]]:
     """특정 세션의 메시지 목록(시간순). search_plan 에 보관된 패널 데이터도 복원한다."""
     with mariadb_conn() as conn:
@@ -256,7 +275,11 @@ def list_messages(session_id: str, limit: int = 500) -> list[dict[str, Any]]:
                 "graph": panel.get("graph", {"nodes": [], "edges": []}),
                 "documents": panel.get("documents", []),
                 "financials": panel.get("financials", []),
+                "ratios": panel.get("ratios", []),
+                "ownership": panel.get("ownership", {"shareholders": [], "investments": []}),
                 "digest": panel.get("digest", ""),
+                # 뉴스 분석(지연 로딩 결과). 없으면 기본값 — 기존 메시지 호환(§0 additive).
+                "news": panel.get("news", {"companies": []}),
             }
         )
     return messages

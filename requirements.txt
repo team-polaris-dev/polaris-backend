@@ -25,6 +25,10 @@ rank-bm25
 numpy            # BM25 top-N 정렬 (np.argsort), vector_store.py 필수
 httpx
 
+# 뉴스 분석 탭 — 인링크 본문 추출(trafilatura 우선, bs4 폴백). httpx 는 위에 이미 포함.
+trafilatura
+beautifulsoup4
+
 # Environment Variables
 python-dotenv
 
