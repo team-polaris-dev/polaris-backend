@@ -28,7 +28,27 @@ def load_memory_node(state: AgentState, config: RunnableConfig, store: BaseStore
         }
 
     # 4. 조회한 데이터를 State에 업데이트 (+ 파이프라인 시작 시각 기록 — 총 소요시간 계산용)
-    return {"user_preferences": user_prefs, "pipeline_started_at": time.perf_counter()}
+    return {
+        "user_preferences": user_prefs,
+        "pipeline_started_at": time.perf_counter(),
+        # ── 매 턴 근거 초기화 ──
+        # 아래 필드들은 리듀서가 없어 "해당 노드가 실행될 때만" 덮어써진다. direct(비공시)
+        # 경로처럼 검색 노드를 건너뛰는 턴에선 체크포인터에 남은 직전 공시 턴의 값이 그대로
+        # 살아남아, has_required_evidence→True→serialize_state 로 옛 관계도/재무가 패널에 샌다.
+        # 진입점(mem)에서 비워두면 ctx 경로는 이후 노드가 다시 채우고 direct 경로는 빈 채로 끝난다.
+        # (messages 는 체크포인터가 관리하므로 건드리지 않아 대화 맥락엔 영향 없음)
+        "rdb_results": [],
+        "vec_results": [],
+        "graph_facts": [],
+        "community_results": [],
+        "graph_paths": [],
+        "graph_provenance": [],
+        "graph_path_sources": [],
+        "graph_path_chunks": [],
+        "graph_hits": [],
+        "graph_seeds": [],
+        "graph_meta": {},
+    }
 
 
 def save_memory_node(state: AgentState, config: RunnableConfig, store: BaseStore):
